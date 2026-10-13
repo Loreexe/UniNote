@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/uninote-stroke",
+    "crates/uninote-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["UniNote Developers"]
+license = "MIT OR Apache-2.0"
+rust-version = "1.80.0"

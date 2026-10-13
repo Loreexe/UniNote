@@ -1,0 +1,21 @@
+[package]
+name = "uninote-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "uninote"
+path = "src/main.rs"
+
+[dependencies]
+uninote-stroke = { path = "../uninote-stroke" }
+gtk4 = "0.9"
+libadwaita = "0.7"
+glib = "0.20"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[features]
+default = []
