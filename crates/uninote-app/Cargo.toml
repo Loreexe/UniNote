@@ -11,7 +11,9 @@ path = "src/main.rs"
 
 [dependencies]
 uninote-stroke = { path = "../uninote-stroke" }
-gtk4 = "0.9"
+uninote-core = { path = "../uninote-core" }
+uninote-storage = { path = "../uninote-storage" }
+gtk4 = { version = "0.9", features = ["v4_10"] }
 libadwaita = "0.7"
 glib = "0.20"
 serde = { version = "1.0", features = ["derive"] }

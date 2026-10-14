@@ -1,7 +1,7 @@
 use uninote_stroke::{
     catmull_rom_to_bezier, sample_catmull_rom_spline, DeviceKind, InputDisposition, InputPhase,
     InputSample, OneEuroConfig, OneEuroPointFilter, PalmRejectionEngine, PalmState, PipelineMode,
-    RecordedSession, StrokeBuilder, StrokePoint, StrokeStyle, TouchMode,
+    RecordedSession, Stroke, StrokeBuilder, StrokePoint, StrokeStyle, TouchMode,
 };
 
 #[test]
@@ -574,4 +574,32 @@ fn test_stylus_hover_none_pressure_dropped() {
     assert_eq!(drop, 1);
     let stroke = builder.finish();
     assert_eq!(stroke.points.len(), 1);
+}
+
+#[test]
+fn test_stroke_intersects_point_for_eraser() {
+    let mut stroke = Stroke::new(1, StrokeStyle::default(), PipelineMode::CatmullRomSpline);
+    stroke.points.push(uninote_stroke::StrokePoint {
+        x: 100.0,
+        y: 100.0,
+        pressure: 0.5,
+        timestamp_ns: 0,
+        width: 3.0,
+    });
+    stroke.points.push(uninote_stroke::StrokePoint {
+        x: 200.0,
+        y: 100.0,
+        pressure: 0.5,
+        timestamp_ns: 10,
+        width: 3.0,
+    });
+
+    // Punto vicino al segmento orizzontale (150, 102) con raggio 4 -> interseca
+    assert!(stroke.intersects_point((150.0, 102.0), 4.0));
+
+    // Punto distante (150, 150) -> non interseca
+    assert!(!stroke.intersects_point((150.0, 150.0), 4.0));
+
+    // Punto vicino agli estremi (98, 100) -> interseca
+    assert!(stroke.intersects_point((98.0, 100.0), 4.0));
 }

@@ -218,4 +218,51 @@ impl Stroke {
         }
         len
     }
+
+    /// Verifica se un punto con raggio di tolleranza interseca il tratto (per gomma per tratto intero).
+    pub fn intersects_point(&self, (px, py): (f64, f64), radius: f64) -> bool {
+        if let Some(bbox) = self.bounding_box() {
+            if px < bbox.min_x - radius
+                || px > bbox.max_x + radius
+                || py < bbox.min_y - radius
+                || py > bbox.max_y + radius
+            {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
+        // 1. Controllo prossimità punti
+        for p in &self.points {
+            let dx = p.x - px;
+            let dy = p.y - py;
+            let eff_r = radius + p.width / 2.0;
+            if dx * dx + dy * dy <= eff_r * eff_r {
+                return true;
+            }
+        }
+
+        // 2. Controllo prossimità segmenti
+        for w in self.points.windows(2) {
+            let p1 = &w[0];
+            let p2 = &w[1];
+            let l2 = (p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2);
+            let dist_sq = if l2 < 1e-6 {
+                (px - p1.x).powi(2) + (py - p1.y).powi(2)
+            } else {
+                let t = (((px - p1.x) * (p2.x - p1.x) + (py - p1.y) * (p2.y - p1.y)) / l2)
+                    .clamp(0.0, 1.0);
+                let proj_x = p1.x + t * (p2.x - p1.x);
+                let proj_y = p1.y + t * (p2.y - p1.y);
+                (px - proj_x).powi(2) + (py - proj_y).powi(2)
+            };
+            let eff_w = p1.width.max(p2.width) / 2.0 + radius;
+            if dist_sq <= eff_w * eff_w {
+                return true;
+            }
+        }
+
+        false
+    }
 }

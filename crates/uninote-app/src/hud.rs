@@ -21,6 +21,9 @@ pub struct DiagnosticMetrics {
     pub render_time_us: u64,
     pub is_recording: bool,
     pub tip_threshold: f64,
+    pub current_tool: String,
+    pub page_count: usize,
+    pub zoom_pct: usize,
 }
 
 impl Default for DiagnosticMetrics {
@@ -39,6 +42,9 @@ impl Default for DiagnosticMetrics {
             render_time_us: 0,
             is_recording: false,
             tip_threshold: 0.06,
+            current_tool: "Penna".to_string(),
+            page_count: 1,
+            zoom_pct: 100,
         }
     }
 }
@@ -157,8 +163,8 @@ impl DiagnosticHud {
         let rec_str = if m.is_recording { " ● REC" } else { "" };
 
         self.label_status.set_label(&format!(
-            "Sorgente: {} | {}\nModalità: {} | {}\nStato Palmo: {}{}",
-            m.device_name, pressure_str, mode_str, touch_str, palm_str, rec_str
+            "Strumento: {} | Pagine: {} | Zoom: {}%\nSorgente: {} | {}\nModalità: {} | {}\nStato Palmo: {}{}",
+            m.current_tool, m.page_count, m.zoom_pct, m.device_name, pressure_str, mode_str, touch_str, palm_str, rec_str
         ));
 
         self.label_perf.set_label(&format!(

@@ -1,0 +1,17 @@
+[package]
+name = "uninote-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+uninote-core = { path = "../uninote-core" }
+uninote-stroke = { path = "../uninote-stroke" }
+
+[dev-dependencies]
+tempfile = "3.10"

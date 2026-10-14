@@ -3,16 +3,32 @@ use gtk4::gdk;
 use gtk4::prelude::*;
 use gtk4::DrawingArea;
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Instant;
+use uninote_core::{CommandHistory, DocCommand, Document, ItemKind, PageBackground, Viewport};
+use uninote_storage::{DocumentStore, SaveStatus, StorageWorker};
 use uninote_stroke::{
     DeviceKind, InputDisposition, InputPhase, InputSample, PalmRejectionEngine, PipelineMode,
     RecordedSession, Stroke, StrokeBuilder, StrokeStyle, TouchMode,
 };
 
-/// Stato interno condiviso del canvas.
+/// Strumento di disegno/modifica attualmente selezionato.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveTool {
+    Pen,
+    Eraser,
+}
+
+/// Stato interno condiviso del canvas di UniNote.
 pub struct CanvasState {
-    pub completed_strokes: Vec<Stroke>,
+    pub document: Document,
+    pub history: CommandHistory,
+    pub storage_worker: Option<StorageWorker>,
+    pub file_path: Option<PathBuf>,
+    pub save_status: SaveStatus,
+    pub viewport: Viewport,
+    pub active_tool: ActiveTool,
     pub active_builder: Option<StrokeBuilder>,
     pub active_device: Option<DeviceKind>,
     pub palm_engine: PalmRejectionEngine,
@@ -23,13 +39,20 @@ pub struct CanvasState {
     pub last_sample_time: Option<Instant>,
     pub last_stylus_time: Option<Instant>,
     pub mouse_drag_start: Option<(f64, f64)>,
+    pub mouse_pan_start: Option<(f64, f64)>,
     pub tip_pressure_threshold: f64,
 }
 
 impl CanvasState {
     pub fn new() -> Self {
         Self {
-            completed_strokes: Vec::new(),
+            document: Document::new_empty("Quaderno Senza Titolo"),
+            history: CommandHistory::new(100),
+            storage_worker: None,
+            file_path: None,
+            save_status: SaveStatus::Saved(0),
+            viewport: Viewport::default(),
+            active_tool: ActiveTool::Pen,
             active_builder: None,
             active_device: None,
             palm_engine: PalmRejectionEngine::new(TouchMode::Off),
@@ -40,15 +63,71 @@ impl CanvasState {
             last_sample_time: None,
             last_stylus_time: None,
             mouse_drag_start: None,
+            mouse_pan_start: None,
             tip_pressure_threshold: 0.06,
         }
     }
 
-    pub fn clear(&mut self) {
-        self.completed_strokes.clear();
+    pub fn undo(&mut self) -> bool {
+        let res = self.history.undo(&mut self.document);
+        if res {
+            self.persist_changes();
+        }
+        res
+    }
+
+    pub fn redo(&mut self) -> bool {
+        let res = self.history.redo(&mut self.document);
+        if res {
+            self.persist_changes();
+        }
+        res
+    }
+
+    pub fn add_page(&mut self, page: uninote_core::Page) {
+        self.history
+            .execute(DocCommand::AddPage { page }, &mut self.document);
+        self.persist_changes();
+    }
+
+    pub fn clear_current_page(&mut self) {
+        if let Some(page) = self.document.pages.first_mut() {
+            let erased = page.items.clone();
+            if !erased.is_empty() {
+                let page_id = page.id;
+                self.history.execute(
+                    DocCommand::EraseItems {
+                        page_id,
+                        erased_items: erased,
+                    },
+                    &mut self.document,
+                );
+                self.persist_changes();
+            }
+        }
         self.active_builder = None;
         self.active_device = None;
         self.mouse_drag_start = None;
+    }
+
+    pub fn mark_saved(&mut self) {
+        let rev = self.history.current_revision;
+        self.history.mark_saved(rev);
+        self.save_status = SaveStatus::Saved(rev);
+    }
+
+    /// Invia la revisione corrente al worker di storage asincrono (se collegato).
+    pub fn persist_changes(&mut self) {
+        let rev = self.history.current_revision;
+        self.save_status = SaveStatus::Saving(rev);
+        if let Some(ref worker) = self.storage_worker {
+            worker.save_revision(self.document.clone(), rev);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn save_status(&self) -> SaveStatus {
+        self.save_status.clone()
     }
 }
 
@@ -80,6 +159,7 @@ impl NoteCanvas {
         canvas.setup_capture_controller();
         canvas.setup_stylus_controller();
         canvas.setup_mouse_controller();
+        canvas.setup_scroll_and_zoom_controllers();
         canvas
     }
 
@@ -91,48 +171,272 @@ impl NoteCanvas {
         self.state.clone()
     }
 
+    pub fn set_active_tool(&self, tool: ActiveTool) {
+        let mut st = self.state.borrow_mut();
+        st.active_tool = tool;
+        let tool_name = match tool {
+            ActiveTool::Pen => "Penna",
+            ActiveTool::Eraser => "Gomma (Tratto Intero)",
+        };
+        self.hud
+            .update_metrics(|m| m.current_tool = tool_name.to_string());
+        self.hud.update_view();
+    }
+
+    pub fn set_pen_color(&self, color: (f64, f64, f64, f64)) {
+        let mut st = self.state.borrow_mut();
+        st.current_style.color = color;
+    }
+
+    pub fn set_pen_width(&self, width: f64) {
+        let mut st = self.state.borrow_mut();
+        st.current_style.base_width = width;
+    }
+
+    pub fn undo(&self) -> bool {
+        let mut st = self.state.borrow_mut();
+        let res = st.undo();
+        if res {
+            drop(st);
+            self.area.queue_draw();
+        }
+        res
+    }
+
+    pub fn redo(&self) -> bool {
+        let mut st = self.state.borrow_mut();
+        let res = st.redo();
+        if res {
+            drop(st);
+            self.area.queue_draw();
+        }
+        res
+    }
+
+    pub fn add_page(&self, bg: PageBackground) {
+        let mut st = self.state.borrow_mut();
+        let idx = st.document.pages.len();
+        let new_page = uninote_core::Page::new_a4(idx, bg);
+        st.add_page(new_page);
+        let count = st.document.pages.len();
+        drop(st);
+        self.hud.update_metrics(|m| m.page_count = count);
+        self.hud.update_view();
+        self.area.queue_draw();
+    }
+
+    pub fn zoom_in(&self) {
+        let mut st = self.state.borrow_mut();
+        let w = self.area.width() as f64;
+        let h = self.area.height() as f64;
+        st.viewport.zoom_at((w / 2.0, h / 2.0), 1.25);
+        let pct = (st.viewport.zoom * 100.0).round() as usize;
+        drop(st);
+        self.hud.update_metrics(|m| m.zoom_pct = pct);
+        self.hud.update_view();
+        self.area.queue_draw();
+    }
+
+    pub fn zoom_out(&self) {
+        let mut st = self.state.borrow_mut();
+        let w = self.area.width() as f64;
+        let h = self.area.height() as f64;
+        st.viewport.zoom_at((w / 2.0, h / 2.0), 0.8);
+        let pct = (st.viewport.zoom * 100.0).round() as usize;
+        drop(st);
+        self.hud.update_metrics(|m| m.zoom_pct = pct);
+        self.hud.update_view();
+        self.area.queue_draw();
+    }
+
+    pub fn reset_zoom(&self) {
+        let mut st = self.state.borrow_mut();
+        let w = self.area.width() as f64;
+        st.viewport.reset_zoom_and_center(w);
+        let pct = (st.viewport.zoom * 100.0).round() as usize;
+        drop(st);
+        self.hud.update_metrics(|m| m.zoom_pct = pct);
+        self.hud.update_view();
+        self.area.queue_draw();
+    }
+
+    pub fn open_file(&self, path: PathBuf) -> Result<(), String> {
+        let store = DocumentStore::open_or_create(&path).map_err(|e| e.to_string())?;
+        let doc = store.load_document().map_err(|e| e.to_string())?;
+        let mut st = self.state.borrow_mut();
+        st.document = doc;
+        st.history = CommandHistory::new(100);
+        st.file_path = Some(path.clone());
+
+        // Inizializza worker di storage asincrono per questo file
+        if let Ok(worker) = StorageWorker::spawn(path, move |_status| {
+            glib::idle_add_once(move || {
+                // Notifica asincrona di cambio stato salvataggio
+            });
+        }) {
+            st.storage_worker = Some(worker);
+        }
+
+        let page_count = st.document.pages.len();
+        drop(st);
+        self.hud.update_metrics(|m| m.page_count = page_count);
+        self.hud.update_view();
+        self.area.queue_draw();
+        Ok(())
+    }
+
+    pub fn save_as(&self, path: PathBuf) -> Result<(), String> {
+        let mut st = self.state.borrow_mut();
+        let mut store = DocumentStore::open_or_create(&path).map_err(|e| e.to_string())?;
+        store
+            .save_document(&st.document)
+            .map_err(|e| e.to_string())?;
+        st.file_path = Some(path.clone());
+
+        if let Ok(worker) = StorageWorker::spawn(path, move |_status| {
+            glib::idle_add_once(move || {
+                // Notifica asincrona di cambio stato salvataggio
+            });
+        }) {
+            st.storage_worker = Some(worker);
+        }
+        st.mark_saved();
+        self.area.queue_draw();
+        Ok(())
+    }
+
+    pub fn export_portable_copy(&self, target_path: PathBuf) -> Result<(), String> {
+        let st = self.state.borrow();
+        if let Some(ref path) = st.file_path {
+            let store = DocumentStore::open_or_create(path).map_err(|e| e.to_string())?;
+            uninote_storage::export_portable_copy(store.connection(), &target_path)
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        } else {
+            let mut store =
+                DocumentStore::open_or_create(&target_path).map_err(|e| e.to_string())?;
+            store
+                .save_document(&st.document)
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
+    }
+
     fn setup_drawing(&self) {
         let state_clone = self.state.clone();
         let hud_clone = self.hud.clone();
 
         self.area.set_draw_func(move |_area, cr, width, height| {
             let start_render = Instant::now();
+            let st = state_clone.borrow();
+            let vp = st.viewport;
+            let current_mode = st.pipeline_mode;
 
-            // 1. Sfondo foglio di scrittura (bianco caldo naturale)
-            cr.set_source_rgb(0.98, 0.98, 0.99);
+            // 1. Sfondo desktop canvas (grigio neutro morbido per far risaltare i fogli A4)
+            cr.set_source_rgb(0.93, 0.94, 0.96);
             let _ = cr.paint();
 
-            // 2. Griglia leggera di riferimento millimetrico
-            cr.set_source_rgba(0.85, 0.88, 0.92, 0.4);
-            cr.set_line_width(0.7);
-            let step = 32.0;
-            let mut x = step;
-            while x < width as f64 {
-                cr.move_to(x, 0.0);
-                cr.line_to(x, height as f64);
-                x += step;
-            }
-            let mut y = step;
-            while y < height as f64 {
-                cr.move_to(0.0, y);
-                cr.line_to(width as f64, y);
-                y += step;
-            }
-            let _ = cr.stroke();
+            // 2. Rendering di ciascuna pagina A4
+            for page in &st.document.pages {
+                let doc_rect = Viewport::page_rect(page.index);
+                let (sx, sy) = vp.document_to_screen((doc_rect.x, doc_rect.y));
+                let sw = doc_rect.width * vp.zoom;
+                let sh = doc_rect.height * vp.zoom;
 
-            // 3. Disegno dei tratti completati
-            let state = state_clone.borrow();
-            let current_mode = state.pipeline_mode;
-            for stroke in &state.completed_strokes {
-                Self::draw_stroke(cr, stroke, current_mode);
+                // Culling viewport: scarta pagine completamente fuori dallo schermo
+                if sx + sw < 0.0 || sx > width as f64 || sy + sh < 0.0 || sy > height as f64 {
+                    continue;
+                }
+
+                // Ombra leggera del foglio A4
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.10);
+                cr.rectangle(sx + 3.0, sy + 3.0, sw, sh);
+                let _ = cr.fill();
+
+                // Foglio A4 (bianco caldo naturale)
+                cr.set_source_rgb(0.99, 0.99, 1.0);
+                cr.rectangle(sx, sy, sw, sh);
+                let _ = cr.fill();
+
+                // Ritaglio (Clip) sul perimetro del foglio
+                let _ = cr.save();
+                cr.rectangle(sx, sy, sw, sh);
+                cr.clip();
+
+                // Disegno del pattern di sfondo della pagina
+                match &page.background {
+                    PageBackground::Blank => {}
+                    PageBackground::Ruled {
+                        line_spacing,
+                        margin_left,
+                    } => {
+                        let spacing_px = line_spacing * vp.zoom;
+                        let margin_px = margin_left * vp.zoom;
+
+                        // Linea rossa del margine sinistro
+                        cr.set_source_rgba(0.88, 0.35, 0.35, 0.35);
+                        cr.set_line_width(1.0);
+                        cr.move_to(sx + margin_px, sy);
+                        cr.line_to(sx + margin_px, sy + sh);
+                        let _ = cr.stroke();
+
+                        // Righe orizzontali
+                        cr.set_source_rgba(0.70, 0.78, 0.88, 0.55);
+                        cr.set_line_width(0.8);
+                        let mut line_y = sy + spacing_px * 2.0;
+                        while line_y < sy + sh {
+                            cr.move_to(sx, line_y);
+                            cr.line_to(sx + sw, line_y);
+                            line_y += spacing_px;
+                        }
+                        let _ = cr.stroke();
+                    }
+                    PageBackground::Grid { grid_size } => {
+                        let grid_px = grid_size * vp.zoom;
+                        cr.set_source_rgba(0.78, 0.84, 0.92, 0.45);
+                        cr.set_line_width(0.7);
+
+                        let mut gx = sx + grid_px;
+                        while gx < sx + sw {
+                            cr.move_to(gx, sy);
+                            cr.line_to(gx, sy + sh);
+                            gx += grid_px;
+                        }
+
+                        let mut gy = sy + grid_px;
+                        while gy < sy + sh {
+                            cr.move_to(sx, gy);
+                            cr.line_to(sx + sw, gy);
+                            gy += grid_px;
+                        }
+                        let _ = cr.stroke();
+                    }
+                }
+
+                // Disegno di tutti gli elementi della pagina con matrice di trasformazione Viewport
+                let _ = cr.save();
+                cr.translate(vp.offset_x, vp.offset_y);
+                cr.scale(vp.zoom, vp.zoom);
+
+                for item in &page.items {
+                    let ItemKind::Stroke(stroke) = &item.kind;
+                    Self::draw_stroke(cr, stroke, current_mode);
+                }
+                let _ = cr.restore();
+
+                let _ = cr.restore(); // Fine clip pagina
             }
 
-            // 4. Disegno del tratto live in corso
-            if let Some(ref builder) = state.active_builder {
+            // 3. Disegno del tratto live attivo in corso di scrittura (se presente)
+            if let Some(ref builder) = st.active_builder {
+                let _ = cr.save();
+                cr.translate(vp.offset_x, vp.offset_y);
+                cr.scale(vp.zoom, vp.zoom);
                 Self::draw_stroke(cr, &builder.stroke, current_mode);
+                let _ = cr.restore();
             }
 
-            // 5. Aggiornamento metriche di rendering
+            // 4. Aggiornamento metriche di rendering HUD
             let render_duration = start_render.elapsed().as_micros() as u64;
             hud_clone.record_frame_tick();
             hud_clone.update_metrics(|m| {
@@ -162,7 +466,6 @@ impl NoteCanvas {
 
         match mode {
             PipelineMode::Baseline => {
-                // Disegno polilineare diretto a segmenti retti (Baseline Off da specifica)
                 for w in stroke.points.windows(2) {
                     let p0 = &w[0];
                     let p1 = &w[1];
@@ -179,7 +482,6 @@ impl NoteCanvas {
                     let len = seg.approximate_length();
                     let width_diff = (seg.width1 - seg.width0).abs();
 
-                    // Se la variazione di spessore è minima, usiamo curve_to nativo di Cairo
                     if width_diff < 0.25 || len <= 3.0 {
                         let avg_w = (seg.width0 + seg.width1) / 2.0;
                         cr.set_line_width(avg_w.max(1.0));
@@ -189,7 +491,6 @@ impl NoteCanvas {
                         );
                         let _ = cr.stroke();
                     } else {
-                        // Suddivisione in micro-passi lungo la Bézier per variazioni fluide di pressione
                         let steps = ((len / 2.0).ceil() as usize).clamp(2, 16);
                         let mut prev_pt = seg.p0;
                         let mut prev_w = seg.width0;
@@ -210,8 +511,6 @@ impl NoteCanvas {
         }
     }
 
-    /// Intercetta gli eventi hardware in fase di cattura (Capture Phase) PRIMA che raggiungano
-    /// le gesture e i controller di drag, garantendo la soppressione del tocco e del palmo sul foglio.
     fn setup_capture_controller(&self) {
         let legacy = gtk4::EventControllerLegacy::new();
         legacy.set_propagation_phase(gtk4::PropagationPhase::Capture);
@@ -220,7 +519,6 @@ impl NoteCanvas {
         let app_start = self.app_start;
 
         legacy.connect_event(move |_controller, event| {
-            // Eventi stilo/penna hardware: devono SEMPRE procedere al gesture controller dedicato
             let is_stylus = event.device_tool().is_some()
                 || event
                     .device()
@@ -263,17 +561,14 @@ impl NoteCanvas {
                 let palm_state = st.palm_engine.current_state();
                 drop(st);
 
-                // Aggiorna metriche HUD in modo asincrono/leggero (SENZA layout sincrono set_label che causava freeze)
                 hud_clone.update_metrics(|m| {
                     m.touch_suppressed = suppressed_count;
                     m.palm_state = palm_state;
                 });
 
-                // IL TOCCO NON SCRIVE MAI SUL CANVAS DI DISEGNO: stop assoluto alla propagazione
                 return glib::Propagation::Stop;
             }
 
-            // Soppressione categorica dei puntatori emulati dal touch sul canvas di disegno
             if event.is_pointer_emulated() {
                 return glib::Propagation::Stop;
             }
@@ -296,7 +591,6 @@ impl NoteCanvas {
         let area = area_clone.clone();
         let hud = hud_clone.clone();
         stylus.connect_down(move |gesture, x, y| {
-            // Reclama la sequenza per inibire gesture concorrenti
             gesture.set_state(gtk4::EventSequenceState::Claimed);
             let pressure = gesture.axis(gdk::AxisUse::Pressure);
             let p_val = pressure.unwrap_or(0.0);
@@ -306,14 +600,22 @@ impl NoteCanvas {
             st.last_stylus_time = Some(Instant::now());
             st.active_device = Some(DeviceKind::Stylus);
 
-            // Sicurezza: se per qualsiasi motivo era rimasto un tratto pendente non chiuso, finalizzalo ora
-            if let Some(prev_builder) = st.active_builder.take() {
-                let stroke = prev_builder.finish();
-                st.completed_strokes.push(stroke);
+            let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
+
+            // Gestione Strumento Gomma
+            if st.active_tool == ActiveTool::Eraser {
+                let radius = 12.0 / st.viewport.zoom;
+                Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
+                drop(st);
+                area.queue_draw();
+                return;
             }
 
-            // Se il digitizer emette un Down in hover (pressione debole o None tipica dei sensori MPP),
-            // non avviare il tratto finché la punta non preme effettivamente oltre la soglia
+            if let Some(prev_builder) = st.active_builder.take() {
+                let stroke = prev_builder.finish();
+                Self::commit_finished_stroke(&mut st, stroke);
+            }
+
             if p_val <= st.tip_pressure_threshold {
                 let palm_state = st.palm_engine.current_state();
                 drop(st);
@@ -325,7 +627,7 @@ impl NoteCanvas {
             }
 
             let sample = InputSample::new(
-                (x, y),
+                (doc_x, doc_y),
                 pressure,
                 now_ns,
                 DeviceKind::Stylus,
@@ -347,7 +649,6 @@ impl NoteCanvas {
                 let palm_state = st.palm_engine.current_state();
                 drop(st);
 
-                // Aggiorna HUD
                 hud.update_metrics(|m| {
                     m.device_name = "Stilo Digitizer (Attivo)".to_string();
                     m.live_pressure = pressure;
@@ -364,7 +665,6 @@ impl NoteCanvas {
         let area = area_clone.clone();
         let hud = hud_clone.clone();
         stylus.connect_motion(move |gesture, x, y| {
-            // Reclama la sequenza
             gesture.set_state(gtk4::EventSequenceState::Claimed);
             let pressure = gesture.axis(gdk::AxisUse::Pressure);
             let now = Instant::now();
@@ -374,6 +674,16 @@ impl NoteCanvas {
             let st = &mut *st_guard;
             st.last_stylus_time = Some(now);
 
+            let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
+
+            if st.active_tool == ActiveTool::Eraser {
+                let radius = 12.0 / st.viewport.zoom;
+                Self::erase_strokes_at(st, (doc_x, doc_y), radius);
+                drop(st_guard);
+                area.queue_draw();
+                return;
+            }
+
             let has_button1 = gesture.current_event().is_some_and(|ev| {
                 ev.modifier_state()
                     .contains(gdk::ModifierType::BUTTON1_MASK)
@@ -381,12 +691,10 @@ impl NoteCanvas {
             let p_val = pressure.unwrap_or(0.0);
             let thresh = st.tip_pressure_threshold;
 
-            // Se non c'è ancora un tratto attivo (es. il Down iniziale era avvenuto in hover con p <= thresh)
-            // e ora la pressione ha superato la soglia di contatto sul vetro: avvia il tratto!
             if st.active_builder.is_none() {
                 if has_button1 && p_val > thresh {
                     let sample = InputSample::new(
-                        (x, y),
+                        (doc_x, doc_y),
                         pressure,
                         now_ns,
                         DeviceKind::Stylus,
@@ -413,10 +721,9 @@ impl NoteCanvas {
                 return;
             }
 
-            // Calcolo velocità istantanea e distanza dall'ultimo punto registrato
             let (dist_from_last, speed_px_s) = if let Some(ref builder) = st.active_builder {
                 if let Some(last_pt) = builder.stroke.points.last() {
-                    let dist = ((last_pt.x - x).powi(2) + (last_pt.y - y).powi(2)).sqrt();
+                    let dist = ((last_pt.x - doc_x).powi(2) + (last_pt.y - doc_y).powi(2)).sqrt();
                     let dt = st
                         .last_sample_time
                         .map_or(0.008, |t| now.duration_since(t).as_secs_f64());
@@ -429,11 +736,6 @@ impl NoteCanvas {
                 (0.0, 0.0)
             };
 
-            // Rilevamento avanzato di stacco punta e transito in volo (Anti-Hover / Anti-Spike):
-            // 1. Pressione sotto la soglia di contatto (default 0.06) o assenza asse
-            // 2. Modificatore BUTTON1_MASK assente (rilascio switch punta)
-            // 3. Transito cinematico balistico: velocità > 300 px/s con pressione debole (< 0.12)
-            // 4. Salto spaziale anomalo: dist > 18 px con pressione < 0.10
             let is_kinematic_transit = speed_px_s > 300.0 && p_val < 0.12;
             let is_leap = dist_from_last > 18.0 && p_val < 0.10;
             let is_lifted = !has_button1
@@ -445,7 +747,7 @@ impl NoteCanvas {
             if is_lifted {
                 if let Some(b) = st.active_builder.take() {
                     let stroke = b.finish();
-                    st.completed_strokes.push(stroke);
+                    Self::commit_finished_stroke(st, stroke);
                 }
                 st.active_device = None;
                 st.last_sample_time = None;
@@ -459,7 +761,6 @@ impl NoteCanvas {
                 return;
             }
 
-            // La penna è in effettivo contatto di scrittura sul vetro
             if let Some(ref mut builder) = st.active_builder {
                 if let Some(last_time) = st.last_sample_time {
                     let dt = now.duration_since(last_time).as_secs_f64();
@@ -472,15 +773,13 @@ impl NoteCanvas {
                 }
                 st.last_sample_time = Some(now);
 
-                // Elabora il punto di motion corrente direttamente con coordinate native sub-pixel
                 let sample = InputSample::new(
-                    (x, y),
+                    (doc_x, doc_y),
                     pressure,
                     now_ns,
                     DeviceKind::Stylus,
                     InputPhase::Move,
                 );
-
                 builder.process_sample(sample.clone());
 
                 if let Some(ref mut rec) = st.recorder {
@@ -515,14 +814,21 @@ impl NoteCanvas {
             st.last_stylus_time = Some(Instant::now());
             st.active_device = None;
 
-            let sample =
-                InputSample::new((x, y), pressure, now_ns, DeviceKind::Stylus, InputPhase::Up);
+            let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
+
+            let sample = InputSample::new(
+                (doc_x, doc_y),
+                pressure,
+                now_ns,
+                DeviceKind::Stylus,
+                InputPhase::Up,
+            );
             st.palm_engine.evaluate_sample(&sample);
 
             if let Some(mut builder) = st.active_builder.take() {
                 builder.process_sample(sample.clone());
                 let stroke = builder.finish();
-                st.completed_strokes.push(stroke);
+                Self::commit_finished_stroke(&mut st, stroke);
 
                 if let Some(ref mut rec) = st.recorder {
                     rec.record_sample(sample);
@@ -552,10 +858,9 @@ impl NoteCanvas {
             st.active_device = None;
             st.palm_engine.on_pen_proximity(true, now_ns);
 
-            // Se la penna entra in prossimità aerea (hover), qualsiasi tratto in corso è terminato
             let closed_stroke = if let Some(builder) = st.active_builder.take() {
                 let stroke = builder.finish();
-                st.completed_strokes.push(stroke);
+                Self::commit_finished_stroke(&mut st, stroke);
                 true
             } else {
                 false
@@ -578,120 +883,115 @@ impl NoteCanvas {
 
     fn setup_mouse_controller(&self) {
         let drag = gtk4::GestureDrag::new();
-        drag.set_touch_only(false);
+        drag.set_button(0);
         let state_clone = self.state.clone();
         let area_clone = self.area.clone();
         let hud_clone = self.hud.clone();
         let app_start = self.app_start;
 
-        // Drag Begin (Mouse Down)
+        // Drag Begin
         let state = state_clone.clone();
         let area = area_clone.clone();
         let hud = hud_clone.clone();
-        let drag_weak = drag.downgrade();
-        drag.connect_drag_begin(move |_gesture, x, y| {
-            let gesture = match drag_weak.upgrade() {
-                Some(g) => g,
-                None => return,
-            };
+        drag.connect_drag_begin(move |gesture, start_x, start_y| {
+            let current_btn = gesture.current_button();
+            let mut st = state.borrow_mut();
 
-            // Rifiuto categorico di qualsiasi evento emulato, touch o originato da penna
-            if let Some(event) = gesture.current_event() {
-                if event.is_pointer_emulated() || event.device_tool().is_some() {
-                    gesture.set_state(gtk4::EventSequenceState::Denied);
+            if let Some(last_pen) = st.last_stylus_time {
+                if Instant::now().duration_since(last_pen).as_millis() < 400 {
                     return;
-                }
-                let event_type = event.event_type();
-                if event_type == gdk::EventType::TouchBegin
-                    || event_type == gdk::EventType::TouchUpdate
-                    || event_type == gdk::EventType::TouchEnd
-                    || event_type == gdk::EventType::TouchCancel
-                {
-                    gesture.set_state(gtk4::EventSequenceState::Denied);
-                    return;
-                }
-                if let Some(device) = event.device() {
-                    if device.source() != gdk::InputSource::Mouse {
-                        gesture.set_state(gtk4::EventSequenceState::Denied);
-                        return;
-                    }
                 }
             }
 
-            let mut st = state.borrow_mut();
-
-            // Se la penna è attiva, è in prossimità, è in cooldown, oppure è stata usata di recente (< 2000 ms):
-            // NEGA categoricamente il disegno del mouse/touchpad per impedire che il palmo appoggiato sul trackpad
-            // o sul bordo del laptop generi linee spurie o interferisca con la scrittura!
-            let recent_stylus = st
-                .last_stylus_time
-                .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(2000));
-
-            if st.active_device == Some(DeviceKind::Stylus)
-                || st.palm_engine.is_pen_active()
-                || recent_stylus
-                || st.active_builder.is_some()
-            {
-                drop(st);
-                gesture.set_state(gtk4::EventSequenceState::Denied);
+            if current_btn == gdk::BUTTON_SECONDARY || current_btn == gdk::BUTTON_MIDDLE {
+                st.mouse_pan_start = Some((start_x, start_y));
                 return;
             }
 
-            let now_ns = app_start.elapsed().as_nanos() as u64;
-            let sample =
-                InputSample::new((x, y), None, now_ns, DeviceKind::Mouse, InputPhase::Down);
-
-            if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
-                st.mouse_drag_start = Some((x, y));
+            if current_btn == gdk::BUTTON_PRIMARY {
                 st.active_device = Some(DeviceKind::Mouse);
-                let id = st.next_stroke_id;
-                st.next_stroke_id += 1;
-                let mut builder =
-                    StrokeBuilder::new(id, st.current_style.clone(), st.pipeline_mode);
-                builder.process_sample(sample.clone());
-                st.active_builder = Some(builder);
+                st.mouse_drag_start = Some((start_x, start_y));
+                let (doc_x, doc_y) = st.viewport.screen_to_document((start_x, start_y));
+                let now_ns = app_start.elapsed().as_nanos() as u64;
 
-                if let Some(ref mut rec) = st.recorder {
-                    rec.record_sample(sample);
+                if st.active_tool == ActiveTool::Eraser {
+                    let radius = 12.0 / st.viewport.zoom;
+                    Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
+                    drop(st);
+                    area.queue_draw();
+                    return;
                 }
 
-                let palm_state = st.palm_engine.current_state();
-                drop(st);
+                let sample = InputSample::new(
+                    (doc_x, doc_y),
+                    None,
+                    now_ns,
+                    DeviceKind::Mouse,
+                    InputPhase::Down,
+                );
 
-                hud.update_metrics(|m| {
-                    m.device_name = "Mouse / Trackpad".to_string();
-                    m.live_pressure = None;
-                    m.palm_state = palm_state;
-                    m.samples_received += 1;
-                });
-            } else {
-                gesture.set_state(gtk4::EventSequenceState::Denied);
+                if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
+                    let id = st.next_stroke_id;
+                    st.next_stroke_id += 1;
+                    let mut builder =
+                        StrokeBuilder::new(id, st.current_style.clone(), st.pipeline_mode);
+                    builder.process_sample(sample.clone());
+                    st.active_builder = Some(builder);
+
+                    if let Some(ref mut rec) = st.recorder {
+                        rec.record_sample(sample);
+                    }
+
+                    drop(st);
+                    hud.update_metrics(|m| {
+                        m.device_name = "Mouse / Touchpad".to_string();
+                        m.samples_received += 1;
+                    });
+                }
+                area.queue_draw();
             }
-
-            area.queue_draw();
         });
 
-        // Drag Update (Mouse Move)
+        // Drag Update
         let state = state_clone.clone();
         let area = area_clone.clone();
-        let hud = hud_clone.clone();
-        drag.connect_drag_update(move |_gesture, offset_x, offset_y| {
+        drag.connect_drag_update(move |gesture, offset_x, offset_y| {
+            let current_btn = gesture.current_button();
             let mut st_guard = state.borrow_mut();
             let st = &mut *st_guard;
 
-            // ISOLAMENTO RIGIDO: il mouse non può MAI toccare uno stroke se il dispositivo attivo non è il Mouse!
+            if current_btn == gdk::BUTTON_SECONDARY || current_btn == gdk::BUTTON_MIDDLE {
+                if let Some((sx, sy)) = st.mouse_pan_start {
+                    st.viewport.offset_x += offset_x;
+                    st.viewport.offset_y += offset_y;
+                    st.mouse_pan_start = Some((sx + offset_x, sy + offset_y));
+                    drop(st_guard);
+                    area.queue_draw();
+                }
+                return;
+            }
+
             if st.active_device != Some(DeviceKind::Mouse) {
                 return;
             }
 
             if let Some((start_x, start_y)) = st.mouse_drag_start {
-                let cur_x = start_x + offset_x;
-                let cur_y = start_y + offset_y;
+                let cur_screen_x = start_x + offset_x;
+                let cur_screen_y = start_y + offset_y;
+                let (doc_x, doc_y) = st.viewport.screen_to_document((cur_screen_x, cur_screen_y));
                 let now_ns = app_start.elapsed().as_nanos() as u64;
+
+                if st.active_tool == ActiveTool::Eraser {
+                    let radius = 12.0 / st.viewport.zoom;
+                    Self::erase_strokes_at(st, (doc_x, doc_y), radius);
+                    drop(st_guard);
+                    area.queue_draw();
+                    return;
+                }
 
                 if let Some(ref mut builder) = st.active_builder {
                     let sample = InputSample::new(
-                        (cur_x, cur_y),
+                        (doc_x, doc_y),
                         None,
                         now_ns,
                         DeviceKind::Mouse,
@@ -702,26 +1002,18 @@ impl NoteCanvas {
                     if let Some(ref mut rec) = st.recorder {
                         rec.record_sample(sample);
                     }
-
-                    let (received, dropped) = builder.samples_stats();
-                    drop(st_guard);
-
-                    hud.update_metrics(|m| {
-                        m.samples_received = received;
-                        m.samples_dropped = dropped;
-                    });
                 }
             }
 
             area.queue_draw();
         });
 
-        // Drag End (Mouse Up)
+        // Drag End
         let state = state_clone.clone();
         let area = area_clone.clone();
-        let hud = hud_clone.clone();
         drag.connect_drag_end(move |_gesture, offset_x, offset_y| {
             let mut st = state.borrow_mut();
+            st.mouse_pan_start = None;
 
             if st.active_device != Some(DeviceKind::Mouse) {
                 st.mouse_drag_start = None;
@@ -732,10 +1024,19 @@ impl NoteCanvas {
             if let Some((start_x, start_y)) = st.mouse_drag_start.take() {
                 let cur_x = start_x + offset_x;
                 let cur_y = start_y + offset_y;
+                let (doc_x, doc_y) = st.viewport.screen_to_document((cur_x, cur_y));
                 let now_ns = app_start.elapsed().as_nanos() as u64;
 
+                if st.active_tool == ActiveTool::Eraser {
+                    let radius = 12.0 / st.viewport.zoom;
+                    Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
+                    drop(st);
+                    area.queue_draw();
+                    return;
+                }
+
                 let sample = InputSample::new(
-                    (cur_x, cur_y),
+                    (doc_x, doc_y),
                     None,
                     now_ns,
                     DeviceKind::Mouse,
@@ -746,24 +1047,117 @@ impl NoteCanvas {
                 if let Some(mut builder) = st.active_builder.take() {
                     builder.process_sample(sample.clone());
                     let stroke = builder.finish();
-                    st.completed_strokes.push(stroke);
+                    Self::commit_finished_stroke(&mut st, stroke);
 
                     if let Some(ref mut rec) = st.recorder {
                         rec.record_sample(sample);
                     }
                 }
-
-                let palm_state = st.palm_engine.current_state();
-                drop(st);
-
-                hud.update_metrics(|m| {
-                    m.palm_state = palm_state;
-                });
             }
 
             area.queue_draw();
         });
 
         self.area.add_controller(drag);
+    }
+
+    fn setup_scroll_and_zoom_controllers(&self) {
+        let scroll = gtk4::EventControllerScroll::new(
+            gtk4::EventControllerScrollFlags::BOTH_AXES | gtk4::EventControllerScrollFlags::KINETIC,
+        );
+        let state = self.state.clone();
+        let area = self.area.clone();
+        let hud = self.hud.clone();
+
+        scroll.connect_scroll(move |controller, dx, dy| {
+            let mut st = state.borrow_mut();
+            let is_ctrl = controller
+                .current_event_state()
+                .contains(gdk::ModifierType::CONTROL_MASK);
+
+            if is_ctrl {
+                let w = area.width() as f64;
+                let h = area.height() as f64;
+                let factor = if dy < 0.0 { 1.15 } else { 0.87 };
+                st.viewport.zoom_at((w / 2.0, h / 2.0), factor);
+                let pct = (st.viewport.zoom * 100.0).round() as usize;
+                drop(st);
+                hud.update_metrics(|m| m.zoom_pct = pct);
+                hud.update_view();
+            } else {
+                st.viewport.pan(-dx * 20.0, -dy * 20.0);
+                drop(st);
+            }
+
+            area.queue_draw();
+            glib::Propagation::Stop
+        });
+        self.area.add_controller(scroll);
+
+        let zoom = gtk4::GestureZoom::new();
+        let state = self.state.clone();
+        let area = self.area.clone();
+        let hud = self.hud.clone();
+
+        zoom.connect_scale_changed(move |_gesture, scale| {
+            let mut st = state.borrow_mut();
+            let w = area.width() as f64;
+            let h = area.height() as f64;
+            if scale > 0.05 && scale < 20.0 {
+                st.viewport.zoom_at((w / 2.0, h / 2.0), scale);
+                let pct = (st.viewport.zoom * 100.0).round() as usize;
+                drop(st);
+                hud.update_metrics(|m| m.zoom_pct = pct);
+                hud.update_view();
+                area.queue_draw();
+            }
+        });
+        self.area.add_controller(zoom);
+    }
+
+    /// Cancella i tratti che intersecano la coordinata del documento indicata.
+    fn erase_strokes_at(st: &mut CanvasState, doc_pt: (f64, f64), radius: f64) {
+        if st.document.pages.is_empty() {
+            return;
+        }
+
+        let page_idx = Viewport::find_page_index_at_y(doc_pt.1, st.document.pages.len());
+        if let Some(page) = st.document.pages.get_mut(page_idx) {
+            let page_id = page.id;
+            let mut erased = Vec::new();
+
+            for item in &page.items {
+                let ItemKind::Stroke(ref s) = item.kind;
+                if s.intersects_point(doc_pt, radius) {
+                    erased.push(item.clone());
+                }
+            }
+
+            if !erased.is_empty() {
+                st.history.execute(
+                    DocCommand::EraseItems {
+                        page_id,
+                        erased_items: erased,
+                    },
+                    &mut st.document,
+                );
+                st.persist_changes();
+            }
+        }
+    }
+
+    /// Salva un tratto appena completato nella pagina corrispondente del documento.
+    fn commit_finished_stroke(st: &mut CanvasState, stroke: Stroke) {
+        if stroke.points.is_empty() || st.document.pages.is_empty() {
+            return;
+        }
+
+        let first_pt = &stroke.points[0];
+        let page_idx = Viewport::find_page_index_at_y(first_pt.y, st.document.pages.len());
+        let page_id = st.document.pages[page_idx].id;
+
+        st.history
+            .execute(DocCommand::AddStroke { page_id, stroke }, &mut st.document);
+        st.persist_changes();
     }
 }

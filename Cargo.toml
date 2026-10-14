@@ -1,7 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/uninote-core",
     "crates/uninote-stroke",
+    "crates/uninote-storage",
     "crates/uninote-app",
 ]
 
