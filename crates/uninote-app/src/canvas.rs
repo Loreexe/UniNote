@@ -14,12 +14,14 @@ use uninote_stroke::{
 pub struct CanvasState {
     pub completed_strokes: Vec<Stroke>,
     pub active_builder: Option<StrokeBuilder>,
+    pub active_device: Option<DeviceKind>,
     pub palm_engine: PalmRejectionEngine,
     pub pipeline_mode: PipelineMode,
     pub current_style: StrokeStyle,
     pub next_stroke_id: u64,
     pub recorder: Option<RecordedSession>,
     pub last_sample_time: Option<Instant>,
+    pub last_stylus_time: Option<Instant>,
     pub mouse_drag_start: Option<(f64, f64)>,
 }
 
@@ -28,12 +30,14 @@ impl CanvasState {
         Self {
             completed_strokes: Vec::new(),
             active_builder: None,
+            active_device: None,
             palm_engine: PalmRejectionEngine::new(TouchMode::Off),
             pipeline_mode: PipelineMode::CatmullRomSpline,
             current_style: StrokeStyle::default(),
             next_stroke_id: 1,
             recorder: None,
             last_sample_time: None,
+            last_stylus_time: None,
             mouse_drag_start: None,
         }
     }
@@ -41,6 +45,8 @@ impl CanvasState {
     pub fn clear(&mut self) {
         self.completed_strokes.clear();
         self.active_builder = None;
+        self.active_device = None;
+        self.mouse_drag_start = None;
     }
 }
 
@@ -203,7 +209,7 @@ impl NoteCanvas {
     }
 
     /// Intercetta gli eventi hardware in fase di cattura (Capture Phase) PRIMA che raggiungano
-    /// le gesture e i controller di drag, garantendo la soppressione radicale del tocco e del palmo.
+    /// le gesture e i controller di drag, garantendo la soppressione del tocco e del palmo sul foglio.
     fn setup_capture_controller(&self) {
         let legacy = gtk4::EventControllerLegacy::new();
         legacy.set_propagation_phase(gtk4::PropagationPhase::Capture);
@@ -212,6 +218,15 @@ impl NoteCanvas {
         let app_start = self.app_start;
 
         legacy.connect_event(move |_controller, event| {
+            // Eventi stilo/penna hardware: devono SEMPRE procedere al gesture controller dedicato
+            let is_stylus = event.device_tool().is_some()
+                || event
+                    .device()
+                    .is_some_and(|d| d.source() == gdk::InputSource::Pen);
+            if is_stylus {
+                return glib::Propagation::Proceed;
+            }
+
             let event_type = event.event_type();
             let is_touch = matches!(
                 event_type,
@@ -246,17 +261,17 @@ impl NoteCanvas {
                 let palm_state = st.palm_engine.current_state();
                 drop(st);
 
+                // Aggiorna metriche HUD in modo asincrono/leggero (SENZA layout sincrono set_label che causava freeze)
                 hud_clone.update_metrics(|m| {
                     m.touch_suppressed = suppressed_count;
                     m.palm_state = palm_state;
                 });
-                hud_clone.update_view();
 
                 // IL TOCCO NON SCRIVE MAI SUL CANVAS DI DISEGNO: stop assoluto alla propagazione
                 return glib::Propagation::Stop;
             }
 
-            // Soppressione categorica dei puntatori emulati sul canvas di disegno
+            // Soppressione categorica dei puntatori emulati dal touch sul canvas di disegno
             if event.is_pointer_emulated() {
                 return glib::Propagation::Stop;
             }
@@ -295,6 +310,8 @@ impl NoteCanvas {
             );
 
             let mut st = state.borrow_mut();
+            st.last_stylus_time = Some(Instant::now());
+            st.active_device = Some(DeviceKind::Stylus);
 
             // Sicurezza: se per qualsiasi motivo era rimasto un tratto pendente non chiuso, finalizzalo ora
             if let Some(prev_builder) = st.active_builder.take() {
@@ -342,34 +359,47 @@ impl NoteCanvas {
 
             let mut st_guard = state.borrow_mut();
             let st = &mut *st_guard;
+            st.last_stylus_time = Some(now);
+
             if let Some(ref mut builder) = st.active_builder {
-                // 1. Controllo di stacco fisico (Tip-Up Threshold): se la pressione scende sotto l'1.5%,
-                // la penna ha interrotto il contatto con il vetro. Finalizziamo all'istante il tratto
-                // per bloccare sul nascere qualsiasi spike generato dal follow-through aereo della mano.
-                if let Some(p) = pressure {
-                    if p <= TIP_LIFT_PRESSURE_THRESHOLD {
-                        if let Some(b) = st.active_builder.take() {
-                            let stroke = b.finish();
-                            st.completed_strokes.push(stroke);
-                        }
-                        st.last_sample_time = None;
-                        drop(st_guard);
-                        area.queue_draw();
-                        return;
+                // 1. Rilevamento dello stato di contatto fisico della punta (Tip Contact Detection):
+                // In GTK4 su Wayland/libinput, quando la penna tocca fisicamente il vetro, l'evento ha BUTTON1_MASK.
+                // Nel momento in cui la punta stacca nel raggio di hover/prossimità, BUTTON1_MASK viene rilasciato
+                // oppure l'asse di pressione diventa None o <= 0.015.
+                let has_button1 = gesture.current_event().is_some_and(|ev| {
+                    ev.modifier_state()
+                        .contains(gdk::ModifierType::BUTTON1_MASK)
+                });
+
+                let p_val = pressure.unwrap_or(0.0);
+                let is_lifted =
+                    !has_button1 || pressure.is_none() || p_val <= TIP_LIFT_PRESSURE_THRESHOLD;
+
+                if is_lifted {
+                    // Punta staccata: finalizza all'istante il tratto.
+                    // Questo elimina categoricamente ogni sbavatura/spike verso la stanghetta successiva (es. le 'E' e le 't').
+                    if let Some(b) = st.active_builder.take() {
+                        let stroke = b.finish();
+                        st.completed_strokes.push(stroke);
                     }
+                    st.active_device = None;
+                    st.last_sample_time = None;
+                    drop(st_guard);
+                    area.queue_draw();
+                    return;
                 }
 
-                // 2. Protezione dai salti aerei (Leap Detection): se tra l'ultimo punto e quello corrente
-                // c'è un salto anomalo (> 35 px in 16ms) a pressione debole (< 0.08), si tratta di uno
-                // spostamento in volo verso la lettera successiva. Chiudiamo il tratto senza connettere il salto.
+                // 2. Protezione dai salti aerei e scatti (Leap Protection):
+                // Se tra l'ultimo punto e quello corrente la distanza supera 24px in un singolo campione
+                // e la pressione è debole (< 0.10), si tratta di uno stacco rapido in volo non intercettato.
                 if let Some(last_pt) = builder.stroke.points.last() {
                     let dist = ((last_pt.x - x).powi(2) + (last_pt.y - y).powi(2)).sqrt();
-                    let p_val = pressure.unwrap_or(0.0);
-                    if dist > 35.0 && p_val < 0.08 {
+                    if dist > 24.0 && p_val < 0.10 {
                         if let Some(b) = st.active_builder.take() {
                             let stroke = b.finish();
                             st.completed_strokes.push(stroke);
                         }
+                        st.active_device = None;
                         st.last_sample_time = None;
                         drop(st_guard);
                         area.queue_draw();
@@ -429,6 +459,9 @@ impl NoteCanvas {
             let now_ns = app_start.elapsed().as_nanos() as u64;
 
             let mut st = state.borrow_mut();
+            st.last_stylus_time = Some(Instant::now());
+            st.active_device = None;
+
             let sample =
                 InputSample::new((x, y), pressure, now_ns, DeviceKind::Stylus, InputPhase::Up);
             st.palm_engine.evaluate_sample(&sample);
@@ -462,6 +495,8 @@ impl NoteCanvas {
         stylus.connect_proximity(move |_gesture, _x, _y| {
             let now_ns = app_start.elapsed().as_nanos() as u64;
             let mut st = state.borrow_mut();
+            st.last_stylus_time = Some(Instant::now());
+            st.active_device = None;
             st.palm_engine.on_pen_proximity(true, now_ns);
 
             // Se la penna entra in prossimità aerea (hover), qualsiasi tratto in corso è terminato
@@ -483,7 +518,6 @@ impl NoteCanvas {
             hud.update_metrics(|m| {
                 m.palm_state = palm_state;
             });
-            hud.update_view();
         });
 
         self.area.add_controller(stylus);
@@ -532,8 +566,19 @@ impl NoteCanvas {
             }
 
             let mut st = state.borrow_mut();
-            // Se la penna è attiva (scrittura, prossimità o cooldown) o c'è già uno stroke in corso: NEGA
-            if st.palm_engine.is_pen_active() || st.active_builder.is_some() {
+
+            // Se la penna è attiva, è in prossimità, è in cooldown, oppure è stata usata di recente (< 2000 ms):
+            // NEGA categoricamente il disegno del mouse/touchpad per impedire che il palmo appoggiato sul trackpad
+            // o sul bordo del laptop generi linee spurie o interferisca con la scrittura!
+            let recent_stylus = st
+                .last_stylus_time
+                .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(2000));
+
+            if st.active_device == Some(DeviceKind::Stylus)
+                || st.palm_engine.is_pen_active()
+                || recent_stylus
+                || st.active_builder.is_some()
+            {
                 drop(st);
                 gesture.set_state(gtk4::EventSequenceState::Denied);
                 return;
@@ -545,6 +590,7 @@ impl NoteCanvas {
 
             if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
                 st.mouse_drag_start = Some((x, y));
+                st.active_device = Some(DeviceKind::Mouse);
                 let id = st.next_stroke_id;
                 st.next_stroke_id += 1;
                 let mut builder =
@@ -579,6 +625,12 @@ impl NoteCanvas {
         drag.connect_drag_update(move |_gesture, offset_x, offset_y| {
             let mut st_guard = state.borrow_mut();
             let st = &mut *st_guard;
+
+            // ISOLAMENTO RIGIDO: il mouse non può MAI toccare uno stroke se il dispositivo attivo non è il Mouse!
+            if st.active_device != Some(DeviceKind::Mouse) {
+                return;
+            }
+
             if let Some((start_x, start_y)) = st.mouse_drag_start {
                 let cur_x = start_x + offset_x;
                 let cur_y = start_y + offset_y;
@@ -617,6 +669,13 @@ impl NoteCanvas {
         let hud = hud_clone.clone();
         drag.connect_drag_end(move |_gesture, offset_x, offset_y| {
             let mut st = state.borrow_mut();
+
+            if st.active_device != Some(DeviceKind::Mouse) {
+                st.mouse_drag_start = None;
+                return;
+            }
+            st.active_device = None;
+
             if let Some((start_x, start_y)) = st.mouse_drag_start.take() {
                 let cur_x = start_x + offset_x;
                 let cur_y = start_y + offset_y;

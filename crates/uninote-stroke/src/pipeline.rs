@@ -1,7 +1,7 @@
 use crate::filter::{OneEuroConfig, OneEuroPointFilter, OneEuroScalar};
 use crate::geometry::{compute_width, is_discrete_dot};
 pub use crate::types::PipelineMode;
-use crate::types::{InputPhase, InputSample, Stroke, StrokePoint, StrokeStyle};
+use crate::types::{DeviceKind, InputPhase, InputSample, Stroke, StrokePoint, StrokeStyle};
 
 /// Costruttore di un singolo tratto a partire dal flusso di campioni di input.
 pub struct StrokeBuilder {
@@ -59,7 +59,13 @@ impl StrokeBuilder {
                             self.pressure_filter.filter(p, t_s)
                         }
                     },
-                    None => 0.5,
+                    None => {
+                        if sample.device_kind == DeviceKind::Stylus {
+                            0.05
+                        } else {
+                            0.5
+                        }
+                    }
                 };
 
                 let width = compute_width(sample.pressure, &self.stroke.style);
@@ -91,9 +97,22 @@ impl StrokeBuilder {
                     }
                 }
 
-                // Controllo stacco punta: se la pressione hardware è sotto soglia di contatto (1.5%),
-                // la penna ha fisicamente staccato dal vetro: scarta il campione per impedire code e spike.
-                if let Some(raw_p) = sample.pressure {
+                // Controllo stacco punta: per uno stilo, se la pressione hardware manca (hover)
+                // oppure è sotto la soglia di contatto (1.5%), la punta ha staccato dal vetro:
+                // scarta il campione per impedire sbavature, code aeree e spike di transizione.
+                if sample.device_kind == DeviceKind::Stylus {
+                    match sample.pressure {
+                        Some(raw_p) if raw_p <= 0.015 => {
+                            self.samples_dropped += 1;
+                            return None;
+                        }
+                        None => {
+                            self.samples_dropped += 1;
+                            return None;
+                        }
+                        _ => {}
+                    }
+                } else if let Some(raw_p) = sample.pressure {
                     if raw_p <= 0.015 {
                         self.samples_dropped += 1;
                         return None;

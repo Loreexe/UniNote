@@ -542,3 +542,36 @@ fn test_tail_trimming_on_stroke_finish() {
     );
     assert_eq!(stroke.points.last().unwrap().x, 20.0);
 }
+
+#[test]
+fn test_stylus_hover_none_pressure_dropped() {
+    let style = StrokeStyle::default();
+    let mut builder = StrokeBuilder::new(11, style, PipelineMode::CatmullRomSpline);
+
+    builder.process_sample(InputSample::new(
+        (10.0, 10.0),
+        Some(0.4),
+        1_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Down,
+    ));
+
+    // Campione Move con pressure: None (hover / transizione del digitizer in volo)
+    let dropped_pt = builder.process_sample(InputSample::new(
+        (30.0, 15.0),
+        None,
+        2_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Move,
+    ));
+    assert!(
+        dropped_pt.is_none(),
+        "Un punto di stylus Move con pressure None deve essere scartato"
+    );
+
+    let (rec, drop) = builder.samples_stats();
+    assert_eq!(rec, 2);
+    assert_eq!(drop, 1);
+    let stroke = builder.finish();
+    assert_eq!(stroke.points.len(), 1);
+}
