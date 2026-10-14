@@ -1,0 +1,481 @@
+/* UniNote — Dank Material Shell (DMS) & Material Design 3 Styling for GTK4 */
+
+/* Palette Tokens */
+@define-color dms_surface #0A151A;
+@define-color dms_surface_container rgba(23, 33, 38, 0.94);
+@define-color dms_surface_container_high #202C32;
+@define-color dms_surface_container_highest #2A373E;
+@define-color dms_outline #28343B;
+@define-color dms_outline_variant #3E484E;
+@define-color dms_primary #6DD2FF;
+@define-color dms_primary_container #004D65;
+@define-color dms_on_primary #003547;
+@define-color dms_on_primary_container #BFE8FF;
+@define-color dms_accent_mint #79D9A5;
+@define-color dms_accent_coral #FFB4AB;
+@define-color dms_accent_gold #FFD875;
+@define-color dms_text_primary #D9E4EB;
+@define-color dms_text_secondary #8E999F;
+
+/* Finestra principale a tutto schermo con canvas scuro */
+window.uninote-window {
+    background-color: @dms_surface;
+    color: @dms_text_primary;
+}
+
+/* Pillole flottanti (Floating Islands & Docks) */
+.dms-pill {
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    border-radius: 25px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+    padding: 7px 12px;
+}
+
+.dms-pill-dense {
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    border-radius: 25px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+    padding: 6px 10px;
+}
+
+/* Badge di brand borderless in alto a sinistra */
+.dms-brand-badge {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+}
+
+.brand-title {
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.3px;
+    color: @dms_text_primary;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+.brand-dot {
+    font-weight: 700;
+    font-size: 11px;
+    color: @dms_text_secondary;
+    opacity: 0.55;
+}
+
+.brand-ver {
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.2px;
+    color: @dms_text_secondary;
+    opacity: 0.75;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* Pulsanti rotondi di azione rapida (Export, Settings) */
+.dms-action-btn {
+    min-width: 42px;
+    min-height: 42px;
+    border-radius: 21px;
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    color: @dms_text_primary;
+    padding: 0;
+    transition: all 180ms ease-in-out;
+}
+
+.dms-action-btn:hover {
+    background-color: @dms_surface_container_high;
+    border-color: @dms_outline_variant;
+}
+
+.dms-action-btn:active {
+    background-color: @dms_primary_container;
+    color: @dms_primary;
+}
+
+/* Pulsanti rotondi interni alle isole (36x36) */
+.dms-tool-btn {
+    min-width: 36px;
+    min-height: 36px;
+    border-radius: 18px;
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: @dms_text_secondary;
+    padding: 0;
+    margin: 0 2px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-tool-btn:hover {
+    background-color: @dms_surface_container_high;
+    color: @dms_text_primary;
+}
+
+.dms-tool-btn.active {
+    background-color: @dms_primary_container;
+    color: @dms_primary;
+    border: 1.5px solid @dms_primary;
+}
+
+.dms-tool-btn-neutral {
+    min-width: 36px;
+    min-height: 36px;
+    border-radius: 18px;
+    background-color: @dms_surface_container_high;
+    border: none;
+    color: @dms_text_secondary;
+    padding: 0;
+    margin: 0 2px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-tool-btn-neutral:hover {
+    background-color: @dms_surface_container_highest;
+    color: @dms_text_primary;
+}
+
+/* Chip Selettore Spessore (76x36) */
+.dms-thick-chip {
+    min-width: 76px;
+    min-height: 36px;
+    border-radius: 18px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    padding: 0 8px;
+    margin: 0 4px;
+    color: @dms_text_primary;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-thick-chip:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+}
+
+.thick-value {
+    font-weight: 700;
+    font-size: 12px;
+    color: @dms_text_primary;
+}
+
+/* Dock Sinistro dei Colori (Verticale) */
+.dms-left-dock {
+    min-width: 54px;
+    border-radius: 27px;
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+    padding: 12px 6px;
+}
+
+.dms-dock-handle-area {
+    min-height: 18px;
+    padding: 2px 0 6px 0;
+    cursor: grab;
+}
+
+.dms-dock-handle-area:active {
+    cursor: grabbing;
+}
+
+.dms-dock-handle {
+    min-width: 24px;
+    min-height: 4px;
+    border-radius: 2px;
+    background-color: @dms_outline_variant;
+    transition: background-color 150ms ease-in-out;
+}
+
+.dms-dock-handle-area:hover .dms-dock-handle {
+    background-color: @dms_primary;
+}
+
+.dms-pen-slot {
+    min-width: 40px;
+    min-height: 40px;
+    border-radius: 14px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    padding: 0;
+    margin: 4px 0;
+    transition: all 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dms-pen-slot:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+}
+
+.dms-pen-slot.active {
+    border-radius: 20px;
+    border: 2px solid @dms_primary;
+    background-color: @dms_primary;
+    box-shadow: 0 0 10px rgba(109, 210, 255, 0.4);
+}
+
+.dms-add-pen-btn {
+    min-width: 36px;
+    min-height: 36px;
+    border-radius: 18px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_secondary;
+    padding: 0;
+    margin-top: 8px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-add-pen-btn:hover {
+    background-color: @dms_surface_container_highest;
+    color: @dms_text_primary;
+}
+
+/* Dock Inferiore di Navigazione */
+.dms-dock-divider {
+    min-width: 1px;
+    min-height: 24px;
+    background-color: @dms_outline;
+    margin: 0 8px;
+}
+
+.dms-btn-add-page {
+    min-width: 96px;
+    min-height: 34px;
+    border-radius: 17px;
+    background-color: @dms_primary_container;
+    border: 1px solid @dms_primary;
+    color: @dms_on_primary_container;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 0 12px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-btn-add-page:hover {
+    background-color: #00607d;
+    box-shadow: 0 0 8px rgba(109, 210, 255, 0.3);
+}
+
+.dms-btn-grid-select {
+    min-width: 104px;
+    min-height: 34px;
+    border-radius: 17px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+    font-weight: 600;
+    font-size: 11px;
+    padding: 0 10px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-btn-grid-select:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+}
+
+.dms-zoom-segment {
+    min-width: 76px;
+    min-height: 34px;
+    border-radius: 17px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    padding: 0 4px;
+}
+
+.dms-zoom-btn {
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 12px;
+    background: transparent;
+    border: none;
+    color: @dms_text_secondary;
+    padding: 0;
+}
+
+.dms-zoom-btn:hover {
+    color: @dms_text_primary;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.zoom-value {
+    font-weight: 700;
+    font-size: 11px;
+    color: @dms_text_primary;
+    margin: 0 4px;
+}
+
+.dock-page-text {
+    font-weight: 600;
+    font-size: 12px;
+    color: @dms_text_primary;
+    margin: 0 8px;
+}
+
+/* Stili per Popover di Controllo & Settings */
+popover.dms-popover {
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    border-radius: 18px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+    padding: 14px;
+    color: @dms_text_primary;
+}
+
+popover.dms-popover label {
+    color: @dms_text_primary;
+}
+
+.dms-popover-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: @dms_text_secondary;
+    margin-top: 4px;
+    margin-bottom: 2px;
+}
+
+/* Restyling Popover Calibro Tratto */
+.dms-stroke-preview-area {
+    min-height: 40px;
+    border-radius: 12px;
+    background-color: @dms_surface;
+    border: 1px solid @dms_outline;
+    margin-bottom: 4px;
+}
+
+scale.dms-pill-scale trough {
+    min-height: 8px;
+    border-radius: 4px;
+    background-color: @dms_surface_container_highest;
+}
+
+scale.dms-pill-scale highlight {
+    min-height: 8px;
+    border-radius: 4px;
+    background-color: @dms_primary;
+}
+
+scale.dms-pill-scale slider {
+    min-width: 18px;
+    min-height: 18px;
+    margin: -5px 0;
+    border-radius: 9px;
+    background-color: @dms_text_primary;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.dms-preset-chip {
+    min-height: 28px;
+    border-radius: 14px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_secondary;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 0 10px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-preset-chip:hover {
+    background-color: @dms_surface_container_highest;
+    color: @dms_text_primary;
+    border-color: @dms_outline_variant;
+}
+
+.dms-preset-chip.active {
+    background-color: @dms_primary_container;
+    color: @dms_primary;
+    border: 1.5px solid @dms_primary;
+}
+
+/* Restyling Popover Tipo Foglio: Card Miniatura Visuali */
+.dms-paper-card {
+    min-width: 80px;
+    min-height: 108px;
+    border-radius: 14px;
+    background-color: @dms_surface_container_high;
+    border: 1.5px solid @dms_outline;
+    padding: 8px 6px;
+    transition: all 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dms-paper-card:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+}
+
+.dms-paper-card.active {
+    border: 2px solid @dms_primary;
+    background-color: @dms_surface_container_highest;
+    box-shadow: 0 0 12px rgba(109, 210, 255, 0.35);
+}
+
+.dms-paper-card-title {
+    font-weight: 700;
+    font-size: 11px;
+    color: @dms_text_primary;
+}
+
+/* Restyling Popover Esportazione & Quaderno: DMS Action Cards */
+.dms-action-card {
+    min-width: 320px;
+    border-radius: 12px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    padding: 10px 12px;
+    margin: 3px 0;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-action-card:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+}
+
+.dms-action-card.disabled {
+    opacity: 0.65;
+}
+
+.dms-card-icon-box {
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 8px;
+    background-color: @dms_surface_container_highest;
+    margin-right: 12px;
+}
+
+.dms-card-title {
+    font-weight: 700;
+    font-size: 12px;
+    color: @dms_text_primary;
+}
+
+.dms-card-subtitle {
+    font-size: 10px;
+    color: @dms_text_secondary;
+}
+
+.dms-shortcut-badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: @dms_text_secondary;
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    border-radius: 6px;
+    padding: 2px 6px;
+}
+
+.dms-chip-coming-soon {
+    font-size: 9px;
+    font-weight: 700;
+    color: @dms_accent_coral;
+    background-color: rgba(255, 180, 171, 0.12);
+    border: 1px solid rgba(255, 180, 171, 0.3);
+    border-radius: 6px;
+    padding: 2px 6px;
+}

@@ -603,3 +603,125 @@ fn test_stroke_intersects_point_for_eraser() {
     // Punto vicino agli estremi (98, 100) -> interseca
     assert!(stroke.intersects_point((98.0, 100.0), 4.0));
 }
+
+#[test]
+fn test_palm_proximity_timeout_auto_expiry() {
+    let mut engine = PalmRejectionEngine::new(TouchMode::GesturesOnly);
+
+    // Penna entra in prossimità al tempo t = 1.000.000.000 ns
+    let t0 = 1_000_000_000;
+    engine.on_pen_proximity(true, t0);
+    assert_eq!(engine.current_state(), PalmState::PenProximity);
+
+    // Dopo 100ms (t = 1.100.000.000), il tocco deve essere soppresso perché siamo entro i 300ms
+    let t_100ms = t0 + 100_000_000;
+    assert!(
+        engine.should_suppress_raw_touch(true, 10, t_100ms),
+        "Tocco entro 100ms da prossimità deve essere soppresso"
+    );
+    assert_eq!(engine.current_state(), PalmState::PenProximity);
+
+    // Rilascia lo slot 10
+    engine.on_touch_release(10);
+
+    // Dopo 300ms esatti o oltre (t = 1.300.000.001 ns), la prossimità deve scadere automaticamente a Idle
+    let t_300ms_plus = t0 + uninote_stroke::PROXIMITY_TIMEOUT_NS + 1;
+    let suppressed = engine.should_suppress_raw_touch(true, 20, t_300ms_plus);
+    assert!(
+        !suppressed,
+        "Tocco dopo timeout di 300ms deve essere consentito"
+    );
+    assert_eq!(engine.current_state(), PalmState::Idle);
+
+    // Verifica auto-expiry anche attraverso evaluate_sample con InputSample
+    engine.on_pen_proximity(true, 2_000_000_000);
+    assert_eq!(engine.current_state(), PalmState::PenProximity);
+
+    let sample_after_expiry = InputSample {
+        position: (250.0, 250.0),
+        pressure: None,
+        tilt: None,
+        timestamp_ns: 2_000_000_000 + uninote_stroke::PROXIMITY_TIMEOUT_NS + 1_000,
+        device_kind: DeviceKind::Touch,
+        source_id: 30,
+        phase: InputPhase::Down,
+    };
+    assert_eq!(
+        engine.evaluate_sample(&sample_after_expiry),
+        InputDisposition::AcceptGesture
+    );
+    assert_eq!(engine.current_state(), PalmState::Idle);
+}
+
+#[test]
+fn test_palm_touch_slot_tracking_and_full_release_clear() {
+    let mut engine = PalmRejectionEngine::new(TouchMode::GesturesOnly);
+
+    // Inizialmente 0 slot attivi e 0 soppressi
+    assert_eq!(engine.active_touch_slots_count(), 0);
+    assert_eq!(engine.suppressed_touch_slots_count(), 0);
+
+    // Due dita a contatto fisico: slot 1 e slot 2
+    assert!(!engine.should_suppress_raw_touch(true, 1, 1_000_000));
+    assert!(!engine.should_suppress_raw_touch(true, 2, 2_000_000));
+    assert_eq!(engine.active_touch_slots_count(), 2);
+    assert_eq!(engine.suppressed_touch_slots_count(), 0);
+
+    // Penna tocca il vetro: lo stato passa a PenDrawing
+    let pen_sample = InputSample::new(
+        (100.0, 100.0),
+        Some(0.8),
+        3_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Down,
+    );
+    assert_eq!(
+        engine.evaluate_sample(&pen_sample),
+        InputDisposition::AcceptDraw
+    );
+
+    // Appoggio del palmo (slot 3) mentre la penna è attiva: viene soppresso e inserito negli slot soppressi
+    assert!(engine.should_suppress_raw_touch(true, 3, 4_000_000));
+    assert_eq!(engine.active_touch_slots_count(), 3);
+    assert_eq!(engine.suppressed_touch_slots_count(), 1);
+
+    // Penna si solleva (cooldown 200ms)
+    let pen_up = InputSample::new(
+        (100.0, 100.0),
+        Some(0.0),
+        5_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Up,
+    );
+    engine.evaluate_sample(&pen_up);
+
+    // Tempo avanza di 250ms (cooldown scaduto)
+    let now = 5_000_000 + 250_000_000;
+
+    // Slot 3 è ancora a contatto ed era iniziato durante la penna: deve rimanere soppresso
+    assert!(engine.should_suppress_raw_touch(false, 3, now));
+
+    // Si sollevano le dita: rilascio slot 1
+    engine.on_touch_release(1);
+    assert_eq!(engine.active_touch_slots_count(), 2);
+    assert_eq!(engine.suppressed_touch_slots_count(), 1);
+
+    // Rilascio slot 2
+    engine.on_touch_release(2);
+    assert_eq!(engine.active_touch_slots_count(), 1);
+    assert_eq!(engine.suppressed_touch_slots_count(), 1);
+
+    // Rilascio ultimo tocco (slot 3): lo schermo è completamente libero
+    engine.on_touch_release(3);
+    assert_eq!(engine.active_touch_slots_count(), 0);
+    // TUTTI gli slot soppressi devono essere stati resettati
+    assert_eq!(engine.suppressed_touch_slots_count(), 0);
+
+    // Se ora lo slot 3 torna a toccare lo schermo, NON deve rimanere bloccato
+    let new_touch = engine.should_suppress_raw_touch(true, 3, now + 10_000_000);
+    assert!(
+        !new_touch,
+        "Lo slot 3 deve essere riammesso una volta che tutti i contatti sono stati rilasciati"
+    );
+    assert_eq!(engine.active_touch_slots_count(), 1);
+}

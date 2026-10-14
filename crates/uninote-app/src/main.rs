@@ -1,5 +1,7 @@
 mod canvas;
 mod hud;
+mod icons;
+pub mod preferences;
 mod window;
 
 use libadwaita::prelude::*;

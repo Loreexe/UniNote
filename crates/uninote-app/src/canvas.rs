@@ -18,6 +18,10 @@ use uninote_stroke::{
 pub enum ActiveTool {
     Pen,
     Eraser,
+    Highlighter,
+    Text,
+    Line,
+    Shapes,
 }
 
 /// Stato interno condiviso del canvas di UniNote.
@@ -90,6 +94,7 @@ impl CanvasState {
         self.persist_changes();
     }
 
+    #[allow(dead_code)]
     pub fn clear_current_page(&mut self) {
         if let Some(page) = self.document.pages.first_mut() {
             let erased = page.items.clone();
@@ -131,6 +136,44 @@ impl CanvasState {
     }
 }
 
+/// Adatta il colore a video in base al tema scuro/chiaro della pagina senza mutare il dato memorizzato.
+pub fn adapt_ink_color(color: (f64, f64, f64, f64), is_dark_sheet: bool) -> (f64, f64, f64, f64) {
+    let (r, g, b, a) = color;
+    // Calcolo luminanza percettiva standard Rec. 709
+    let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let max_c = r.max(g).max(b);
+    let min_c = r.min(g).min(b);
+    let chroma = max_c - min_c;
+
+    if is_dark_sheet {
+        if lum < 0.35 {
+            if chroma < 0.12 {
+                // Inchiostro scuro neutro (nero, grafite) -> Bianco ghiaccio (#ECEFF4)
+                (0.925, 0.937, 0.957, a)
+            } else {
+                // Inchiostro scuro cromatico (navy, bordeaux, verde bosco) -> Tone lift pastello
+                let lift = ((0.75 - lum) / (1.0 - lum).max(0.01)).clamp(0.0, 0.85);
+                (
+                    (r + (1.0 - r) * lift).clamp(0.0, 1.0),
+                    (g + (1.0 - g) * lift).clamp(0.0, 1.0),
+                    (b + (1.0 - b) * lift).clamp(0.0, 1.0),
+                    a,
+                )
+            }
+        } else {
+            // Inchiostri già vividi (ciano, menta, oro, evidenziatori fluorescenti)
+            (r, g, b, a)
+        }
+    } else {
+        // Sul foglio bianco chiaro: se un tratto era bianco (#FFFFFF / off-white), inverti a grafite scura
+        if lum > 0.85 && chroma < 0.12 {
+            (0.090, 0.129, 0.149, a) // #172126
+        } else {
+            (r, g, b, a)
+        }
+    }
+}
+
 pub struct NoteCanvas {
     area: DrawingArea,
     state: Rc<RefCell<CanvasState>>,
@@ -145,6 +188,13 @@ impl NoteCanvas {
             .vexpand(true)
             .focusable(true)
             .build();
+
+        let area_weak = area.downgrade();
+        libadwaita::StyleManager::default().connect_dark_notify(move |_| {
+            if let Some(a) = area_weak.upgrade() {
+                a.queue_draw();
+            }
+        });
 
         let state = Rc::new(RefCell::new(CanvasState::new()));
         let app_start = Instant::now();
@@ -177,6 +227,10 @@ impl NoteCanvas {
         let tool_name = match tool {
             ActiveTool::Pen => "Penna",
             ActiveTool::Eraser => "Gomma (Tratto Intero)",
+            ActiveTool::Highlighter => "Evidenziatore",
+            ActiveTool::Text => "Testo",
+            ActiveTool::Line => "Linea Dritta",
+            ActiveTool::Shapes => "Forme",
         };
         self.hud
             .update_metrics(|m| m.current_tool = tool_name.to_string());
@@ -262,6 +316,57 @@ impl NoteCanvas {
         self.area.queue_draw();
     }
 
+    pub fn total_pages(&self) -> usize {
+        self.state.borrow().document.pages.len().max(1)
+    }
+
+    pub fn current_page_index(&self) -> usize {
+        let st = self.state.borrow();
+        let center_screen_y = (self.area.height() as f64) / 2.0;
+        let (_doc_x, doc_y) = st.viewport.screen_to_document((0.0, center_screen_y));
+        for (i, _) in st.document.pages.iter().enumerate() {
+            let rect = Viewport::page_rect(i);
+            if doc_y >= rect.y && doc_y <= rect.y + rect.height {
+                return i;
+            }
+        }
+        0
+    }
+
+    pub fn scroll_to_page(&self, page_idx: usize) {
+        let mut st = self.state.borrow_mut();
+        let count = st.document.pages.len();
+        if page_idx < count {
+            let page_rect = Viewport::page_rect(page_idx);
+            st.viewport.offset_y = -page_rect.y * st.viewport.zoom + 40.0;
+            drop(st);
+            self.area.queue_draw();
+        }
+    }
+
+    pub fn set_current_page_background(&self, bg: PageBackground) {
+        let mut st = self.state.borrow_mut();
+        let cur_idx = {
+            let center_screen_y = (self.area.height() as f64) / 2.0;
+            let (_doc_x, doc_y) = st.viewport.screen_to_document((0.0, center_screen_y));
+            let mut found = 0;
+            for (i, _) in st.document.pages.iter().enumerate() {
+                let rect = Viewport::page_rect(i);
+                if doc_y >= rect.y && doc_y <= rect.y + rect.height {
+                    found = i;
+                    break;
+                }
+            }
+            found
+        };
+        if let Some(page) = st.document.pages.get_mut(cur_idx) {
+            page.background = bg;
+            st.persist_changes();
+        }
+        drop(st);
+        self.area.queue_draw();
+    }
+
     pub fn new_document(&self) {
         let mut st = self.state.borrow_mut();
         st.document = Document::new_empty("Nuovo Quaderno");
@@ -289,6 +394,7 @@ impl NoteCanvas {
         self.area.queue_draw();
     }
 
+    #[allow(dead_code)]
     pub fn open_file(&self, path: PathBuf) -> Result<(), String> {
         let store = DocumentStore::open_or_create(&path).map_err(|e| e.to_string())?;
         let doc = store.load_document().map_err(|e| e.to_string())?;
@@ -334,6 +440,7 @@ impl NoteCanvas {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn export_portable_copy(&self, target_path: PathBuf) -> Result<(), String> {
         let st = self.state.borrow();
         if let Some(ref path) = st.file_path {
@@ -360,9 +467,14 @@ impl NoteCanvas {
             let st = state_clone.borrow();
             let vp = st.viewport;
             let current_mode = st.pipeline_mode;
+            let is_dark = libadwaita::StyleManager::default().is_dark();
 
-            // 1. Sfondo desktop canvas (grigio neutro morbido per far risaltare i fogli A4)
-            cr.set_source_rgb(0.93, 0.94, 0.96);
+            // 1. Sfondo desktop canvas
+            if is_dark {
+                cr.set_source_rgb(0.039, 0.082, 0.102); // #0A151A
+            } else {
+                cr.set_source_rgb(0.910, 0.925, 0.937); // #E8ECEF
+            }
             let _ = cr.paint();
 
             // 2. Rendering di ciascuna pagina A4
@@ -377,24 +489,30 @@ impl NoteCanvas {
                     continue;
                 }
 
-                // Ombra multi-livello a profondità naturale del foglio A4
-                cr.set_source_rgba(0.0, 0.0, 0.0, 0.04);
-                cr.rectangle(sx - 1.0, sy + 6.0, sw + 6.0, sh + 6.0);
-                let _ = cr.fill();
-                cr.set_source_rgba(0.0, 0.0, 0.0, 0.07);
-                cr.rectangle(sx + 1.0, sy + 3.0, sw + 3.0, sh + 3.0);
-                let _ = cr.fill();
-                cr.set_source_rgba(0.0, 0.0, 0.0, 0.12);
-                cr.rectangle(sx + 1.0, sy + 1.0, sw + 1.0, sh + 1.0);
+                // Ombra ad elevazione per foglio A4
+                if is_dark {
+                    cr.set_source_rgba(0.0, 0.0, 0.0, 0.65);
+                } else {
+                    cr.set_source_rgba(0.0, 0.0, 0.0, 0.14);
+                }
+                cr.rectangle(sx - 2.0, sy + 4.0, sw + 8.0, sh + 8.0);
                 let _ = cr.fill();
 
-                // Foglio A4 (bianco puro con tenue calore)
-                cr.set_source_rgb(0.995, 0.995, 1.0);
+                // Corpo foglio A4
+                if is_dark {
+                    cr.set_source_rgb(0.090, 0.129, 0.149); // #172126 Deep Slate
+                } else {
+                    cr.set_source_rgb(0.985, 0.980, 0.965); // #FAF9F6 Natural White
+                }
                 cr.rectangle(sx, sy, sw, sh);
                 let _ = cr.fill();
 
-                // Bordo perimetrale nitido della pagina (visibile chiaramente ad ogni livello di zoom)
-                cr.set_source_rgba(0.68, 0.72, 0.80, 0.90);
+                // Bordo perimetrale
+                if is_dark {
+                    cr.set_source_rgba(0.243, 0.282, 0.306, 0.80); // #3E484E
+                } else {
+                    cr.set_source_rgba(0.0, 0.0, 0.0, 0.09);
+                }
                 cr.set_line_width(1.0);
                 cr.rectangle(sx, sy, sw, sh);
                 let _ = cr.stroke();
@@ -414,15 +532,23 @@ impl NoteCanvas {
                         let spacing_px = line_spacing * vp.zoom;
                         let margin_px = margin_left * vp.zoom;
 
-                        // Linea rossa del margine sinistro
-                        cr.set_source_rgba(0.88, 0.35, 0.35, 0.35);
+                        // Margine sinistro
+                        if is_dark {
+                            cr.set_source_rgba(1.0, 0.706, 0.670, 0.35); // #FFB4AB Corallo DMS
+                        } else {
+                            cr.set_source_rgba(0.88, 0.35, 0.35, 0.35);
+                        }
                         cr.set_line_width(1.0);
                         cr.move_to(sx + margin_px, sy);
                         cr.line_to(sx + margin_px, sy + sh);
                         let _ = cr.stroke();
 
                         // Righe orizzontali
-                        cr.set_source_rgba(0.70, 0.78, 0.88, 0.55);
+                        if is_dark {
+                            cr.set_source_rgba(0.427, 0.824, 1.0, 0.18); // Ciano soft
+                        } else {
+                            cr.set_source_rgba(0.35, 0.50, 0.70, 0.35);
+                        }
                         cr.set_line_width(0.8);
                         let mut line_y = sy + spacing_px * 2.0;
                         while line_y < sy + sh {
@@ -434,7 +560,11 @@ impl NoteCanvas {
                     }
                     PageBackground::Grid { grid_size } => {
                         let grid_px = grid_size * vp.zoom;
-                        cr.set_source_rgba(0.78, 0.84, 0.92, 0.45);
+                        if is_dark {
+                            cr.set_source_rgba(0.427, 0.824, 1.0, 0.14); // Ciano soft
+                        } else {
+                            cr.set_source_rgba(0.45, 0.60, 0.80, 0.28);
+                        }
                         cr.set_line_width(0.7);
 
                         let mut gx = sx + grid_px;
@@ -461,7 +591,7 @@ impl NoteCanvas {
 
                 for item in &page.items {
                     let ItemKind::Stroke(stroke) = &item.kind;
-                    Self::draw_stroke(cr, stroke, current_mode);
+                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
                 }
                 let _ = cr.restore();
 
@@ -481,7 +611,7 @@ impl NoteCanvas {
                 let _ = cr.save();
                 cr.translate(vp.offset_x, vp.offset_y);
                 cr.scale(vp.zoom, vp.zoom);
-                Self::draw_stroke(cr, &builder.stroke, current_mode);
+                Self::draw_stroke(cr, &builder.stroke, current_mode, is_dark);
                 let _ = cr.restore();
             }
 
@@ -495,13 +625,13 @@ impl NoteCanvas {
         });
     }
 
-    fn draw_stroke(cr: &gtk4::cairo::Context, stroke: &Stroke, mode: PipelineMode) {
+    fn draw_stroke(cr: &gtk4::cairo::Context, stroke: &Stroke, mode: PipelineMode, is_dark: bool) {
         if stroke.points.is_empty() {
             return;
         }
 
-        let (r, g, b, a) = stroke.style.color;
-        cr.set_source_rgba(r, g, b, a);
+        let adapted = adapt_ink_color(stroke.style.color, is_dark);
+        cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
         cr.set_line_cap(gtk4::cairo::LineCap::Round);
         cr.set_line_join(gtk4::cairo::LineJoin::Round);
 
@@ -600,12 +730,12 @@ impl NoteCanvas {
                 let now_ns = app_start.elapsed().as_nanos() as u64;
 
                 let mut st = state_clone.borrow_mut();
-                if is_up {
-                    st.palm_engine.on_touch_release(slot);
-                }
                 let suppress = st
                     .palm_engine
                     .should_suppress_raw_touch(is_down, slot, now_ns);
+                if is_up {
+                    st.palm_engine.on_touch_release(slot);
+                }
                 let suppressed_count = st.palm_engine.suppressed_touch_events;
                 let palm_state = st.palm_engine.current_state();
                 drop(st);
@@ -705,8 +835,12 @@ impl NoteCanvas {
             if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
                 let id = st.next_stroke_id;
                 st.next_stroke_id += 1;
-                let mut builder =
-                    StrokeBuilder::new(id, st.current_style.clone(), st.pipeline_mode);
+                let mut style = st.current_style.clone();
+                if st.active_tool == ActiveTool::Highlighter {
+                    style.base_width = 14.0;
+                    style.color.3 = 0.38;
+                }
+                let mut builder = StrokeBuilder::new(id, style, st.pipeline_mode);
                 builder.process_sample(sample.clone());
                 st.active_builder = Some(builder);
 
@@ -788,8 +922,12 @@ impl NoteCanvas {
                     if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
                         let id = st.next_stroke_id;
                         st.next_stroke_id += 1;
-                        let mut builder =
-                            StrokeBuilder::new(id, st.current_style.clone(), st.pipeline_mode);
+                        let mut style = st.current_style.clone();
+                        if st.active_tool == ActiveTool::Highlighter {
+                            style.base_width = 14.0;
+                            style.color.3 = 0.38;
+                        }
+                        let mut builder = StrokeBuilder::new(id, style, st.pipeline_mode);
                         builder.process_sample(sample.clone());
                         st.active_builder = Some(builder);
                         st.active_device = Some(DeviceKind::Stylus);
@@ -981,6 +1119,7 @@ impl NoteCanvas {
         drag.connect_drag_begin(move |gesture, start_x, start_y| {
             // Ignora categoricamente tocchi dal touchscreen (la mano/palmo non deve mai disegnare tratti)
             if gesture.current_sequence().is_some() {
+                gesture.set_state(gtk4::EventSequenceState::Denied);
                 return;
             }
             if let Some(event) = gesture.current_event() {
@@ -988,6 +1127,7 @@ impl NoteCanvas {
                     .device()
                     .is_some_and(|d| d.source() == gdk::InputSource::Touchscreen)
                 {
+                    gesture.set_state(gtk4::EventSequenceState::Denied);
                     return;
                 }
             }
@@ -1031,8 +1171,12 @@ impl NoteCanvas {
                 if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
                     let id = st.next_stroke_id;
                     st.next_stroke_id += 1;
-                    let mut builder =
-                        StrokeBuilder::new(id, st.current_style.clone(), st.pipeline_mode);
+                    let mut style = st.current_style.clone();
+                    if st.active_tool == ActiveTool::Highlighter {
+                        style.base_width = 14.0;
+                        style.color.3 = 0.38;
+                    }
+                    let mut builder = StrokeBuilder::new(id, style, st.pipeline_mode);
                     builder.process_sample(sample.clone());
                     st.active_builder = Some(builder);
 
@@ -1236,8 +1380,31 @@ impl NoteCanvas {
             lc_begin.set(gesture.bounding_box_center());
         });
 
+        // Pan a due dita indipendente dal pinch-to-zoom: calcolato sull'evento update
+        let state_update = state.clone();
+        let area_update = area.clone();
+        let lc_update = last_center.clone();
+        zoom.connect_update(move |gesture, _seq| {
+            if let Some(current_center) = gesture.bounding_box_center() {
+                if let Some(prev_center) = lc_update.get() {
+                    let dx = current_center.0 - prev_center.0;
+                    let dy = current_center.1 - prev_center.1;
+                    if dx.abs() > 0.01 || dy.abs() > 0.01 {
+                        let mut st = state_update.borrow_mut();
+                        st.viewport.pan(dx, dy);
+                        drop(st);
+                        area_update.queue_draw();
+                    }
+                }
+                lc_update.set(Some(current_center));
+            }
+        });
+
+        // Zoom scalare (pinch): scala il canvas centrato sul bounding_box_center
         let ls_scale = last_scale.clone();
-        let lc_scale = last_center.clone();
+        let state_scale = state.clone();
+        let area_scale = area.clone();
+        let hud_scale = hud.clone();
         zoom.connect_scale_changed(move |gesture, scale| {
             let prev_scale = ls_scale.get();
             ls_scale.set(scale);
@@ -1247,34 +1414,28 @@ impl NoteCanvas {
                 1.0
             };
 
-            let w = area.width() as f64;
-            let h = area.height() as f64;
+            let w = area_scale.width() as f64;
+            let h = area_scale.height() as f64;
             let default_center = (w / 2.0, h / 2.0);
             let current_center = gesture.bounding_box_center().unwrap_or(default_center);
-            let prev_center = lc_scale.get().unwrap_or(current_center);
-            lc_scale.set(Some(current_center));
 
-            let dx = current_center.0 - prev_center.0;
-            let dy = current_center.1 - prev_center.1;
-
-            let mut st = state.borrow_mut();
-            if dx.abs() > 0.01 || dy.abs() > 0.01 {
-                st.viewport.pan(dx, dy);
-            }
             if (factor - 1.0).abs() > 0.001 && factor > 0.5 && factor < 2.0 {
+                let mut st = state_scale.borrow_mut();
                 st.viewport.zoom_at(current_center, factor);
-            }
-            let pct = (st.viewport.zoom * 100.0).round() as usize;
-            drop(st);
+                let pct = (st.viewport.zoom * 100.0).round() as usize;
+                drop(st);
 
-            hud.update_metrics(|m| m.zoom_pct = pct);
-            hud.update_view();
-            area.queue_draw();
+                hud_scale.update_metrics(|m| m.zoom_pct = pct);
+                hud_scale.update_view();
+                area_scale.queue_draw();
+            }
         });
 
         let lc_end = last_center.clone();
+        let ls_end = last_scale.clone();
         zoom.connect_end(move |_gesture, _seq| {
             lc_end.set(None);
+            ls_end.set(1.0);
         });
         self.area.add_controller(zoom);
     }
@@ -1311,9 +1472,19 @@ impl NoteCanvas {
     }
 
     /// Salva un tratto appena completato nella pagina corrispondente del documento.
-    fn commit_finished_stroke(st: &mut CanvasState, stroke: Stroke) {
+    fn commit_finished_stroke(st: &mut CanvasState, mut stroke: Stroke) {
         if stroke.points.is_empty() || st.document.pages.is_empty() {
             return;
+        }
+
+        if st.active_tool == ActiveTool::Line {
+            if let Some(snapped) = uninote_stroke::shape::snap_line_orthogonal(&stroke) {
+                stroke = snapped;
+            }
+        } else if st.active_tool == ActiveTool::Shapes {
+            if let Some(recognized) = uninote_stroke::shape::recognize_shape(&stroke) {
+                stroke = recognized;
+            }
         }
 
         let first_pt = &stroke.points[0];
@@ -1323,5 +1494,111 @@ impl NoteCanvas {
         st.history
             .execute(DocCommand::AddStroke { page_id, stroke }, &mut st.document);
         st.persist_changes();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adapt_ink_color_dark_neutral_on_dark_sheet() {
+        let black = (0.0, 0.0, 0.0, 1.0);
+        let adapted = adapt_ink_color(black, true);
+        assert_eq!(adapted, (0.925, 0.937, 0.957, 1.0));
+
+        let dark_gray = (0.15, 0.15, 0.15, 0.85);
+        let adapted_gray = adapt_ink_color(dark_gray, true);
+        assert_eq!(adapted_gray, (0.925, 0.937, 0.957, 0.85));
+    }
+
+    #[test]
+    fn test_adapt_ink_color_dark_saturated_tone_lift_on_dark_sheet() {
+        // Dark navy: (0.0, 0.0, 0.5, 1.0) -> lum ~ 0.0361 < 0.35, chroma = 0.5 >= 0.12
+        let navy = (0.0, 0.0, 0.5, 1.0);
+        let adapted = adapt_ink_color(navy, true);
+        let adapted_lum = 0.2126 * adapted.0 + 0.7152 * adapted.1 + 0.0722 * adapted.2;
+        assert!(
+            adapted_lum > 0.65,
+            "Adapted navy luminance must be lifted to pastel contrast: got {}",
+            adapted_lum
+        );
+        assert!(
+            adapted.2 > adapted.0 && adapted.2 > adapted.1,
+            "Blue hue must be preserved"
+        );
+        assert_eq!(adapted.3, 1.0);
+
+        // Dark maroon: (0.4, 0.0, 0.0, 0.9) -> lum ~ 0.085 < 0.35, chroma = 0.4 >= 0.12
+        let maroon = (0.4, 0.0, 0.0, 0.9);
+        let adapted_maroon = adapt_ink_color(maroon, true);
+        let maroon_lum =
+            0.2126 * adapted_maroon.0 + 0.7152 * adapted_maroon.1 + 0.0722 * adapted_maroon.2;
+        assert!(
+            maroon_lum > 0.65,
+            "Maroon luminance must be lifted: got {}",
+            maroon_lum
+        );
+        assert!(
+            adapted_maroon.0 > adapted_maroon.1 && adapted_maroon.0 > adapted_maroon.2,
+            "Red hue preserved"
+        );
+        assert_eq!(adapted_maroon.3, 0.9);
+    }
+
+    #[test]
+    fn test_adapt_ink_color_vibrant_preserved_on_dark_sheet() {
+        // Cyan: lum ~ 0.644 >= 0.35
+        let cyan = (0.0, 0.8, 1.0, 1.0);
+        assert_eq!(adapt_ink_color(cyan, true), cyan);
+
+        // Yellow: lum ~ 0.928 >= 0.35
+        let yellow = (1.0, 1.0, 0.0, 0.75);
+        assert_eq!(adapt_ink_color(yellow, true), yellow);
+
+        // White: lum 1.0 >= 0.35
+        let white = (1.0, 1.0, 1.0, 1.0);
+        assert_eq!(adapt_ink_color(white, true), white);
+    }
+
+    #[test]
+    fn test_adapt_ink_color_pure_white_on_light_sheet() {
+        // Pure white: lum 1.0 > 0.85, chroma 0.0 < 0.12 -> mapped to graphite #172126
+        let white = (1.0, 1.0, 1.0, 1.0);
+        let adapted = adapt_ink_color(white, false);
+        assert_eq!(adapted, (0.090, 0.129, 0.149, 1.0));
+
+        let off_white = (0.95, 0.95, 0.95, 0.6);
+        let adapted_off = adapt_ink_color(off_white, false);
+        assert_eq!(adapted_off, (0.090, 0.129, 0.149, 0.6));
+    }
+
+    #[test]
+    fn test_adapt_ink_color_standard_colors_on_light_sheet_preserved() {
+        // Black on light sheet
+        let black = (0.0, 0.0, 0.0, 1.0);
+        assert_eq!(adapt_ink_color(black, false), black);
+
+        // Navy on light sheet
+        let navy = (0.0, 0.0, 0.5, 1.0);
+        assert_eq!(adapt_ink_color(navy, false), navy);
+
+        // Cyan on light sheet
+        let cyan = (0.0, 0.8, 1.0, 1.0);
+        assert_eq!(adapt_ink_color(cyan, false), cyan);
+
+        // Pale saturated yellow (lum > 0.85, but chroma >= 0.12)
+        let pale_yellow = (1.0, 1.0, 0.5, 1.0);
+        assert_eq!(adapt_ink_color(pale_yellow, false), pale_yellow);
+    }
+
+    #[test]
+    fn test_adapt_ink_color_alpha_strictly_preserved() {
+        for alpha in [0.0, 0.15, 0.5, 0.85, 1.0] {
+            let col = (0.0, 0.0, 0.0, alpha);
+            assert_eq!(adapt_ink_color(col, true).3, alpha);
+            let white = (1.0, 1.0, 1.0, alpha);
+            assert_eq!(adapt_ink_color(white, false).3, alpha);
+        }
     }
 }

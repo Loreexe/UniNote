@@ -34,12 +34,18 @@ pub enum InputDisposition {
     Suppress,
 }
 
+/// Timeout automatico di prossimità hardware (300 ms): se lo stilo non invia campioni per 300 ms mentre è in PenProximity,
+/// lo stato decade automaticamente a Idle per evitare di bloccare indefinitamente le gesture touch.
+pub const PROXIMITY_TIMEOUT_NS: u64 = 300_000_000; // 300ms
+
 /// Motore di rifiuto del palmo con macchina a stati esplicita e tracciamento slot touch.
 pub struct PalmRejectionEngine {
     state: PalmState,
     touch_mode: TouchMode,
     cooldown_ns: u64,
     last_pen_time_ns: u64,
+    /// Slot touch attualmente attivi a contatto fisico con lo schermo.
+    active_touch_slots: HashSet<u64>,
     /// Slot touch che sono iniziati durante un periodo di soppressione e devono essere ignorati fino al rilascio fisico.
     suppressed_touch_slots: HashSet<u64>,
     // Statistiche diagnostiche
@@ -56,6 +62,7 @@ impl PalmRejectionEngine {
             touch_mode,
             cooldown_ns: 200_000_000, // 200 ms di finestra di guardia predefinita
             last_pen_time_ns: 0,
+            active_touch_slots: HashSet::new(),
             suppressed_touch_slots: HashSet::new(),
             total_pen_events: 0,
             total_touch_events: 0,
@@ -75,6 +82,7 @@ impl PalmRejectionEngine {
     pub fn set_touch_mode(&mut self, mode: TouchMode) {
         self.touch_mode = mode;
         if mode == TouchMode::Off {
+            self.active_touch_slots.clear();
             self.suppressed_touch_slots.clear();
         }
     }
@@ -85,6 +93,14 @@ impl PalmRejectionEngine {
 
     pub fn current_state(&self) -> PalmState {
         self.state
+    }
+
+    pub fn active_touch_slots_count(&self) -> usize {
+        self.active_touch_slots.len()
+    }
+
+    pub fn suppressed_touch_slots_count(&self) -> usize {
+        self.suppressed_touch_slots.len()
     }
 
     pub fn is_pen_active(&self) -> bool {
@@ -105,6 +121,21 @@ impl PalmRejectionEngine {
         }
     }
 
+    /// Verifica e applica la decadenza automatica a Idle di PenProximity (300ms) e PenCooldown (200ms).
+    #[inline]
+    fn update_timeouts(&mut self, timestamp_ns: u64) {
+        if self.state == PalmState::PenProximity
+            && timestamp_ns.saturating_sub(self.last_pen_time_ns) >= PROXIMITY_TIMEOUT_NS
+        {
+            self.state = PalmState::Idle;
+        }
+        if self.state == PalmState::PenCooldown
+            && timestamp_ns.saturating_sub(self.last_pen_time_ns) >= self.cooldown_ns
+        {
+            self.state = PalmState::Idle;
+        }
+    }
+
     /// Verifica rapida per decidere se un evento touch generico deve essere soppresso a livello Capture.
     pub fn should_suppress_raw_touch(
         &mut self,
@@ -114,16 +145,15 @@ impl PalmRejectionEngine {
     ) -> bool {
         self.total_touch_events += 1;
 
+        if is_down {
+            self.active_touch_slots.insert(slot_id);
+        }
+
+        self.update_timeouts(timestamp_ns);
+
         if self.touch_mode == TouchMode::Off {
             self.suppressed_touch_events += 1;
             return true;
-        }
-
-        // Verifica scadenza cooldown
-        if self.state == PalmState::PenCooldown
-            && timestamp_ns.saturating_sub(self.last_pen_time_ns) >= self.cooldown_ns
-        {
-            self.state = PalmState::Idle;
         }
 
         if self.is_pen_active() {
@@ -143,11 +173,17 @@ impl PalmRejectionEngine {
     }
 
     pub fn on_touch_release(&mut self, slot_id: u64) {
+        self.active_touch_slots.remove(&slot_id);
         self.suppressed_touch_slots.remove(&slot_id);
+        if self.active_touch_slots.is_empty() {
+            self.suppressed_touch_slots.clear();
+        }
     }
 
     /// Valuta un campione di input e determina se deve essere elaborato o soppresso.
     pub fn evaluate_sample(&mut self, sample: &InputSample) -> InputDisposition {
+        self.update_timeouts(sample.timestamp_ns);
+
         match sample.device_kind {
             DeviceKind::Stylus => {
                 self.total_pen_events += 1;
@@ -177,30 +213,26 @@ impl PalmRejectionEngine {
             DeviceKind::Touch => {
                 self.total_touch_events += 1;
 
+                if sample.phase == InputPhase::Down {
+                    self.active_touch_slots.insert(sample.source_id);
+                }
+
                 // 1. In modalità TouchMode::Off tutto il touch è sempre bloccato
                 if self.touch_mode == TouchMode::Off {
                     self.suppressed_touch_events += 1;
                     return InputDisposition::Suppress;
                 }
 
-                // 2. Verifica se siamo ancora nel periodo di cooldown post-penna
-                if self.state == PalmState::PenCooldown {
-                    if sample.timestamp_ns.saturating_sub(self.last_pen_time_ns) < self.cooldown_ns
-                    {
-                        // Cooldown attivo: sopprimi
-                    } else {
-                        // Cooldown scaduto: torna a Idle
-                        self.state = PalmState::Idle;
-                    }
-                }
-
-                // 3. Se la penna sta disegnando, è in prossimità o è in cooldown, sopprimi il tocco
+                // 2. Se la penna sta disegnando, è in prossimità o è in cooldown, sopprimi il tocco
                 let pen_blocking = self.is_pen_active();
 
                 if pen_blocking {
                     if sample.phase == InputPhase::Down {
                         // Registra questo slot touch per ignorarlo fino al rilascio fisico completo
                         self.suppressed_touch_slots.insert(sample.source_id);
+                    }
+                    if sample.phase == InputPhase::Up || sample.phase == InputPhase::Cancel {
+                        self.on_touch_release(sample.source_id);
                     }
                     self.suppressed_touch_events += 1;
                     return InputDisposition::Suppress;
@@ -209,10 +241,14 @@ impl PalmRejectionEngine {
                 // 4. Se lo slot touch è iniziato mentre la penna bloccava, continua a sopprimerlo
                 if self.suppressed_touch_slots.contains(&sample.source_id) {
                     if sample.phase == InputPhase::Up || sample.phase == InputPhase::Cancel {
-                        self.suppressed_touch_slots.remove(&sample.source_id);
+                        self.on_touch_release(sample.source_id);
                     }
                     self.suppressed_touch_events += 1;
                     return InputDisposition::Suppress;
+                }
+
+                if sample.phase == InputPhase::Up || sample.phase == InputPhase::Cancel {
+                    self.on_touch_release(sample.source_id);
                 }
 
                 // 5. In TouchMode::GesturesOnly, il tocco è ammesso SOLO come gesto, mai come disegno

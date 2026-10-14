@@ -1,17 +1,23 @@
 use crate::canvas::{ActiveTool, NoteCanvas};
 use crate::hud::DiagnosticHud;
+use crate::icons::{create_icon, IconKind};
+use crate::preferences::{AppPreferences, PenSlotConfig};
+use gtk4::cairo;
 use gtk4::gdk;
 use gtk4::gio;
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, DropDown, EventControllerKey, FileDialog, FileFilter, Label, MenuButton,
-    Orientation, Overlay, Popover, ToggleButton,
+    Align, Box as GtkBox, Button, ColorDialog, DrawingArea, DropDown, EventControllerKey,
+    FileDialog, GestureClick, GestureDrag, GestureLongPress, Label, Orientation, Overlay, Popover,
+    Scale,
 };
 use libadwaita::prelude::*;
-use libadwaita::{Application, ApplicationWindow, HeaderBar, WindowTitle};
+use libadwaita::{Application, ApplicationWindow};
+use std::cell::{Cell, RefCell};
+use std::f64::consts::PI;
 use std::rc::Rc;
 use uninote_core::PageBackground;
-use uninote_stroke::{PipelineMode, RecordedSession, TouchMode};
+use uninote_stroke::{PipelineMode, TouchMode};
 
 pub struct UniNoteWindow {
     window: ApplicationWindow,
@@ -19,483 +25,759 @@ pub struct UniNoteWindow {
 
 impl UniNoteWindow {
     pub fn new(app: &Application) -> Self {
+        // 1. Inizializzazione Stile CSS personalizzato DMS / Material You
+        let css_provider = gtk4::CssProvider::new();
+        css_provider.load_from_data(include_str!("style.css"));
+        if let Some(display) = gdk::Display::default() {
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &css_provider,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+
+        // Finestra principale senza decorazioni rigide di sistema
         let window = ApplicationWindow::builder()
             .application(app)
             .title("UniNote — Quaderno Universitario")
-            .default_width(1100)
-            .default_height(750)
+            .default_width(1320)
+            .default_height(860)
+            .css_classes(["uninote-window"])
             .build();
-
-        let header_bar = HeaderBar::new();
-        let title = WindowTitle::new("UniNote", "Quaderno Universitario A4");
-        header_bar.set_title_widget(Some(&title));
 
         let hud = Rc::new(DiagnosticHud::new());
+        hud.widget().set_visible(false); // Nascosto di default, attivabile con F12 o da Settings
+
         let canvas = Rc::new(NoteCanvas::new(hud.clone()));
+        let prefs = Rc::new(RefCell::new(AppPreferences::load()));
 
-        // --- 1. STRUMENTI PRINCIPALI: Penna vs Gomma ---
-        let btn_pen = ToggleButton::builder()
-            .icon_name("document-edit-symbolic")
-            .tooltip_text("Strumento Penna (Scrittura fluida naturale)")
-            .active(true)
-            .build();
+        // Applica preferenze persistite al canvas all'avvio
+        let initial_stroke_w = prefs.borrow().stroke_width;
+        canvas.set_pen_width(initial_stroke_w);
 
-        let btn_eraser = ToggleButton::builder()
-            .icon_name("edit-clear-symbolic")
-            .tooltip_text("Strumento Gomma (Cancella tratto intero al tocco)")
-            .active(false)
-            .build();
+        let initial_slot_idx = prefs.borrow().active_slot_index;
+        let initial_hex = if let Some(slot) = prefs.borrow().slots.get(initial_slot_idx) {
+            canvas.set_pen_color(slot.rgba);
+            slot.hex.clone()
+        } else {
+            "#6DD2FF".to_string()
+        };
 
-        let canvas_tool_pen = canvas.clone();
-        let btn_eraser_ref = btn_eraser.clone();
-        btn_pen.connect_toggled(move |btn| {
-            if btn.is_active() {
-                btn_eraser_ref.set_active(false);
-                canvas_tool_pen.set_active_tool(ActiveTool::Pen);
-            }
-        });
+        // Contenitore Overlay a tutto schermo (Full-Bleed)
+        let overlay = Overlay::builder().child(canvas.widget()).build();
 
-        let canvas_tool_eraser = canvas.clone();
-        let btn_pen_ref = btn_pen.clone();
-        btn_eraser.connect_toggled(move |btn| {
-            if btn.is_active() {
-                btn_pen_ref.set_active(false);
-                canvas_tool_eraser.set_active_tool(ActiveTool::Eraser);
-            }
-        });
-
-        let tools_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .css_classes(["linked"])
-            .build();
-        tools_box.append(&btn_pen);
-        tools_box.append(&btn_eraser);
-        header_bar.pack_start(&tools_box);
-
-        // --- 2. MENU COLORE PENNA (posizionato a sinistra con indicatore cromatico dinamico) ---
-        let btn_color_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .spacing(5)
-            .build();
-
-        let color_dot_label = Label::builder()
-            .use_markup(true)
-            .label("<span foreground='#1e1e1e' font_desc='14'>●</span>")
-            .build();
-
-        let color_text_label = Label::new(Some("Colore"));
-
-        btn_color_box.append(&color_dot_label);
-        btn_color_box.append(&color_text_label);
-
-        let color_btn = MenuButton::builder()
-            .child(&btn_color_box)
-            .tooltip_text("Seleziona Colore Inchiostro")
-            .build();
-
-        let color_popover = Popover::new();
-        let color_pop_box = GtkBox::builder()
+        // =========================================================================
+        // 1. BRAND BADGE IN ALTO A SINISTRA (x: 22, y: 16)
+        // =========================================================================
+        let badge_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
             .spacing(8)
-            .margin_top(8)
-            .margin_bottom(8)
-            .margin_start(8)
-            .margin_end(8)
+            .valign(Align::Start)
+            .halign(Align::Start)
+            .margin_start(22)
+            .margin_top(16)
+            .can_target(false)
+            .css_classes(["dms-brand-badge"])
             .build();
 
-        let colors = [
-            ("Nero", (0.12, 0.12, 0.14, 1.0), "#1e1e1e"),
-            ("Blu", (0.10, 0.35, 0.75, 1.0), "#1a5fb4"),
-            ("Rosso", (0.75, 0.12, 0.15, 1.0), "#e01b24"),
-            ("Verde", (0.15, 0.55, 0.25, 1.0), "#26a269"),
-        ];
+        let app_logo = create_icon(IconKind::AppLogo, 35, None);
+        badge_box.append(&app_logo);
 
-        for (name, rgba, hex) in colors {
-            let lbl = Label::builder()
-                .use_markup(true)
-                .label(format!(
-                    "<span foreground='{}' font_desc='13'>●</span> {}",
-                    hex, name
-                ))
-                .build();
-            let btn_c = Button::builder()
-                .child(&lbl)
-                .tooltip_text(format!("Inchiostro {}", name))
-                .build();
-            let canvas_c = canvas.clone();
-            let pop_ref = color_popover.clone();
-            let dot_ref = color_dot_label.clone();
-            let hex_str = hex.to_string();
-            btn_c.connect_clicked(move |_| {
-                canvas_c.set_pen_color(rgba);
-                dot_ref.set_markup(&format!(
-                    "<span foreground='{}' font_desc='14'>●</span>",
-                    hex_str
-                ));
-                pop_ref.popdown();
-            });
-            color_pop_box.append(&btn_c);
-        }
-        color_popover.set_child(Some(&color_pop_box));
-        color_btn.set_popover(Some(&color_popover));
-        header_bar.pack_start(&color_btn);
+        let title_label = Label::builder()
+            .label("UniNote")
+            .valign(Align::Center)
+            .css_classes(["brand-title"])
+            .build();
+        badge_box.append(&title_label);
 
-        // --- 3. SPESSORE PENNA ---
-        let width_strings = ["1.8 pt", "2.8 pt", "4.5 pt"];
-        let dropdown_width = DropDown::from_strings(&width_strings);
-        dropdown_width.set_selected(1);
-        dropdown_width.set_tooltip_text(Some("Spessore tratto penna"));
-        let canvas_w = canvas.clone();
-        dropdown_width.connect_selected_notify(move |dd| {
-            let w = match dd.selected() {
-                0 => 1.8,
-                1 => 2.8,
-                _ => 4.5,
-            };
-            canvas_w.set_pen_width(w);
-        });
-        header_bar.pack_start(&dropdown_width);
+        let dot_label = Label::builder()
+            .label("•")
+            .valign(Align::Center)
+            .css_classes(["brand-dot"])
+            .build();
+        badge_box.append(&dot_label);
 
-        // --- 4. UNDO & REDO ---
+        let ver_label = Label::builder()
+            .label("v0.1.0")
+            .valign(Align::Center)
+            .css_classes(["brand-ver"])
+            .build();
+        badge_box.append(&ver_label);
+
+        overlay.add_overlay(&badge_box);
+
+        // =========================================================================
+        // 2. ISOLA CENTRALE STRUMENTI (Top-Center, y: 18, larghezza 447px)
+        // =========================================================================
+        let island_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(4)
+            .valign(Align::Start)
+            .halign(Align::Center)
+            .margin_top(18)
+            .css_classes(["dms-pill"])
+            .build();
+
+        // --- Undo / Redo ---
         let btn_undo = Button::builder()
-            .icon_name("edit-undo-symbolic")
+            .child(&create_icon(IconKind::Undo, 16, None))
             .tooltip_text("Annulla (Ctrl+Z)")
+            .css_classes(["dms-tool-btn"])
             .build();
-        let canvas_undo = canvas.clone();
+        let c_undo = canvas.clone();
         btn_undo.connect_clicked(move |_| {
-            canvas_undo.undo();
+            c_undo.undo();
         });
+        island_box.append(&btn_undo);
 
         let btn_redo = Button::builder()
-            .icon_name("edit-redo-symbolic")
-            .tooltip_text("Ripristina (Ctrl+Y / Ctrl+Shift+Z)")
+            .child(&create_icon(IconKind::Redo, 16, None))
+            .tooltip_text("Ripeti (Ctrl+Y)")
+            .css_classes(["dms-tool-btn"])
             .build();
-        let canvas_redo = canvas.clone();
+        let c_redo = canvas.clone();
         btn_redo.connect_clicked(move |_| {
-            canvas_redo.redo();
+            c_redo.redo();
         });
+        island_box.append(&btn_redo);
 
-        let undo_redo_box = GtkBox::builder()
+        // Separatore 1
+        let sep1 = GtkBox::builder().css_classes(["dms-dock-divider"]).build();
+        island_box.append(&sep1);
+
+        // --- Chip Selettore Spessore (Calibro 2.8 ▾) ---
+        let thick_chip_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
-            .css_classes(["linked"])
-            .build();
-        undo_redo_box.append(&btn_undo);
-        undo_redo_box.append(&btn_redo);
-        header_bar.pack_start(&undo_redo_box);
-
-        // --- 5. AGGIUNGI PAGINA A4 ---
-        let btn_add_page = Button::builder()
-            .icon_name("list-add-symbolic")
-            .label("+ Pagina")
-            .tooltip_text("Aggiungi nuova pagina A4 in coda")
-            .build();
-        let canvas_add_page = canvas.clone();
-        btn_add_page.connect_clicked(move |_| {
-            canvas_add_page.add_page(PageBackground::default());
-        });
-        header_bar.pack_start(&btn_add_page);
-
-        // --- 8. MENU PRIMARIO (Nuovo, Apri, Salva, Salva con nome, Copia Portabile) ---
-        let menu_btn = MenuButton::builder()
-            .icon_name("open-menu-symbolic")
-            .tooltip_text("Menu Documento e Operazioni")
-            .build();
-
-        let popover = Popover::new();
-        let popover_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
             .spacing(6)
-            .margin_top(6)
-            .margin_bottom(6)
-            .margin_start(6)
-            .margin_end(6)
             .build();
 
-        // Pulsante Nuovo
-        let btn_new = Button::builder()
-            .label("Nuovo Quaderno")
-            .icon_name("document-new-symbolic")
+        let caliber_dot = Label::builder()
+            .use_markup(true)
+            .label(format!(
+                "<span foreground='{}' font_desc='11'>●</span>",
+                initial_hex
+            ))
             .build();
-        let canvas_new = canvas.clone();
-        let popover_new = popover.clone();
-        let btn_pen_for_new = btn_pen.clone();
-        let btn_eraser_for_new = btn_eraser.clone();
-        btn_new.connect_clicked(move |_| {
-            canvas_new.new_document();
-            btn_pen_for_new.set_active(true);
-            btn_eraser_for_new.set_active(false);
-            popover_new.popdown();
-        });
-        popover_box.append(&btn_new);
+        thick_chip_box.append(&caliber_dot);
 
-        // Pulsante Apri...
-        let btn_open = Button::builder()
-            .label("Apri Quaderno...")
-            .icon_name("document-open-symbolic")
+        let caliber_val = Label::builder()
+            .label(format!("{:.1}", initial_stroke_w))
+            .css_classes(["thick-value"])
             .build();
-        let canvas_open = canvas.clone();
-        let window_open = window.clone();
-        let popover_open = popover.clone();
-        btn_open.connect_clicked(move |_| {
-            popover_open.popdown();
-            let dialog = FileDialog::builder()
-                .title("Apri Quaderno UniNote")
-                .modal(true)
-                .build();
+        thick_chip_box.append(&caliber_val);
 
-            let filter = FileFilter::new();
-            filter.set_name(Some("File UniNote (*.uninote)"));
-            filter.add_pattern("*.uninote");
-            let filters = gio::ListStore::new::<FileFilter>();
-            filters.append(&filter);
-            dialog.set_filters(Some(&filters));
+        let caliber_down = create_icon(IconKind::ChevronDown, 10, None);
+        thick_chip_box.append(&caliber_down);
 
-            let canvas_ref = canvas_open.clone();
-            dialog.open(Some(&window_open), gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        let _ = canvas_ref.open_file(path);
-                    }
-                }
-            });
-        });
-        popover_box.append(&btn_open);
-
-        // Pulsante Salva con nome...
-        let btn_save_as = Button::builder()
-            .label("Salva con nome...")
-            .icon_name("document-save-as-symbolic")
-            .build();
-        let canvas_save_as = canvas.clone();
-        let window_save_as = window.clone();
-        let popover_save_as = popover.clone();
-        btn_save_as.connect_clicked(move |_| {
-            popover_save_as.popdown();
-            let dialog = FileDialog::builder()
-                .title("Salva Quaderno UniNote")
-                .initial_name("quaderno.uninote")
-                .modal(true)
-                .build();
-
-            let canvas_ref = canvas_save_as.clone();
-            dialog.save(Some(&window_save_as), gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        let _ = canvas_ref.save_as(path);
-                    }
-                }
-            });
-        });
-        popover_box.append(&btn_save_as);
-
-        // Pulsante Esporta copia portabile...
-        let btn_backup = Button::builder()
-            .label("Esporta copia portabile...")
-            .tooltip_text("Esporta un database SQLite autoconsistente consolidando il file WAL")
-            .icon_name("folder-download-symbolic")
-            .build();
-        let canvas_backup = canvas.clone();
-        let window_backup = window.clone();
-        let popover_backup = popover.clone();
-        btn_backup.connect_clicked(move |_| {
-            popover_backup.popdown();
-            let dialog = FileDialog::builder()
-                .title("Esporta copia portabile (Online Backup)")
-                .initial_name("quaderno_backup.uninote")
-                .modal(true)
-                .build();
-
-            let canvas_ref = canvas_backup.clone();
-            dialog.save(Some(&window_backup), gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        let _ = canvas_ref.export_portable_copy(path);
-                    }
-                }
-            });
-        });
-        popover_box.append(&btn_backup);
-
-        // Pulsante Pulisci pagina
-        let btn_clear = Button::builder()
-            .label("Pulisci pagina corrente")
-            .icon_name("edit-clear-all-symbolic")
-            .build();
-        let canvas_clear = canvas.clone();
-        let popover_clear = popover.clone();
-        btn_clear.connect_clicked(move |_| {
-            canvas_clear.state().borrow_mut().clear_current_page();
-            canvas_clear.widget().queue_draw();
-            popover_clear.popdown();
-        });
-        popover_box.append(&btn_clear);
-
-        popover.set_child(Some(&popover_box));
-        menu_btn.set_popover(Some(&popover));
-        header_bar.pack_end(&menu_btn);
-
-        // --- 6. SFONDO PAGINA (Quadretti, Righe, Bianco) ---
-        let bg_strings = ["Quadretti 5mm", "Righe 8mm", "Foglio Bianco"];
-        let dropdown_bg = DropDown::from_strings(&bg_strings);
-        dropdown_bg.set_selected(0);
-        dropdown_bg.set_tooltip_text(Some("Sfondo foglio A4"));
-        let canvas_bg = canvas.clone();
-        dropdown_bg.connect_selected_notify(move |dd| {
-            let new_bg = match dd.selected() {
-                1 => PageBackground::Ruled {
-                    line_spacing: 22.68,
-                    margin_left: 35.0,
-                },
-                2 => PageBackground::Blank,
-                _ => PageBackground::Grid { grid_size: 14.17 },
-            };
-            let state_rc = canvas_bg.state();
-            let mut st = state_rc.borrow_mut();
-            if let Some(p) = st.document.pages.first_mut() {
-                p.background = new_bg;
-            }
-            drop(st);
-            canvas_bg.widget().queue_draw();
-        });
-
-        // --- 7. CONTROLLI ZOOM ( - / 100% / + ) ---
-        let btn_zoom_out = Button::builder()
-            .icon_name("zoom-out-symbolic")
-            .tooltip_text("Riduci zoom")
-            .build();
-        let canvas_z_out = canvas.clone();
-        btn_zoom_out.connect_clicked(move |_| {
-            canvas_z_out.zoom_out();
-        });
-
-        let btn_zoom_reset = Button::builder()
-            .label("100%")
-            .tooltip_text("Reimposta zoom a 100% e centra il foglio A4")
-            .build();
-        let canvas_z_reset = canvas.clone();
-        btn_zoom_reset.connect_clicked(move |_| {
-            canvas_z_reset.reset_zoom();
-        });
-
-        let btn_zoom_in = Button::builder()
-            .icon_name("zoom-in-symbolic")
-            .tooltip_text("Aumenta zoom")
-            .build();
-        let canvas_z_in = canvas.clone();
-        btn_zoom_in.connect_clicked(move |_| {
-            canvas_z_in.zoom_in();
-        });
-
-        let zoom_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .css_classes(["linked"])
-            .build();
-        zoom_box.append(&btn_zoom_out);
-        zoom_box.append(&btn_zoom_reset);
-        zoom_box.append(&btn_zoom_in);
-
-        // --- 8. MENU DIAGNOSTICA E HARDWARE (In popover dedicato per compattare la barra) ---
-        let diag_btn = MenuButton::builder()
-            .icon_name("preferences-system-symbolic")
-            .tooltip_text("Diagnostica e Configurazione Hardware")
+        let btn_thick_chip = Button::builder()
+            .child(&thick_chip_box)
+            .tooltip_text("Regola Spessore Tratto")
+            .css_classes(["dms-thick-chip"])
             .build();
 
-        let diag_popover = Popover::new();
-        let diag_box = GtkBox::builder()
+        let thick_popover = Popover::builder().css_classes(["dms-popover"]).build();
+        thick_popover.set_parent(&btn_thick_chip);
+
+        let thick_pop_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
-            .spacing(8)
+            .spacing(10)
+            .margin_start(10)
+            .margin_end(10)
             .margin_top(8)
             .margin_bottom(8)
-            .margin_start(8)
-            .margin_end(8)
             .build();
 
-        let toggle_hud = ToggleButton::builder()
-            .label("HUD Diagnostica: ON")
-            .active(true)
-            .tooltip_text("Mostra o nascondi il pannello diagnostico HUD")
+        let thick_pop_title = Label::builder()
+            .label("Calibro Tratto (pt)")
+            .xalign(0.0)
+            .css_classes(["brand-title"])
             .build();
-        let hud_widget = hud.widget().clone();
-        toggle_hud.connect_toggled(move |btn| {
-            let active = btn.is_active();
-            btn.set_label(if active {
-                "HUD Diagnostica: ON"
-            } else {
-                "HUD Diagnostica: OFF"
-            });
-            hud_widget.set_visible(active);
+        thick_pop_box.append(&thick_pop_title);
+
+        // Anteprima Cairo live del tratto
+        let stroke_preview = DrawingArea::builder()
+            .content_height(40)
+            .content_width(220)
+            .css_classes(["dms-stroke-preview-area"])
+            .build();
+
+        let thick_scale = Scale::with_range(Orientation::Horizontal, 0.5, 12.0, 0.1);
+        thick_scale.set_value(initial_stroke_w);
+        thick_scale.set_width_request(220);
+        thick_scale.set_css_classes(&["dms-pill-scale"]);
+
+        let canvas_prev = canvas.clone();
+        let scale_prev = thick_scale.clone();
+        stroke_preview.set_draw_func(move |_area, cr, width, height| {
+            let w = width as f64;
+            let h = height as f64;
+            let stroke_w = scale_prev.value();
+            let (r, g, b, a) = canvas_prev.state().borrow().current_style.color;
+
+            cr.set_source_rgba(r, g, b, a);
+            cr.set_line_cap(cairo::LineCap::Round);
+            cr.set_line_width(stroke_w);
+            let pad_x = 28.0;
+            let y = h / 2.0;
+            cr.move_to(pad_x, y);
+            cr.line_to(w - pad_x, y);
+            let _ = cr.stroke();
         });
-        diag_box.append(&toggle_hud);
+        thick_pop_box.append(&stroke_preview);
+        thick_pop_box.append(&thick_scale);
 
-        let toggle_rec = ToggleButton::builder()
-            .label("● Registra Sessione")
-            .active(false)
-            .tooltip_text("Registra i campioni stilo per verifiche e benchmark")
+        // 5 Chip semantici di preset rapido
+        let presets_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(6)
             .build();
-        let canvas_rec = canvas.clone();
-        let hud_rec = hud.clone();
-        toggle_rec.connect_toggled(move |btn| {
-            let is_recording = btn.is_active();
-            let state_rc = canvas_rec.state();
-            let mut st = state_rc.borrow_mut();
 
-            if is_recording {
-                btn.set_label("■ Ferma Registrazione");
-                st.recorder = Some(RecordedSession::new("uninote_session"));
-                hud_rec.update_metrics(|m| m.is_recording = true);
-            } else {
-                btn.set_label("● Registra Sessione");
-                hud_rec.update_metrics(|m| m.is_recording = false);
-                if let Some(rec) = st.recorder.take() {
-                    if let Ok(json) = rec.to_json() {
-                        let _ = std::fs::write("uninote_session.json", json);
-                    }
+        let preset_chips_data: [(&str, f64); 5] = [
+            ("Fine", 1.0),
+            ("Normale", 2.0),
+            ("Medio", 2.8),
+            ("Spesso", 4.0),
+            ("Calligrafico", 6.0),
+        ];
+
+        let preset_buttons: Rc<RefCell<Vec<(Button, f64)>>> = Rc::new(RefCell::new(Vec::new()));
+
+        for (name, preset_val) in preset_chips_data {
+            let p_btn = Button::builder()
+                .label(name)
+                .tooltip_text(format!("{:.1} pt", preset_val))
+                .css_classes(["dms-preset-chip"])
+                .build();
+            if (initial_stroke_w - preset_val).abs() < 0.15 {
+                p_btn.add_css_class("active");
+            }
+            let s_ref = thick_scale.clone();
+            p_btn.connect_clicked(move |_| {
+                s_ref.set_value(preset_val);
+            });
+            presets_box.append(&p_btn);
+            preset_buttons.borrow_mut().push((p_btn, preset_val));
+        }
+        thick_pop_box.append(&presets_box);
+
+        let c_scale = canvas.clone();
+        let val_lbl_clone = caliber_val.clone();
+        let stroke_prev_clone = stroke_preview.clone();
+        let preset_btns_clone = preset_buttons.clone();
+        let prefs_scale = prefs.clone();
+
+        thick_scale.connect_value_changed(move |scale| {
+            let val = scale.value();
+            c_scale.set_pen_width(val);
+            val_lbl_clone.set_label(&format!("{:.1}", val));
+            stroke_prev_clone.queue_draw();
+
+            for (btn, preset_val) in preset_btns_clone.borrow().iter() {
+                if (val - preset_val).abs() < 0.15 {
+                    btn.add_css_class("active");
+                } else {
+                    btn.remove_css_class("active");
                 }
             }
-            hud_rec.update_view();
-        });
-        diag_box.append(&toggle_rec);
 
-        let toggle_touch = ToggleButton::builder()
-            .label("Touchscreen: Gesti Attivi")
-            .active(true)
-            .tooltip_text(
-                "Protezione palmo: Gesti touch attivi vs Touchscreen completamente disabilitato",
-            )
+            prefs_scale.borrow_mut().stroke_width = val;
+            let _ = prefs_scale.borrow().save();
+        });
+
+        thick_popover.set_child(Some(&thick_pop_box));
+
+        let t_pop_ref = thick_popover.clone();
+        btn_thick_chip.connect_clicked(move |_| {
+            t_pop_ref.popup();
+        });
+        island_box.append(&btn_thick_chip);
+
+        // Separatore 2
+        let sep2 = GtkBox::builder().css_classes(["dms-dock-divider"]).build();
+        island_box.append(&sep2);
+
+        // --- Gruppo Strumenti di Disegno ---
+        let tools: [(IconKind, ActiveTool, &str); 6] = [
+            (IconKind::PenTool, ActiveTool::Pen, "Penna Stilografica"),
+            (
+                IconKind::Eraser,
+                ActiveTool::Eraser,
+                "Gomma (Tratto Intero)",
+            ),
+            (
+                IconKind::Highlighter,
+                ActiveTool::Highlighter,
+                "Evidenziatore Fluido",
+            ),
+            (
+                IconKind::Type,
+                ActiveTool::Text,
+                "Testo & Formule (Markdown/LaTeX)",
+            ),
+            (IconKind::Line, ActiveTool::Line, "Linea Dritta"),
+            (IconKind::Shapes, ActiveTool::Shapes, "Riconoscimento Forme"),
+        ];
+
+        let tool_buttons: Rc<RefCell<Vec<Button>>> = Rc::new(RefCell::new(Vec::new()));
+
+        for (i, (icon_kind, tool_kind, tooltip)) in tools.into_iter().enumerate() {
+            let btn = Button::builder()
+                .child(&create_icon(icon_kind, 16, None))
+                .tooltip_text(tooltip)
+                .css_classes(["dms-tool-btn"])
+                .build();
+
+            if i == 0 {
+                btn.add_css_class("active");
+            }
+
+            let c_tool = canvas.clone();
+            let all_tools = tool_buttons.clone();
+            let btn_self = btn.clone();
+            btn.connect_clicked(move |_| {
+                for b in all_tools.borrow().iter() {
+                    b.remove_css_class("active");
+                }
+                btn_self.add_css_class("active");
+                c_tool.set_active_tool(tool_kind);
+            });
+
+            island_box.append(&btn);
+            tool_buttons.borrow_mut().push(btn);
+        }
+
+        overlay.add_overlay(&island_box);
+
+        // =========================================================================
+        // 3. AZIONI RAPIDE IN ALTO A DESTRA (x: 1216, y: 20)
+        // =========================================================================
+        let right_actions_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(10)
+            .valign(Align::Start)
+            .halign(Align::End)
+            .margin_end(22)
+            .margin_top(20)
             .build();
+
+        // Pulsante Esporta / Salva
+        let btn_export = Button::builder()
+            .child(&create_icon(IconKind::Export, 18, None))
+            .tooltip_text("Esporta & Salvataggio (Ctrl+S)")
+            .css_classes(["dms-action-btn"])
+            .build();
+
+        let export_popover = Popover::builder().css_classes(["dms-popover"]).build();
+        export_popover.set_parent(&btn_export);
+
+        let export_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(8)
+            .margin_start(10)
+            .margin_end(10)
+            .margin_top(8)
+            .margin_bottom(8)
+            .build();
+
+        let lbl_export_title = Label::builder()
+            .label("Gestione Quaderno")
+            .xalign(0.0)
+            .css_classes(["brand-title"])
+            .build();
+        export_box.append(&lbl_export_title);
+
+        let lbl_group1 = Label::builder()
+            .label("Quaderno")
+            .xalign(0.0)
+            .css_classes(["dms-popover-section-title"])
+            .build();
+        export_box.append(&lbl_group1);
+
+        // Salva (.uninote)
+        let card_save = Button::builder()
+            .css_classes(["dms-action-card"])
+            .tooltip_text("Salva modifiche correnti (Ctrl+S)")
+            .build();
+        let save_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .valign(Align::Center)
+            .build();
+        let save_icon_box = GtkBox::builder()
+            .css_classes(["dms-card-icon-box"])
+            .halign(Align::Center)
+            .valign(Align::Center)
+            .build();
+        save_icon_box.append(&create_icon(IconKind::Export, 18, None));
+        save_box.append(&save_icon_box);
+
+        let save_text_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .hexpand(true)
+            .valign(Align::Center)
+            .build();
+        let save_title = Label::builder()
+            .label("Salva Quaderno")
+            .xalign(0.0)
+            .css_classes(["dms-card-title"])
+            .build();
+        let save_sub = Label::builder()
+            .label("Salva le modifiche nel file attivo (.uninote)")
+            .xalign(0.0)
+            .css_classes(["dms-card-subtitle"])
+            .build();
+        save_text_box.append(&save_title);
+        save_text_box.append(&save_sub);
+        save_box.append(&save_text_box);
+
+        let save_badge = Label::builder()
+            .label("Ctrl+S")
+            .valign(Align::Center)
+            .css_classes(["dms-shortcut-badge"])
+            .build();
+        save_box.append(&save_badge);
+        card_save.set_child(Some(&save_box));
+
+        let c_save = canvas.clone();
+        let win_save = window.clone();
+        let exp_pop_ref = export_popover.clone();
+        card_save.connect_clicked(move |_| {
+            exp_pop_ref.popdown();
+            let state_rc = c_save.state();
+            let st = state_rc.borrow();
+            if let Some(ref path) = st.file_path {
+                let path_clone = path.clone();
+                drop(st);
+                let _ = c_save.save_as(path_clone);
+            } else {
+                drop(st);
+                let dialog = FileDialog::builder()
+                    .title("Salva Quaderno UniNote")
+                    .initial_name("quaderno.uninote")
+                    .modal(true)
+                    .build();
+                let c_ref = c_save.clone();
+                dialog.save(Some(&win_save), gio::Cancellable::NONE, move |res| {
+                    if let Ok(file) = res {
+                        if let Some(path) = file.path() {
+                            let _ = c_ref.save_as(path);
+                        }
+                    }
+                });
+            }
+        });
+        export_box.append(&card_save);
+
+        // Nuovo Quaderno
+        let card_new = Button::builder()
+            .css_classes(["dms-action-card"])
+            .tooltip_text("Crea un nuovo quaderno vuoto (Ctrl+N)")
+            .build();
+        let new_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .valign(Align::Center)
+            .build();
+        let new_icon_box = GtkBox::builder()
+            .css_classes(["dms-card-icon-box"])
+            .halign(Align::Center)
+            .valign(Align::Center)
+            .build();
+        new_icon_box.append(&create_icon(IconKind::Add, 18, None));
+        new_box.append(&new_icon_box);
+
+        let new_text_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .hexpand(true)
+            .valign(Align::Center)
+            .build();
+        let new_title = Label::builder()
+            .label("Nuovo Quaderno")
+            .xalign(0.0)
+            .css_classes(["dms-card-title"])
+            .build();
+        let new_sub = Label::builder()
+            .label("Inizia da zero un nuovo documento")
+            .xalign(0.0)
+            .css_classes(["dms-card-subtitle"])
+            .build();
+        new_text_box.append(&new_title);
+        new_text_box.append(&new_sub);
+        new_box.append(&new_text_box);
+
+        let new_badge = Label::builder()
+            .label("Ctrl+N")
+            .valign(Align::Center)
+            .css_classes(["dms-shortcut-badge"])
+            .build();
+        new_box.append(&new_badge);
+        card_new.set_child(Some(&new_box));
+
+        let c_new = canvas.clone();
+        let exp_pop_ref2 = export_popover.clone();
+        card_new.connect_clicked(move |_| {
+            exp_pop_ref2.popdown();
+            c_new.new_document();
+        });
+        export_box.append(&card_new);
+
+        // Separatore orizzontale
+        let exp_div = GtkBox::builder()
+            .css_classes(["dms-dock-divider"])
+            .margin_top(4)
+            .margin_bottom(4)
+            .build();
+        export_box.append(&exp_div);
+
+        // Group 2: Esporta
+        let lbl_group2 = Label::builder()
+            .label("Esporta")
+            .xalign(0.0)
+            .css_classes(["dms-popover-section-title"])
+            .build();
+        export_box.append(&lbl_group2);
+
+        // Pacchetto Portabile (.uninote)
+        let card_portable = Button::builder()
+            .css_classes(["dms-action-card"])
+            .tooltip_text("Esporta pacchetto SQLite autonomo consolidato")
+            .build();
+        let port_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .valign(Align::Center)
+            .build();
+        let port_icon_box = GtkBox::builder()
+            .css_classes(["dms-card-icon-box"])
+            .halign(Align::Center)
+            .valign(Align::Center)
+            .build();
+        port_icon_box.append(&create_icon(IconKind::Page, 18, None));
+        port_box.append(&port_icon_box);
+
+        let port_text_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .hexpand(true)
+            .valign(Align::Center)
+            .build();
+        let port_title = Label::builder()
+            .label("Pacchetto Portabile (.uninote)")
+            .xalign(0.0)
+            .css_classes(["dms-card-title"])
+            .build();
+        let port_sub = Label::builder()
+            .label("Consolida transazioni WAL in file autonomo")
+            .xalign(0.0)
+            .css_classes(["dms-card-subtitle"])
+            .build();
+        port_text_box.append(&port_title);
+        port_text_box.append(&port_sub);
+        port_box.append(&port_text_box);
+
+        let port_badge = Label::builder()
+            .label(".uninote")
+            .valign(Align::Center)
+            .css_classes(["dms-shortcut-badge"])
+            .build();
+        port_box.append(&port_badge);
+        card_portable.set_child(Some(&port_box));
+
+        let c_port = canvas.clone();
+        let win_port = window.clone();
+        let exp_pop_ref3 = export_popover.clone();
+        card_portable.connect_clicked(move |_| {
+            exp_pop_ref3.popdown();
+            let dialog = FileDialog::builder()
+                .title("Esporta Pacchetto Portabile UniNote")
+                .initial_name("quaderno_portabile.uninote")
+                .modal(true)
+                .build();
+            let c_ref = c_port.clone();
+            dialog.save(Some(&win_port), gio::Cancellable::NONE, move |res| {
+                if let Ok(file) = res {
+                    if let Some(path) = file.path() {
+                        let _ = c_ref.export_portable_copy(path);
+                    }
+                }
+            });
+        });
+        export_box.append(&card_portable);
+
+        // Documento PDF (.pdf) - In arrivo
+        let card_pdf = Button::builder()
+            .css_classes(["dms-action-card", "disabled"])
+            .tooltip_text("Esportatore PDF in fase di sviluppo")
+            .build();
+        let pdf_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .valign(Align::Center)
+            .build();
+        let pdf_icon_box = GtkBox::builder()
+            .css_classes(["dms-card-icon-box"])
+            .halign(Align::Center)
+            .valign(Align::Center)
+            .build();
+        pdf_icon_box.append(&create_icon(IconKind::Page, 18, None));
+        pdf_box.append(&pdf_icon_box);
+
+        let pdf_text_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .hexpand(true)
+            .valign(Align::Center)
+            .build();
+        let pdf_title = Label::builder()
+            .label("Documento PDF (.pdf)")
+            .xalign(0.0)
+            .css_classes(["dms-card-title"])
+            .build();
+        let pdf_sub = Label::builder()
+            .label("Esporta intero quaderno in formato PDF")
+            .xalign(0.0)
+            .css_classes(["dms-card-subtitle"])
+            .build();
+        pdf_text_box.append(&pdf_title);
+        pdf_text_box.append(&pdf_sub);
+        pdf_box.append(&pdf_text_box);
+
+        let pdf_badge = Label::builder()
+            .label("In arrivo")
+            .valign(Align::Center)
+            .css_classes(["dms-chip-coming-soon"])
+            .build();
+        pdf_box.append(&pdf_badge);
+        card_pdf.set_child(Some(&pdf_box));
+        export_box.append(&card_pdf);
+
+        // Grafica Vettoriale SVG (.svg) - In arrivo
+        let card_svg = Button::builder()
+            .css_classes(["dms-action-card", "disabled"])
+            .tooltip_text("Esportatore SVG in fase di sviluppo")
+            .build();
+        let svg_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .valign(Align::Center)
+            .build();
+        let svg_icon_box = GtkBox::builder()
+            .css_classes(["dms-card-icon-box"])
+            .halign(Align::Center)
+            .valign(Align::Center)
+            .build();
+        svg_icon_box.append(&create_icon(IconKind::Shapes, 18, None));
+        svg_box.append(&svg_icon_box);
+
+        let svg_text_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .hexpand(true)
+            .valign(Align::Center)
+            .build();
+        let svg_title = Label::builder()
+            .label("Grafica Vettoriale SVG (.svg)")
+            .xalign(0.0)
+            .css_classes(["dms-card-title"])
+            .build();
+        let svg_sub = Label::builder()
+            .label("Esporta pagina corrente in vettoriale SVG")
+            .xalign(0.0)
+            .css_classes(["dms-card-subtitle"])
+            .build();
+        svg_text_box.append(&svg_title);
+        svg_text_box.append(&svg_sub);
+        svg_box.append(&svg_text_box);
+
+        let svg_badge = Label::builder()
+            .label("In arrivo")
+            .valign(Align::Center)
+            .css_classes(["dms-chip-coming-soon"])
+            .build();
+        svg_box.append(&svg_badge);
+        card_svg.set_child(Some(&svg_box));
+        export_box.append(&card_svg);
+
+        export_popover.set_child(Some(&export_box));
+        let exp_ref = export_popover.clone();
+        btn_export.connect_clicked(move |_| {
+            exp_ref.popup();
+        });
+        right_actions_box.append(&btn_export);
+
+        // Pulsante Impostazioni & Control Center DMS
+        let btn_settings = Button::builder()
+            .child(&create_icon(IconKind::Settings, 18, None))
+            .tooltip_text("Pannello Hardware DMS & Telemetria")
+            .css_classes(["dms-action-btn"])
+            .build();
+
+        let settings_popover = Popover::builder().css_classes(["dms-popover"]).build();
+        settings_popover.set_parent(&btn_settings);
+
+        let settings_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(10)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(10)
+            .margin_bottom(10)
+            .build();
+
+        let lbl_settings_title = Label::builder()
+            .label("Control Center UniNote DMS")
+            .xalign(0.0)
+            .css_classes(["brand-title"])
+            .build();
+        settings_box.append(&lbl_settings_title);
+
+        // Toggle Overlay HUD Diagnostico
+        let hud_ref_toggle = hud.clone();
+        let btn_hud_toggle = Button::builder()
+            .label("Overlay Telemetria HUD (F12)")
+            .css_classes(["dms-tool-btn-neutral"])
+            .build();
+        btn_hud_toggle.connect_clicked(move |_| {
+            let vis = hud_ref_toggle.widget().is_visible();
+            hud_ref_toggle.widget().set_visible(!vis);
+        });
+        settings_box.append(&btn_hud_toggle);
+
+        // Sezione Rifiuto Palmo
+        let lbl_palm = Label::builder()
+            .label("Riconoscimento Palmo:")
+            .xalign(0.0)
+            .build();
+        settings_box.append(&lbl_palm);
+
+        let touch_strings = [
+            "Solo Gesti Pan/Zoom (Consigliato)",
+            "Touch Totalmente Bloccato (OFF)",
+        ];
+        let dropdown_touch = DropDown::from_strings(&touch_strings);
+        dropdown_touch.set_selected(0);
         let canvas_touch = canvas.clone();
         let hud_touch = hud.clone();
-        toggle_touch.connect_toggled(move |btn| {
-            let is_gestures = btn.is_active();
-            let new_mode = if is_gestures {
-                btn.set_label("Touchscreen: Gesti Attivi");
-                TouchMode::GesturesOnly
-            } else {
-                btn.set_label("Touchscreen: Disabilitato (OFF)");
-                TouchMode::Off
+        dropdown_touch.connect_selected_notify(move |dd| {
+            let mode = match dd.selected() {
+                0 => TouchMode::GesturesOnly,
+                _ => TouchMode::Off,
             };
             canvas_touch
                 .state()
                 .borrow_mut()
                 .palm_engine
-                .set_touch_mode(new_mode);
-            hud_touch.update_metrics(|m| m.touch_mode = new_mode);
+                .set_touch_mode(mode);
+            hud_touch.update_metrics(|m| m.touch_mode = mode);
             hud_touch.update_view();
         });
-        diag_box.append(&toggle_touch);
+        settings_box.append(&dropdown_touch);
 
+        // Sezione Soglia Pressione Punta (Anti-Hover)
         let lbl_thresh = Label::builder()
-            .label("Soglia Pressione Stilo:")
+            .label("Soglia Punta Anti-Hover:")
             .xalign(0.0)
             .build();
-        diag_box.append(&lbl_thresh);
+        settings_box.append(&lbl_thresh);
 
         let thresh_strings = [
-            "0.06 (Default Anti-Hover)",
-            "0.08 (Alta MPP)",
-            "0.12 (Massima)",
-            "0.04 (Media)",
-            "0.02 (Sensibile)",
+            "0.065 (Ottimale MPP Prova 7)",
+            "0.080 (Pressione Decisa)",
+            "0.120 (Alta Resistenza)",
+            "0.040 (Sensibile)",
+            "0.020 (Ultra Sensibile)",
         ];
         let dropdown_thresh = DropDown::from_strings(&thresh_strings);
         dropdown_thresh.set_selected(0);
@@ -503,28 +785,29 @@ impl UniNoteWindow {
         let hud_thresh = hud.clone();
         dropdown_thresh.connect_selected_notify(move |dd| {
             let new_thresh = match dd.selected() {
-                0 => 0.06,
-                1 => 0.08,
-                2 => 0.12,
-                3 => 0.04,
-                _ => 0.02,
+                0 => 0.065,
+                1 => 0.080,
+                2 => 0.120,
+                3 => 0.040,
+                _ => 0.020,
             };
             canvas_thresh.state().borrow_mut().tip_pressure_threshold = new_thresh;
             hud_thresh.update_metrics(|m| m.tip_threshold = new_thresh);
             hud_thresh.update_view();
         });
-        diag_box.append(&dropdown_thresh);
+        settings_box.append(&dropdown_thresh);
 
+        // Sezione Pipeline Smoothing
         let lbl_mode = Label::builder()
-            .label("Pipeline Smoothing:")
+            .label("Algoritmo Tratto:")
             .xalign(0.0)
             .build();
-        diag_box.append(&lbl_mode);
+        settings_box.append(&lbl_mode);
 
         let mode_strings = [
-            "Spline Naturale (Default)",
-            "One Euro + Spline",
-            "Baseline (Off)",
+            "Spline Catmull-Rom (Naturale)",
+            "One Euro Filter + Spline",
+            "Baseline Diretto",
         ];
         let dropdown_mode = DropDown::from_strings(&mode_strings);
         dropdown_mode.set_selected(0);
@@ -541,45 +824,768 @@ impl UniNoteWindow {
             hud_smooth.update_view();
             canvas_smooth.widget().queue_draw();
         });
-        diag_box.append(&dropdown_mode);
+        settings_box.append(&dropdown_mode);
 
-        diag_popover.set_child(Some(&diag_box));
-        diag_btn.set_popover(Some(&diag_popover));
+        settings_popover.set_child(Some(&settings_box));
+        let set_ref = settings_popover.clone();
+        btn_settings.connect_clicked(move |_| {
+            set_ref.popup();
+        });
+        right_actions_box.append(&btn_settings);
 
-        // Impacchettamento lato destro della HeaderBar
-        header_bar.pack_end(&diag_btn);
-        header_bar.pack_end(&dropdown_bg);
-        header_bar.pack_end(&zoom_box);
+        overlay.add_overlay(&right_actions_box);
 
-        // --- 12. SCORCIATOIE DA TASTIERA GLOBALI (Ctrl+Z, Ctrl+Y, Ctrl+S, Ctrl+O, Ctrl+N) ---
+        // =========================================================================
+        // 4. DOCK PENNE A SINISTRA (x: 22, y: draggable, larghezza 54px)
+        // =========================================================================
+        let dock_initial_y = prefs.borrow().dock_y.clamp(72.0, 600.0);
+        let left_dock = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(6)
+            .valign(Align::Start)
+            .halign(Align::Start)
+            .margin_start(22)
+            .margin_top(dock_initial_y as i32)
+            .css_classes(["dms-left-dock"])
+            .build();
+
+        // Maniglia dock interattiva con GestureDrag
+        let handle_area = GtkBox::builder()
+            .halign(Align::Center)
+            .css_classes(["dms-dock-handle-area"])
+            .build();
+
+        let handle_bar = GtkBox::builder()
+            .halign(Align::Center)
+            .valign(Align::Center)
+            .css_classes(["dms-dock-handle"])
+            .build();
+        handle_area.append(&handle_bar);
+
+        let gesture_drag = GestureDrag::new();
+        let start_top = Rc::new(Cell::new(0.0f64));
+        let start_top_begin = start_top.clone();
+        let dock_begin = left_dock.clone();
+        gesture_drag.connect_drag_begin(move |_, _, _| {
+            start_top_begin.set(dock_begin.margin_top() as f64);
+        });
+
+        let start_top_update = start_top.clone();
+        let dock_update = left_dock.clone();
+        let win_update = window.clone();
+        gesture_drag.connect_drag_update(move |_, _, offset_y| {
+            let init_y = start_top_update.get();
+            let win_h = win_update.height() as f64;
+            let dock_h = dock_update.height() as f64;
+            let max_y = (win_h - dock_h - 60.0).max(72.0);
+            let new_y = (init_y + offset_y).clamp(72.0, max_y);
+            dock_update.set_margin_top(new_y as i32);
+        });
+
+        let dock_end = left_dock.clone();
+        let prefs_drag_end = prefs.clone();
+        gesture_drag.connect_drag_end(move |_, _, _| {
+            let final_y = dock_end.margin_top() as f64;
+            prefs_drag_end.borrow_mut().dock_y = final_y;
+            let _ = prefs_drag_end.borrow().save();
+        });
+        handle_area.add_controller(gesture_drag);
+        left_dock.append(&handle_area);
+
+        // Contenitore verticale per i bottoni degli slot di inchiostro
+        let slots_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(6)
+            .build();
+        left_dock.append(&slots_box);
+
+        let slot_buttons: Rc<RefCell<Vec<Button>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let create_slot_btn = {
+            let slot_buttons = slot_buttons.clone();
+            let prefs = prefs.clone();
+            let canvas = canvas.clone();
+            let caliber_dot = caliber_dot.clone();
+            let tool_buttons = tool_buttons.clone();
+            let stroke_preview = stroke_preview.clone();
+            let window = window.clone();
+
+            Rc::new(move |slot_cfg: PenSlotConfig| -> Button {
+                let rgba = slot_cfg.rgba;
+                let pen_icon = create_icon(
+                    IconKind::PenLine,
+                    18,
+                    Some(gdk::RGBA::new(
+                        rgba.0 as f32,
+                        rgba.1 as f32,
+                        rgba.2 as f32,
+                        rgba.3 as f32,
+                    )),
+                );
+
+                let slot_btn = Button::builder()
+                    .child(&pen_icon)
+                    .tooltip_text(&slot_cfg.name)
+                    .css_classes(["dms-pen-slot"])
+                    .build();
+
+                // Clic singolo: attiva lo slot
+                let c_color = canvas.clone();
+                let all_slots = slot_buttons.clone();
+                let slot_self = slot_btn.clone();
+                let cal_dot_ref = caliber_dot.clone();
+                let tool_btns_ref = tool_buttons.clone();
+                let stroke_prev_ref = stroke_preview.clone();
+                let prefs_click = prefs.clone();
+
+                slot_btn.connect_clicked(move |_| {
+                    let mut active_idx = 0;
+                    for (idx, s) in all_slots.borrow().iter().enumerate() {
+                        if s == &slot_self {
+                            s.add_css_class("active");
+                            active_idx = idx;
+                        } else {
+                            s.remove_css_class("active");
+                        }
+                    }
+
+                    prefs_click.borrow_mut().active_slot_index = active_idx;
+                    let _ = prefs_click.borrow().save();
+
+                    if let Some(cfg) = prefs_click.borrow().slots.get(active_idx) {
+                        c_color.set_pen_color(cfg.rgba);
+                        c_color.set_active_tool(ActiveTool::Pen);
+
+                        let tb = tool_btns_ref.borrow();
+                        for (idx, b) in tb.iter().enumerate() {
+                            if idx == 0 {
+                                b.add_css_class("active");
+                            } else {
+                                b.remove_css_class("active");
+                            }
+                        }
+
+                        cal_dot_ref.set_markup(&format!(
+                            "<span foreground='{}' font_desc='11'>●</span>",
+                            cfg.hex
+                        ));
+                    }
+
+                    stroke_prev_ref.queue_draw();
+                });
+
+                // Clic secondario e Long press per modificare il colore
+                let open_editor = {
+                    let slot_self = slot_btn.clone();
+                    let all_slots = slot_buttons.clone();
+                    let prefs_edit = prefs.clone();
+                    let c_color = canvas.clone();
+                    let cal_dot_ref = caliber_dot.clone();
+                    let stroke_prev_ref = stroke_preview.clone();
+                    let win = window.clone();
+
+                    Rc::new(move || {
+                        let idx = all_slots.borrow().iter().position(|b| b == &slot_self);
+                        let Some(slot_idx) = idx else {
+                            return;
+                        };
+
+                        let current_rgba = prefs_edit
+                            .borrow()
+                            .slots
+                            .get(slot_idx)
+                            .map(|s| s.rgba)
+                            .unwrap_or((0.0, 0.0, 0.0, 1.0));
+
+                        let dialog = ColorDialog::builder()
+                            .title("Modifica Colore Inchiostro")
+                            .modal(true)
+                            .build();
+
+                        let initial = gdk::RGBA::new(
+                            current_rgba.0 as f32,
+                            current_rgba.1 as f32,
+                            current_rgba.2 as f32,
+                            current_rgba.3 as f32,
+                        );
+
+                        let slot_btn_inner = slot_self.clone();
+                        let prefs_cb = prefs_edit.clone();
+                        let c_color_cb = c_color.clone();
+                        let cal_dot_cb = cal_dot_ref.clone();
+                        let stroke_prev_cb = stroke_prev_ref.clone();
+
+                        dialog.choose_rgba(
+                            Some(&win),
+                            Some(&initial),
+                            gio::Cancellable::NONE,
+                            move |res| {
+                                if let Ok(rgba) = res {
+                                    let tuple = (
+                                        rgba.red() as f64,
+                                        rgba.green() as f64,
+                                        rgba.blue() as f64,
+                                        rgba.alpha() as f64,
+                                    );
+                                    let hex = format!(
+                                        "#{:02X}{:02X}{:02X}",
+                                        (tuple.0 * 255.0) as u8,
+                                        (tuple.1 * 255.0) as u8,
+                                        (tuple.2 * 255.0) as u8
+                                    );
+                                    let name = format!("Personalizzato {}", hex);
+
+                                    if let Some(slot) =
+                                        prefs_cb.borrow_mut().slots.get_mut(slot_idx)
+                                    {
+                                        slot.hex = hex.clone();
+                                        slot.rgba = tuple;
+                                        slot.name = name.clone();
+                                    }
+                                    let _ = prefs_cb.borrow().save();
+
+                                    let new_icon = create_icon(IconKind::PenLine, 18, Some(rgba));
+                                    slot_btn_inner.set_child(Some(&new_icon));
+                                    slot_btn_inner.set_tooltip_text(Some(&name));
+
+                                    if prefs_cb.borrow().active_slot_index == slot_idx {
+                                        c_color_cb.set_pen_color(tuple);
+                                        cal_dot_cb.set_markup(&format!(
+                                            "<span foreground='{}' font_desc='11'>●</span>",
+                                            hex
+                                        ));
+                                        stroke_prev_cb.queue_draw();
+                                    }
+                                }
+                            },
+                        );
+                    })
+                };
+
+                let right_click = GestureClick::builder()
+                    .button(gdk::BUTTON_SECONDARY)
+                    .build();
+                let editor_rc = open_editor.clone();
+                right_click.connect_pressed(move |_, _, _, _| {
+                    editor_rc();
+                });
+                slot_btn.add_controller(right_click);
+
+                let long_press = GestureLongPress::new();
+                long_press.set_touch_only(false);
+                let editor_lp = open_editor.clone();
+                long_press.connect_pressed(move |_, _, _| {
+                    editor_lp();
+                });
+                slot_btn.add_controller(long_press);
+
+                slot_btn
+            })
+        };
+
+        // Renderizza slot iniziali da preferences
+        let active_slot = prefs.borrow().active_slot_index;
+        for (i, slot_cfg) in prefs.borrow().slots.iter().enumerate() {
+            let btn = create_slot_btn(slot_cfg.clone());
+            if i == active_slot {
+                btn.add_css_class("active");
+            }
+            slots_box.append(&btn);
+            slot_buttons.borrow_mut().push(btn);
+        }
+
+        // Tasto [+] Aggiungi colore
+        let btn_add_color = Button::builder()
+            .child(&create_icon(IconKind::Add, 14, None))
+            .tooltip_text("Aggiungi Nuovo Colore Inchiostro")
+            .css_classes(["dms-add-pen-btn"])
+            .build();
+
+        let win_color = window.clone();
+        let prefs_add = prefs.clone();
+        let slots_box_ref = slots_box.clone();
+        let slot_buttons_ref = slot_buttons.clone();
+        let create_slot_btn_ref = create_slot_btn.clone();
+        let c_color_add = canvas.clone();
+        let cal_dot_add = caliber_dot.clone();
+        let tool_btns_add = tool_buttons.clone();
+        let stroke_prev_add = stroke_preview.clone();
+
+        btn_add_color.connect_clicked(move |_| {
+            let dialog = ColorDialog::builder()
+                .title("Aggiungi Nuovo Colore Inchiostro")
+                .modal(true)
+                .build();
+
+            let prefs_cb = prefs_add.clone();
+            let slots_box_cb = slots_box_ref.clone();
+            let slot_buttons_cb = slot_buttons_ref.clone();
+            let create_slot_btn_cb = create_slot_btn_ref.clone();
+            let c_color_cb = c_color_add.clone();
+            let cal_dot_cb = cal_dot_add.clone();
+            let tool_btns_cb = tool_btns_add.clone();
+            let stroke_prev_cb = stroke_prev_add.clone();
+
+            dialog.choose_rgba(
+                Some(&win_color),
+                None::<&gdk::RGBA>,
+                gio::Cancellable::NONE,
+                move |res| {
+                    if let Ok(rgba) = res {
+                        let tuple = (
+                            rgba.red() as f64,
+                            rgba.green() as f64,
+                            rgba.blue() as f64,
+                            rgba.alpha() as f64,
+                        );
+                        let hex = format!(
+                            "#{:02X}{:02X}{:02X}",
+                            (tuple.0 * 255.0) as u8,
+                            (tuple.1 * 255.0) as u8,
+                            (tuple.2 * 255.0) as u8
+                        );
+                        let name = format!("Personalizzato {}", hex);
+                        let slot_cfg = PenSlotConfig::new(hex.clone(), tuple, name);
+
+                        let new_idx = prefs_cb.borrow().slots.len();
+                        prefs_cb.borrow_mut().slots.push(slot_cfg.clone());
+                        prefs_cb.borrow_mut().active_slot_index = new_idx;
+                        let _ = prefs_cb.borrow().save();
+
+                        let new_btn = create_slot_btn_cb(slot_cfg);
+                        new_btn.add_css_class("active");
+
+                        for s in slot_buttons_cb.borrow().iter() {
+                            s.remove_css_class("active");
+                        }
+
+                        slots_box_cb.append(&new_btn);
+                        slot_buttons_cb.borrow_mut().push(new_btn);
+
+                        c_color_cb.set_pen_color(tuple);
+                        c_color_cb.set_active_tool(ActiveTool::Pen);
+
+                        let tb = tool_btns_cb.borrow();
+                        for (idx, b) in tb.iter().enumerate() {
+                            if idx == 0 {
+                                b.add_css_class("active");
+                            } else {
+                                b.remove_css_class("active");
+                            }
+                        }
+
+                        cal_dot_cb.set_markup(&format!(
+                            "<span foreground='{}' font_desc='11'>●</span>",
+                            hex
+                        ));
+                        stroke_prev_cb.queue_draw();
+                    }
+                },
+            );
+        });
+        left_dock.append(&btn_add_color);
+
+        overlay.add_overlay(&left_dock);
+
+        // =========================================================================
+        // 5. DOCK PAGINE E ZOOM INFERIORE (y: 794, larghezza 486px)
+        // =========================================================================
+        let bottom_dock = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(4)
+            .valign(Align::End)
+            .halign(Align::Center)
+            .margin_bottom(16)
+            .css_classes(["dms-pill-dense"])
+            .build();
+
+        // Navigazione Pagine: ‹ Pagina X di Y ›
+        let btn_prev_page = Button::builder()
+            .child(&create_icon(IconKind::ChevronLeft, 14, None))
+            .tooltip_text("Pagina Precedente")
+            .css_classes(["dms-zoom-btn"])
+            .build();
+
+        let page_icon = create_icon(IconKind::Page, 16, None);
+
+        let lbl_page = Label::builder()
+            .label("Pagina 1 di 1")
+            .css_classes(["dock-page-text"])
+            .build();
+
+        let btn_next_page = Button::builder()
+            .child(&create_icon(IconKind::ChevronRight, 14, None))
+            .tooltip_text("Pagina Successiva")
+            .css_classes(["dms-zoom-btn"])
+            .build();
+
+        let c_page_nav = canvas.clone();
+        let lbl_page_clone1 = lbl_page.clone();
+        let update_page_lbl = {
+            let c = c_page_nav.clone();
+            let lbl = lbl_page_clone1.clone();
+            move || {
+                let cur = c.current_page_index() + 1;
+                let tot = c.total_pages();
+                lbl.set_label(&format!("Pagina {} di {}", cur, tot));
+            }
+        };
+
+        let c_prev = canvas.clone();
+        let upd_prev = update_page_lbl.clone();
+        btn_prev_page.connect_clicked(move |_| {
+            let cur = c_prev.current_page_index();
+            if cur > 0 {
+                c_prev.scroll_to_page(cur - 1);
+                upd_prev();
+            }
+        });
+
+        let c_next = canvas.clone();
+        let upd_next = update_page_lbl.clone();
+        btn_next_page.connect_clicked(move |_| {
+            let cur = c_next.current_page_index();
+            if cur + 1 < c_next.total_pages() {
+                c_next.scroll_to_page(cur + 1);
+                upd_next();
+            }
+        });
+
+        bottom_dock.append(&btn_prev_page);
+        bottom_dock.append(&page_icon);
+        bottom_dock.append(&lbl_page);
+        bottom_dock.append(&btn_next_page);
+
+        // Separatore 1
+        let div_dock1 = GtkBox::builder().css_classes(["dms-dock-divider"]).build();
+        bottom_dock.append(&div_dock1);
+
+        // Tasto [+ Pagina] (Aggiunge una nuova pagina A4)
+        let btn_add_page = Button::builder()
+            .label("+ Pagina")
+            .tooltip_text("Aggiungi Nuova Pagina A4")
+            .css_classes(["dms-btn-add-page"])
+            .build();
+        let c_add = canvas.clone();
+        let upd_add = update_page_lbl.clone();
+        btn_add_page.connect_clicked(move |_| {
+            c_add.add_page(PageBackground::Grid { grid_size: 14.17 });
+            upd_add();
+        });
+        bottom_dock.append(&btn_add_page);
+
+        // Separatore 2
+        let div_dock2 = GtkBox::builder().css_classes(["dms-dock-divider"]).build();
+        bottom_dock.append(&div_dock2);
+
+        // Selettore Sfondo: Quadretti ▾
+        let btn_grid_select = Button::builder()
+            .label("Quadretti ▾")
+            .tooltip_text("Scegli Sfondo Foglio")
+            .css_classes(["dms-btn-grid-select"])
+            .build();
+
+        let grid_popover = Popover::builder().css_classes(["dms-popover"]).build();
+        grid_popover.set_parent(&btn_grid_select);
+
+        let grid_pop_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(6)
+            .margin_start(8)
+            .margin_end(8)
+            .margin_top(6)
+            .margin_bottom(6)
+            .build();
+
+        let grid_options: [(&str, &str, PageBackground, &str); 3] = [
+            (
+                "Quadretti",
+                "Quadretti ▾",
+                PageBackground::Grid { grid_size: 14.17 },
+                "grid",
+            ),
+            (
+                "Righe",
+                "Righe ▾",
+                PageBackground::Ruled {
+                    line_spacing: 22.68,
+                    margin_left: 56.7,
+                },
+                "ruled",
+            ),
+            ("Bianco", "Bianco ▾", PageBackground::Blank, "blank"),
+        ];
+
+        let lbl_grid_title = Label::builder()
+            .label("Tipo di Foglio")
+            .xalign(0.0)
+            .css_classes(["brand-title"])
+            .build();
+        grid_pop_box.append(&lbl_grid_title);
+
+        let cards_row = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(10)
+            .build();
+
+        let paper_cards: Rc<RefCell<Vec<Button>>> = Rc::new(RefCell::new(Vec::new()));
+
+        for (i, (card_title, label_text, bg_kind, kind_id)) in grid_options.into_iter().enumerate()
+        {
+            let card_box = GtkBox::builder()
+                .orientation(Orientation::Vertical)
+                .spacing(6)
+                .halign(Align::Center)
+                .valign(Align::Center)
+                .build();
+
+            let preview_area = DrawingArea::builder()
+                .content_width(68)
+                .content_height(80)
+                .build();
+
+            let kind_str = kind_id.to_string();
+            preview_area.set_draw_func(move |_area, cr, width, height| {
+                let w = width as f64;
+                let h = height as f64;
+
+                let r = 4.0;
+                cr.save().expect("cairo save");
+                cr.new_sub_path();
+                cr.arc(w - r, r, r, -PI / 2.0, 0.0);
+                cr.arc(w - r, h - r, r, 0.0, PI / 2.0);
+                cr.arc(r, h - r, r, PI / 2.0, PI);
+                cr.arc(r, r, r, PI, 3.0 * PI / 2.0);
+                cr.close_path();
+
+                // Foglio bianco caldo naturale
+                cr.set_source_rgb(0.98, 0.98, 0.97);
+                let _ = cr.fill_preserve();
+
+                // Bordo foglio
+                cr.set_source_rgba(0.70, 0.75, 0.78, 0.8);
+                cr.set_line_width(0.8);
+                let _ = cr.stroke();
+
+                // Pattern interno con clip
+                cr.new_sub_path();
+                cr.arc(w - r, r, r, -PI / 2.0, 0.0);
+                cr.arc(w - r, h - r, r, 0.0, PI / 2.0);
+                cr.arc(r, h - r, r, PI / 2.0, PI);
+                cr.arc(r, r, r, PI, 3.0 * PI / 2.0);
+                cr.close_path();
+                cr.clip();
+
+                match kind_str.as_str() {
+                    "grid" => {
+                        // Griglia miniaturizzata da 5mm
+                        cr.set_source_rgba(0.68, 0.78, 0.85, 0.75);
+                        cr.set_line_width(0.6);
+                        let step = 7.0;
+                        let mut x = step;
+                        while x < w {
+                            cr.move_to(x, 0.0);
+                            cr.line_to(x, h);
+                            x += step;
+                        }
+                        let mut y = step;
+                        while y < h {
+                            cr.move_to(0.0, y);
+                            cr.line_to(w, y);
+                            y += step;
+                        }
+                        let _ = cr.stroke();
+                    }
+                    "ruled" => {
+                        // Righe miniaturizzate
+                        cr.set_source_rgba(0.68, 0.78, 0.85, 0.75);
+                        cr.set_line_width(0.6);
+                        let step = 9.0;
+                        let mut y = 14.0;
+                        while y < h {
+                            cr.move_to(0.0, y);
+                            cr.line_to(w, y);
+                            y += step;
+                        }
+                        let _ = cr.stroke();
+
+                        // Margine sinistro rosso/corallo
+                        cr.set_source_rgba(1.0, 0.45, 0.42, 0.85);
+                        cr.set_line_width(0.8);
+                        cr.move_to(16.0, 0.0);
+                        cr.line_to(16.0, h);
+                        let _ = cr.stroke();
+                    }
+                    "blank" => {
+                        // Foglio bianco naturale
+                        cr.set_source_rgba(0.80, 0.85, 0.88, 0.35);
+                        cr.set_line_width(0.5);
+                        cr.move_to(8.0, 12.0);
+                        cr.line_to(w - 8.0, 12.0);
+                        let _ = cr.stroke();
+                    }
+                    _ => {}
+                }
+
+                cr.restore().expect("cairo restore");
+            });
+
+            card_box.append(&preview_area);
+
+            let title_lbl = Label::builder()
+                .label(card_title)
+                .css_classes(["dms-paper-card-title"])
+                .build();
+            card_box.append(&title_lbl);
+
+            let card_btn = Button::builder()
+                .child(&card_box)
+                .tooltip_text(card_title)
+                .css_classes(["dms-paper-card"])
+                .build();
+
+            if i == 0 {
+                card_btn.add_css_class("active");
+            }
+
+            let c_bg = canvas.clone();
+            let btn_grid_lbl = btn_grid_select.clone();
+            let pop_close = grid_popover.clone();
+            let all_cards = paper_cards.clone();
+            let this_card = card_btn.clone();
+
+            card_btn.connect_clicked(move |_| {
+                for c in all_cards.borrow().iter() {
+                    c.remove_css_class("active");
+                }
+                this_card.add_css_class("active");
+                pop_close.popdown();
+                c_bg.set_current_page_background(bg_kind.clone());
+                btn_grid_lbl.set_label(label_text);
+            });
+
+            cards_row.append(&card_btn);
+            paper_cards.borrow_mut().push(card_btn);
+        }
+
+        grid_pop_box.append(&cards_row);
+
+        grid_popover.set_child(Some(&grid_pop_box));
+        let grid_pop_ref = grid_popover.clone();
+        btn_grid_select.connect_clicked(move |_| {
+            grid_pop_ref.popup();
+        });
+        bottom_dock.append(&btn_grid_select);
+
+        // Separatore 3
+        let div_dock3 = GtkBox::builder().css_classes(["dms-dock-divider"]).build();
+        bottom_dock.append(&div_dock3);
+
+        // Segmento Zoom: − 100% +
+        let zoom_segment = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(2)
+            .css_classes(["dms-zoom-segment"])
+            .build();
+
+        let btn_zoom_out = Button::builder()
+            .child(&create_icon(IconKind::Minus, 12, None))
+            .tooltip_text("Rimpicciolisci")
+            .css_classes(["dms-zoom-btn"])
+            .build();
+
+        let lbl_zoom = Label::builder()
+            .label("100%")
+            .tooltip_text("Doppio clic per ripristinare 100%")
+            .css_classes(["zoom-value"])
+            .build();
+
+        let btn_zoom_in = Button::builder()
+            .child(&create_icon(IconKind::Add, 12, None))
+            .tooltip_text("Ingrandisci")
+            .css_classes(["dms-zoom-btn"])
+            .build();
+
+        let c_z_out = canvas.clone();
+        let lbl_z1 = lbl_zoom.clone();
+        btn_zoom_out.connect_clicked(move |_| {
+            c_z_out.zoom_out();
+            let z = (c_z_out.state().borrow().viewport.zoom * 100.0).round() as usize;
+            lbl_z1.set_label(&format!("{}%", z));
+        });
+
+        let c_z_in = canvas.clone();
+        let lbl_z2 = lbl_zoom.clone();
+        btn_zoom_in.connect_clicked(move |_| {
+            c_z_in.zoom_in();
+            let z = (c_z_in.state().borrow().viewport.zoom * 100.0).round() as usize;
+            lbl_z2.set_label(&format!("{}%", z));
+        });
+
+        let c_z_reset = canvas.clone();
+        let lbl_z3 = lbl_zoom.clone();
+        let click_gesture = GestureClick::new();
+        click_gesture.connect_pressed(move |_, _, _, _| {
+            c_z_reset.reset_zoom();
+            lbl_z3.set_label("100%");
+        });
+        lbl_zoom.add_controller(click_gesture);
+
+        zoom_segment.append(&btn_zoom_out);
+        zoom_segment.append(&lbl_zoom);
+        zoom_segment.append(&btn_zoom_in);
+        bottom_dock.append(&zoom_segment);
+
+        overlay.add_overlay(&bottom_dock);
+
+        // =========================================================================
+        // 6. OVERLAY DIAGNOSTICO HUD (Posizionato in basso a destra, attivabile con F12)
+        // =========================================================================
+        let hud_widget = hud.widget();
+        hud_widget.set_halign(Align::End);
+        hud_widget.set_valign(Align::End);
+        hud_widget.set_margin_end(20);
+        hud_widget.set_margin_bottom(80);
+        overlay.add_overlay(hud_widget);
+
+        // =========================================================================
+        // 7. SCORCIATOIE DA TASTIERA GLOBALI
+        // =========================================================================
         let key_controller = EventControllerKey::new();
-        let canvas_keys = canvas.clone();
-        let window_keys = window.clone();
+        let c_keys = canvas.clone();
+        let win_keys = window.clone();
+        let hud_keys = hud.clone();
         key_controller.connect_key_pressed(move |_ctrl, keyval, _keycode, modifier| {
             let is_ctrl = modifier.contains(gdk::ModifierType::CONTROL_MASK);
             let is_shift = modifier.contains(gdk::ModifierType::SHIFT_MASK);
+
+            if keyval == gdk::Key::F12 {
+                let vis = hud_keys.widget().is_visible();
+                hud_keys.widget().set_visible(!vis);
+                return glib::Propagation::Stop;
+            }
 
             if is_ctrl {
                 match keyval {
                     gdk::Key::z | gdk::Key::Z => {
                         if is_shift {
-                            canvas_keys.redo();
+                            c_keys.redo();
                         } else {
-                            canvas_keys.undo();
+                            c_keys.undo();
                         }
                         return glib::Propagation::Stop;
                     }
                     gdk::Key::y | gdk::Key::Y => {
-                        canvas_keys.redo();
+                        c_keys.redo();
                         return glib::Propagation::Stop;
                     }
                     gdk::Key::s | gdk::Key::S => {
-                        let state_rc = canvas_keys.state();
+                        let state_rc = c_keys.state();
                         let st = state_rc.borrow();
                         if let Some(ref path) = st.file_path {
                             let path_clone = path.clone();
                             drop(st);
-                            let _ = canvas_keys.save_as(path_clone);
+                            let _ = c_keys.save_as(path_clone);
                         } else {
                             drop(st);
                             let dialog = FileDialog::builder()
@@ -587,8 +1593,8 @@ impl UniNoteWindow {
                                 .initial_name("quaderno.uninote")
                                 .modal(true)
                                 .build();
-                            let c_ref = canvas_keys.clone();
-                            dialog.save(Some(&window_keys), gio::Cancellable::NONE, move |res| {
+                            let c_ref = c_keys.clone();
+                            dialog.save(Some(&win_keys), gio::Cancellable::NONE, move |res| {
                                 if let Ok(file) = res {
                                     if let Some(path) = file.path() {
                                         let _ = c_ref.save_as(path);
@@ -598,6 +1604,10 @@ impl UniNoteWindow {
                         }
                         return glib::Propagation::Stop;
                     }
+                    gdk::Key::n | gdk::Key::N => {
+                        c_keys.new_document();
+                        return glib::Propagation::Stop;
+                    }
                     _ => {}
                 }
             }
@@ -605,15 +1615,7 @@ impl UniNoteWindow {
         });
         window.add_controller(key_controller);
 
-        // Contenitore principale con Overlay
-        let overlay = Overlay::builder().child(canvas.widget()).build();
-        overlay.add_overlay(hud.widget());
-
-        let main_box = GtkBox::builder().orientation(Orientation::Vertical).build();
-        main_box.append(&header_bar);
-        main_box.append(&overlay);
-
-        window.set_content(Some(&main_box));
+        window.set_content(Some(&overlay));
 
         Self { window }
     }
