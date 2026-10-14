@@ -20,6 +20,7 @@ pub struct DiagnosticMetrics {
     pub touch_suppressed: u64,
     pub render_time_us: u64,
     pub is_recording: bool,
+    pub tip_threshold: f64,
 }
 
 impl Default for DiagnosticMetrics {
@@ -37,6 +38,7 @@ impl Default for DiagnosticMetrics {
             touch_suppressed: 0,
             render_time_us: 0,
             is_recording: false,
+            tip_threshold: 0.06,
         }
     }
 }
@@ -129,9 +131,9 @@ impl DiagnosticHud {
                 let bars = (p * 10.0).round() as usize;
                 let bar_str: String =
                     "█".repeat(bars.min(10)) + &"░".repeat(10usize.saturating_sub(bars));
-                format!("[{}] {:.2}", bar_str, p)
+                format!("[{}] {:.2} (Soglia: {:.2})", bar_str, p, m.tip_threshold)
             }
-            None => "[N/D (Mouse/NoPres)]".to_string(),
+            None => format!("[N/D (Mouse/NoPres)] (Soglia: {:.2})", m.tip_threshold),
         };
 
         let mode_str = match m.pipeline_mode {

@@ -66,6 +66,36 @@ impl UniNoteWindow {
         });
         header_bar.pack_start(&dropdown_mode);
 
+        // Selettore Soglia Pressione Stilo (Filtro Anti-Hover MPP per stacco netto lettere)
+        let thresh_strings = [
+            "Soglia: 0.06 (Default Anti-Hover)",
+            "Soglia: 0.08 (Alta MPP)",
+            "Soglia: 0.12 (Massima)",
+            "Soglia: 0.04 (Media)",
+            "Soglia: 0.02 (Sensibile)",
+        ];
+        let dropdown_thresh = DropDown::from_strings(&thresh_strings);
+        dropdown_thresh.set_selected(0);
+        dropdown_thresh.set_tooltip_text(Some(
+            "Regola la soglia minima di pressione per eliminare righe in hover e spike tra stanghette",
+        ));
+        let canvas_thresh = canvas.clone();
+        let hud_thresh = hud.clone();
+        dropdown_thresh.connect_selected_notify(move |dd| {
+            let new_thresh = match dd.selected() {
+                0 => 0.06,
+                1 => 0.08,
+                2 => 0.12,
+                3 => 0.04,
+                _ => 0.02,
+            };
+
+            canvas_thresh.state().borrow_mut().tip_pressure_threshold = new_thresh;
+            hud_thresh.update_metrics(|m| m.tip_threshold = new_thresh);
+            hud_thresh.update_view();
+        });
+        header_bar.pack_start(&dropdown_thresh);
+
         // Selettore Touch: Off vs Gesti
         let toggle_touch = ToggleButton::builder()
             .label("Touch: OFF")

@@ -23,6 +23,7 @@ pub struct CanvasState {
     pub last_sample_time: Option<Instant>,
     pub last_stylus_time: Option<Instant>,
     pub mouse_drag_start: Option<(f64, f64)>,
+    pub tip_pressure_threshold: f64,
 }
 
 impl CanvasState {
@@ -39,6 +40,7 @@ impl CanvasState {
             last_sample_time: None,
             last_stylus_time: None,
             mouse_drag_start: None,
+            tip_pressure_threshold: 0.06,
         }
     }
 
@@ -283,8 +285,6 @@ impl NoteCanvas {
     }
 
     fn setup_stylus_controller(&self) {
-        const TIP_LIFT_PRESSURE_THRESHOLD: f64 = 0.015;
-
         let stylus = gtk4::GestureStylus::new();
         let state_clone = self.state.clone();
         let area_clone = self.area.clone();
@@ -299,15 +299,8 @@ impl NoteCanvas {
             // Reclama la sequenza per inibire gesture concorrenti
             gesture.set_state(gtk4::EventSequenceState::Claimed);
             let pressure = gesture.axis(gdk::AxisUse::Pressure);
+            let p_val = pressure.unwrap_or(0.0);
             let now_ns = app_start.elapsed().as_nanos() as u64;
-
-            let sample = InputSample::new(
-                (x, y),
-                pressure,
-                now_ns,
-                DeviceKind::Stylus,
-                InputPhase::Down,
-            );
 
             let mut st = state.borrow_mut();
             st.last_stylus_time = Some(Instant::now());
@@ -318,6 +311,26 @@ impl NoteCanvas {
                 let stroke = prev_builder.finish();
                 st.completed_strokes.push(stroke);
             }
+
+            // Se il digitizer emette un Down in hover (pressione debole o None tipica dei sensori MPP),
+            // non avviare il tratto finché la punta non preme effettivamente oltre la soglia
+            if p_val <= st.tip_pressure_threshold {
+                let palm_state = st.palm_engine.current_state();
+                drop(st);
+                hud.update_metrics(|m| {
+                    m.live_pressure = pressure;
+                    m.palm_state = palm_state;
+                });
+                return;
+            }
+
+            let sample = InputSample::new(
+                (x, y),
+                pressure,
+                now_ns,
+                DeviceKind::Stylus,
+                InputPhase::Down,
+            );
 
             if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
                 let id = st.next_stroke_id;
@@ -361,53 +374,93 @@ impl NoteCanvas {
             let st = &mut *st_guard;
             st.last_stylus_time = Some(now);
 
-            if let Some(ref mut builder) = st.active_builder {
-                // 1. Rilevamento dello stato di contatto fisico della punta (Tip Contact Detection):
-                // In GTK4 su Wayland/libinput, quando la penna tocca fisicamente il vetro, l'evento ha BUTTON1_MASK.
-                // Nel momento in cui la punta stacca nel raggio di hover/prossimità, BUTTON1_MASK viene rilasciato
-                // oppure l'asse di pressione diventa None o <= 0.015.
-                let has_button1 = gesture.current_event().is_some_and(|ev| {
-                    ev.modifier_state()
-                        .contains(gdk::ModifierType::BUTTON1_MASK)
-                });
+            let has_button1 = gesture.current_event().is_some_and(|ev| {
+                ev.modifier_state()
+                    .contains(gdk::ModifierType::BUTTON1_MASK)
+            });
+            let p_val = pressure.unwrap_or(0.0);
+            let thresh = st.tip_pressure_threshold;
 
-                let p_val = pressure.unwrap_or(0.0);
-                let is_lifted =
-                    !has_button1 || pressure.is_none() || p_val <= TIP_LIFT_PRESSURE_THRESHOLD;
-
-                if is_lifted {
-                    // Punta staccata: finalizza all'istante il tratto.
-                    // Questo elimina categoricamente ogni sbavatura/spike verso la stanghetta successiva (es. le 'E' e le 't').
-                    if let Some(b) = st.active_builder.take() {
-                        let stroke = b.finish();
-                        st.completed_strokes.push(stroke);
+            // Se non c'è ancora un tratto attivo (es. il Down iniziale era avvenuto in hover con p <= thresh)
+            // e ora la pressione ha superato la soglia di contatto sul vetro: avvia il tratto!
+            if st.active_builder.is_none() {
+                if has_button1 && p_val > thresh {
+                    let sample = InputSample::new(
+                        (x, y),
+                        pressure,
+                        now_ns,
+                        DeviceKind::Stylus,
+                        InputPhase::Down,
+                    );
+                    if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
+                        let id = st.next_stroke_id;
+                        st.next_stroke_id += 1;
+                        let mut builder =
+                            StrokeBuilder::new(id, st.current_style.clone(), st.pipeline_mode);
+                        builder.process_sample(sample.clone());
+                        st.active_builder = Some(builder);
+                        st.active_device = Some(DeviceKind::Stylus);
+                        st.last_sample_time = Some(now);
                     }
-                    st.active_device = None;
-                    st.last_sample_time = None;
-                    drop(st_guard);
-                    area.queue_draw();
-                    return;
                 }
+                let palm_state = st.palm_engine.current_state();
+                drop(st_guard);
+                hud.update_metrics(|m| {
+                    m.live_pressure = pressure;
+                    m.palm_state = palm_state;
+                });
+                area.queue_draw();
+                return;
+            }
 
-                // 2. Protezione dai salti aerei e scatti (Leap Protection):
-                // Se tra l'ultimo punto e quello corrente la distanza supera 24px in un singolo campione
-                // e la pressione è debole (< 0.10), si tratta di uno stacco rapido in volo non intercettato.
+            // Calcolo velocità istantanea e distanza dall'ultimo punto registrato
+            let (dist_from_last, speed_px_s) = if let Some(ref builder) = st.active_builder {
                 if let Some(last_pt) = builder.stroke.points.last() {
                     let dist = ((last_pt.x - x).powi(2) + (last_pt.y - y).powi(2)).sqrt();
-                    if dist > 24.0 && p_val < 0.10 {
-                        if let Some(b) = st.active_builder.take() {
-                            let stroke = b.finish();
-                            st.completed_strokes.push(stroke);
-                        }
-                        st.active_device = None;
-                        st.last_sample_time = None;
-                        drop(st_guard);
-                        area.queue_draw();
-                        return;
-                    }
+                    let dt = st
+                        .last_sample_time
+                        .map_or(0.008, |t| now.duration_since(t).as_secs_f64());
+                    let speed = if dt > 0.0001 { dist / dt } else { 0.0 };
+                    (dist, speed)
+                } else {
+                    (0.0, 0.0)
                 }
+            } else {
+                (0.0, 0.0)
+            };
 
-                // Calcolo sample rate istantaneo
+            // Rilevamento avanzato di stacco punta e transito in volo (Anti-Hover / Anti-Spike):
+            // 1. Pressione sotto la soglia di contatto (default 0.06) o assenza asse
+            // 2. Modificatore BUTTON1_MASK assente (rilascio switch punta)
+            // 3. Transito cinematico balistico: velocità > 300 px/s con pressione debole (< 0.12)
+            // 4. Salto spaziale anomalo: dist > 18 px con pressione < 0.10
+            let is_kinematic_transit = speed_px_s > 300.0 && p_val < 0.12;
+            let is_leap = dist_from_last > 18.0 && p_val < 0.10;
+            let is_lifted = !has_button1
+                || pressure.is_none()
+                || p_val <= thresh
+                || is_kinematic_transit
+                || is_leap;
+
+            if is_lifted {
+                if let Some(b) = st.active_builder.take() {
+                    let stroke = b.finish();
+                    st.completed_strokes.push(stroke);
+                }
+                st.active_device = None;
+                st.last_sample_time = None;
+                let palm_state = st.palm_engine.current_state();
+                drop(st_guard);
+                hud.update_metrics(|m| {
+                    m.live_pressure = pressure;
+                    m.palm_state = palm_state;
+                });
+                area.queue_draw();
+                return;
+            }
+
+            // La penna è in effettivo contatto di scrittura sul vetro
+            if let Some(ref mut builder) = st.active_builder {
                 if let Some(last_time) = st.last_sample_time {
                     let dt = now.duration_since(last_time).as_secs_f64();
                     if dt > 0.0001 {

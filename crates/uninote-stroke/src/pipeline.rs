@@ -98,11 +98,11 @@ impl StrokeBuilder {
                 }
 
                 // Controllo stacco punta: per uno stilo, se la pressione hardware manca (hover)
-                // oppure è sotto la soglia di contatto (1.5%), la punta ha staccato dal vetro:
-                // scarta il campione per impedire sbavature, code aeree e spike di transizione.
+                // oppure è sotto la soglia di contatto (4.5%), la punta ha staccato dal vetro:
+                // scarta il campione per impedire sbavature, code aeree e spike di transizione MPP.
                 if sample.device_kind == DeviceKind::Stylus {
                     match sample.pressure {
-                        Some(raw_p) if raw_p <= 0.015 => {
+                        Some(raw_p) if raw_p <= 0.045 => {
                             self.samples_dropped += 1;
                             return None;
                         }
@@ -168,10 +168,10 @@ impl StrokeBuilder {
     /// Conclude il tratto e restituisce la struttura Stroke completa.
     pub fn finish(mut self) -> Stroke {
         // Rifilatura delle code aeree (Tail Trimming): se gli ultimi campioni registrati durante lo stacco
-        // avevano pressione quasi nulla (<= 0.015), vengono rimossi per eliminare qualsiasi sbavatura terminale.
+        // avevano pressione debole di hover/rilascio (<= 0.05), vengono rimossi per eliminare qualsiasi sbavatura terminale.
         while self.stroke.points.len() > 1 {
             if let Some(last) = self.stroke.points.last() {
-                if last.pressure <= 0.015 {
+                if last.pressure <= 0.05 {
                     self.stroke.points.pop();
                     continue;
                 }
