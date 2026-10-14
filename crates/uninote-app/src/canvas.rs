@@ -262,6 +262,33 @@ impl NoteCanvas {
         self.area.queue_draw();
     }
 
+    pub fn new_document(&self) {
+        let mut st = self.state.borrow_mut();
+        st.document = Document::new_empty("Nuovo Quaderno");
+        st.history = CommandHistory::default();
+        st.storage_worker = None;
+        st.file_path = None;
+        st.active_builder = None;
+        st.active_device = None;
+        st.active_tool = ActiveTool::Pen;
+        st.mouse_drag_start = None;
+        st.mouse_pan_start = None;
+        st.last_sample_time = None;
+        st.last_stylus_time = None;
+        st.palm_engine = PalmRejectionEngine::new(TouchMode::GesturesOnly);
+        st.viewport = Viewport::default();
+        drop(st);
+
+        self.hud.update_metrics(|m| {
+            m.current_tool = "Penna".into();
+            m.page_count = 1;
+            m.zoom_pct = 100;
+            m.touch_mode = TouchMode::GesturesOnly;
+        });
+        self.hud.update_view();
+        self.area.queue_draw();
+    }
+
     pub fn open_file(&self, path: PathBuf) -> Result<(), String> {
         let store = DocumentStore::open_or_create(&path).map_err(|e| e.to_string())?;
         let doc = store.load_document().map_err(|e| e.to_string())?;
@@ -952,6 +979,19 @@ impl NoteCanvas {
         let area = area_clone.clone();
         let hud = hud_clone.clone();
         drag.connect_drag_begin(move |gesture, start_x, start_y| {
+            // Ignora categoricamente tocchi dal touchscreen (la mano/palmo non deve mai disegnare tratti)
+            if gesture.current_sequence().is_some() {
+                return;
+            }
+            if let Some(event) = gesture.current_event() {
+                if event
+                    .device()
+                    .is_some_and(|d| d.source() == gdk::InputSource::Touchscreen)
+                {
+                    return;
+                }
+            }
+
             let current_btn = gesture.current_button();
             let mut st = state.borrow_mut();
 
@@ -1014,6 +1054,18 @@ impl NoteCanvas {
         let state = state_clone.clone();
         let area = area_clone.clone();
         drag.connect_drag_update(move |gesture, offset_x, offset_y| {
+            if gesture.current_sequence().is_some() {
+                return;
+            }
+            if let Some(event) = gesture.current_event() {
+                if event
+                    .device()
+                    .is_some_and(|d| d.source() == gdk::InputSource::Touchscreen)
+                {
+                    return;
+                }
+            }
+
             let current_btn = gesture.current_button();
             let mut st_guard = state.borrow_mut();
             let st = &mut *st_guard;
@@ -1069,7 +1121,19 @@ impl NoteCanvas {
         // Drag End
         let state = state_clone.clone();
         let area = area_clone.clone();
-        drag.connect_drag_end(move |_gesture, offset_x, offset_y| {
+        drag.connect_drag_end(move |gesture, offset_x, offset_y| {
+            if gesture.current_sequence().is_some() {
+                return;
+            }
+            if let Some(event) = gesture.current_event() {
+                if event
+                    .device()
+                    .is_some_and(|d| d.source() == gdk::InputSource::Touchscreen)
+                {
+                    return;
+                }
+            }
+
             let mut st = state.borrow_mut();
             st.mouse_pan_start = None;
 
@@ -1143,7 +1207,12 @@ impl NoteCanvas {
                 hud.update_metrics(|m| m.zoom_pct = pct);
                 hud.update_view();
             } else {
-                st.viewport.pan(-dx * 20.0, -dy * 20.0);
+                let (pan_x, pan_y) = match controller.unit() {
+                    gdk::ScrollUnit::Surface => (-dx, -dy),
+                    gdk::ScrollUnit::Wheel => (-dx * 25.0, -dy * 25.0),
+                    _ => (-dx, -dy),
+                };
+                st.viewport.pan(pan_x, pan_y);
                 drop(st);
             }
 

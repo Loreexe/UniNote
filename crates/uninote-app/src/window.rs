@@ -10,7 +10,7 @@ use gtk4::{
 use libadwaita::prelude::*;
 use libadwaita::{Application, ApplicationWindow, HeaderBar, WindowTitle};
 use std::rc::Rc;
-use uninote_core::{PageBackground, Viewport};
+use uninote_core::PageBackground;
 use uninote_stroke::{PipelineMode, RecordedSession, TouchMode};
 
 pub struct UniNoteWindow {
@@ -72,11 +72,27 @@ impl UniNoteWindow {
         tools_box.append(&btn_eraser);
         header_bar.pack_start(&tools_box);
 
-        // --- 2. MENU COLORE PENNA (posizionato a sinistra in popover compatto) ---
-        let color_btn = MenuButton::builder()
-            .icon_name("color-select-symbolic")
-            .tooltip_text("Colore Inchiostro")
+        // --- 2. MENU COLORE PENNA (posizionato a sinistra con indicatore cromatico dinamico) ---
+        let btn_color_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(5)
             .build();
+
+        let color_dot_label = Label::builder()
+            .use_markup(true)
+            .label("<span foreground='#1e1e1e' font_desc='14'>●</span>")
+            .build();
+
+        let color_text_label = Label::new(Some("Colore"));
+
+        btn_color_box.append(&color_dot_label);
+        btn_color_box.append(&color_text_label);
+
+        let color_btn = MenuButton::builder()
+            .child(&btn_color_box)
+            .tooltip_text("Seleziona Colore Inchiostro")
+            .build();
+
         let color_popover = Popover::new();
         let color_pop_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
@@ -88,21 +104,34 @@ impl UniNoteWindow {
             .build();
 
         let colors = [
-            ("Nero", (0.12, 0.12, 0.14, 1.0), "●"),
-            ("Blu", (0.10, 0.35, 0.75, 1.0), "●"),
-            ("Rosso", (0.75, 0.12, 0.15, 1.0), "●"),
-            ("Verde", (0.15, 0.55, 0.25, 1.0), "●"),
+            ("Nero", (0.12, 0.12, 0.14, 1.0), "#1e1e1e"),
+            ("Blu", (0.10, 0.35, 0.75, 1.0), "#1a5fb4"),
+            ("Rosso", (0.75, 0.12, 0.15, 1.0), "#e01b24"),
+            ("Verde", (0.15, 0.55, 0.25, 1.0), "#26a269"),
         ];
 
-        for (name, rgba, dot) in colors {
+        for (name, rgba, hex) in colors {
+            let lbl = Label::builder()
+                .use_markup(true)
+                .label(format!(
+                    "<span foreground='{}' font_desc='13'>●</span> {}",
+                    hex, name
+                ))
+                .build();
             let btn_c = Button::builder()
-                .label(format!("{} {}", dot, name))
+                .child(&lbl)
                 .tooltip_text(format!("Inchiostro {}", name))
                 .build();
             let canvas_c = canvas.clone();
             let pop_ref = color_popover.clone();
+            let dot_ref = color_dot_label.clone();
+            let hex_str = hex.to_string();
             btn_c.connect_clicked(move |_| {
                 canvas_c.set_pen_color(rgba);
+                dot_ref.set_markup(&format!(
+                    "<span foreground='{}' font_desc='14'>●</span>",
+                    hex_str
+                ));
                 pop_ref.popdown();
             });
             color_pop_box.append(&btn_c);
@@ -189,16 +218,12 @@ impl UniNoteWindow {
             .build();
         let canvas_new = canvas.clone();
         let popover_new = popover.clone();
+        let btn_pen_for_new = btn_pen.clone();
+        let btn_eraser_for_new = btn_eraser.clone();
         btn_new.connect_clicked(move |_| {
-            let state_rc = canvas_new.state();
-            let mut st = state_rc.borrow_mut();
-            st.document = uninote_core::Document::new_empty("Nuovo Quaderno");
-            st.history = uninote_core::CommandHistory::default();
-            st.storage_worker = None;
-            st.file_path = None;
-            st.viewport = Viewport::default();
-            drop(st);
-            canvas_new.widget().queue_draw();
+            canvas_new.new_document();
+            btn_pen_for_new.set_active(true);
+            btn_eraser_for_new.set_active(false);
             popover_new.popdown();
         });
         popover_box.append(&btn_new);
