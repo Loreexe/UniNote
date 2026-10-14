@@ -79,6 +79,13 @@ impl PalmRejectionEngine {
         self.state
     }
 
+    pub fn is_pen_active(&self) -> bool {
+        matches!(
+            self.state,
+            PalmState::PenDrawing | PalmState::PenProximity | PalmState::PenCooldown
+        )
+    }
+
     /// Segnala l'ingresso o l'uscita della penna dal raggio di prossimità hardware.
     pub fn on_pen_proximity(&mut self, in_proximity: bool, timestamp_ns: u64) {
         if in_proximity {
@@ -88,6 +95,47 @@ impl PalmRejectionEngine {
             self.state = PalmState::PenCooldown;
             self.last_pen_time_ns = timestamp_ns;
         }
+    }
+
+    /// Verifica rapida per decidere se un evento touch generico deve essere soppresso a livello Capture.
+    pub fn should_suppress_raw_touch(
+        &mut self,
+        is_down: bool,
+        slot_id: u64,
+        timestamp_ns: u64,
+    ) -> bool {
+        self.total_touch_events += 1;
+
+        if self.touch_mode == TouchMode::Off {
+            self.suppressed_touch_events += 1;
+            return true;
+        }
+
+        // Verifica scadenza cooldown
+        if self.state == PalmState::PenCooldown
+            && timestamp_ns.saturating_sub(self.last_pen_time_ns) >= self.cooldown_ns
+        {
+            self.state = PalmState::Idle;
+        }
+
+        if self.is_pen_active() {
+            if is_down {
+                self.suppressed_touch_slots.insert(slot_id);
+            }
+            self.suppressed_touch_events += 1;
+            return true;
+        }
+
+        if self.suppressed_touch_slots.contains(&slot_id) {
+            self.suppressed_touch_events += 1;
+            return true;
+        }
+
+        false
+    }
+
+    pub fn on_touch_release(&mut self, slot_id: u64) {
+        self.suppressed_touch_slots.remove(&slot_id);
     }
 
     /// Valuta un campione di input e determina se deve essere elaborato o soppresso.
@@ -110,8 +158,8 @@ impl PalmRejectionEngine {
             }
 
             DeviceKind::Mouse => {
-                // Il mouse è consentito per il disegno se non c'è una sessione stilo in corso
-                if self.state == PalmState::PenDrawing {
+                // Il mouse è consentito per il disegno SOLO se la penna non è attiva/prossimità/cooldown
+                if self.is_pen_active() {
                     InputDisposition::Suppress
                 } else {
                     InputDisposition::AcceptDraw
@@ -139,10 +187,7 @@ impl PalmRejectionEngine {
                 }
 
                 // 3. Se la penna sta disegnando, è in prossimità o è in cooldown, sopprimi il tocco
-                let pen_blocking = matches!(
-                    self.state,
-                    PalmState::PenDrawing | PalmState::PenProximity | PalmState::PenCooldown
-                );
+                let pen_blocking = self.is_pen_active();
 
                 if pen_blocking {
                     if sample.phase == InputPhase::Down {

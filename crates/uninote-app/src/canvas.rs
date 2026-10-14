@@ -48,6 +48,7 @@ pub struct NoteCanvas {
     area: DrawingArea,
     state: Rc<RefCell<CanvasState>>,
     hud: Rc<DiagnosticHud>,
+    app_start: Instant,
 }
 
 impl NoteCanvas {
@@ -59,9 +60,16 @@ impl NoteCanvas {
             .build();
 
         let state = Rc::new(RefCell::new(CanvasState::new()));
+        let app_start = Instant::now();
 
-        let canvas = Self { area, state, hud };
+        let canvas = Self {
+            area,
+            state,
+            hud,
+            app_start,
+        };
         canvas.setup_drawing();
+        canvas.setup_capture_controller();
         canvas.setup_stylus_controller();
         canvas.setup_mouse_controller();
         canvas
@@ -86,7 +94,7 @@ impl NoteCanvas {
             cr.set_source_rgb(0.98, 0.98, 0.99);
             let _ = cr.paint();
 
-            // 2. Griglia leggera di riferimento (subtly visible for precision check)
+            // 2. Griglia leggera di riferimento millimetrico
             cr.set_source_rgba(0.85, 0.88, 0.92, 0.4);
             cr.set_line_width(0.7);
             let step = 32.0;
@@ -143,7 +151,7 @@ impl NoteCanvas {
             return;
         }
 
-        // Disegno polilineare con larghezza variabile tra segmenti adiacenti
+        // Disegno polilineare continuo con round join e cap
         for w in stroke.points.windows(2) {
             let p0 = &w[0];
             let p1 = &w[1];
@@ -155,19 +163,90 @@ impl NoteCanvas {
         }
     }
 
+    /// Intercetta gli eventi hardware in fase di cattura (Capture Phase) PRIMA che raggiungano
+    /// le gesture e i controller di drag, garantendo la soppressione radicale del tocco e del palmo.
+    fn setup_capture_controller(&self) {
+        let legacy = gtk4::EventControllerLegacy::new();
+        legacy.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let state_clone = self.state.clone();
+        let hud_clone = self.hud.clone();
+        let app_start = self.app_start;
+
+        legacy.connect_event(move |_controller, event| {
+            let event_type = event.event_type();
+            let is_touch = matches!(
+                event_type,
+                gdk::EventType::TouchBegin
+                    | gdk::EventType::TouchUpdate
+                    | gdk::EventType::TouchEnd
+                    | gdk::EventType::TouchCancel
+            );
+
+            if is_touch {
+                let is_down = event_type == gdk::EventType::TouchBegin;
+                let is_up = event_type == gdk::EventType::TouchEnd
+                    || event_type == gdk::EventType::TouchCancel;
+                let slot = if let Some(te) = event.downcast_ref::<gdk::TouchEvent>() {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    te.event_sequence().hash(&mut hasher);
+                    hasher.finish()
+                } else {
+                    0
+                };
+                let now_ns = app_start.elapsed().as_nanos() as u64;
+
+                let mut st = state_clone.borrow_mut();
+                if is_up {
+                    st.palm_engine.on_touch_release(slot);
+                }
+                let suppress = st
+                    .palm_engine
+                    .should_suppress_raw_touch(is_down, slot, now_ns);
+                let suppressed_count = st.palm_engine.suppressed_touch_events;
+                let palm_state = st.palm_engine.current_state();
+                drop(st);
+
+                if suppress {
+                    hud_clone.update_metrics(|m| {
+                        m.touch_suppressed = suppressed_count;
+                        m.palm_state = palm_state;
+                    });
+                    hud_clone.update_view();
+                    return glib::Propagation::Stop;
+                }
+            }
+
+            // Soppressione puntatore emulato se la penna è attiva/prossimità o se il touch è OFF
+            if event.is_pointer_emulated() {
+                let st = state_clone.borrow();
+                if st.palm_engine.is_pen_active() || st.palm_engine.touch_mode() == TouchMode::Off {
+                    return glib::Propagation::Stop;
+                }
+            }
+
+            glib::Propagation::Proceed
+        });
+
+        self.area.add_controller(legacy);
+    }
+
     fn setup_stylus_controller(&self) {
         let stylus = gtk4::GestureStylus::new();
         let state_clone = self.state.clone();
         let area_clone = self.area.clone();
         let hud_clone = self.hud.clone();
+        let app_start = self.app_start;
 
         // Down
         let state = state_clone.clone();
         let area = area_clone.clone();
         let hud = hud_clone.clone();
         stylus.connect_down(move |gesture, x, y| {
+            // Reclama la sequenza per inibire gesture concorrenti
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
             let pressure = gesture.axis(gdk::AxisUse::Pressure);
-            let now_ns = Instant::now().elapsed().as_nanos() as u64;
+            let now_ns = app_start.elapsed().as_nanos() as u64;
 
             let sample = InputSample::new(
                 (x, y),
@@ -210,9 +289,11 @@ impl NoteCanvas {
         let area = area_clone.clone();
         let hud = hud_clone.clone();
         stylus.connect_motion(move |gesture, x, y| {
+            // Reclama la sequenza
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
             let pressure = gesture.axis(gdk::AxisUse::Pressure);
             let now = Instant::now();
-            let now_ns = now.elapsed().as_nanos() as u64;
+            let now_ns = app_start.elapsed().as_nanos() as u64;
 
             let mut st_guard = state.borrow_mut();
             let st = &mut *st_guard;
@@ -229,6 +310,35 @@ impl NoteCanvas {
                 }
                 st.last_sample_time = Some(now);
 
+                // 1. Elabora tutti i campioni intermedi ad alta frequenza del backlog hardware
+                if let Some(backlog) = gesture.backlog() {
+                    for coord in backlog {
+                        let flags = coord.flags();
+                        if flags.contains(gdk::AxisFlags::X) && flags.contains(gdk::AxisFlags::Y) {
+                            let axes = coord.axes();
+                            let bx = axes[0];
+                            let by = axes[1];
+                            let bp = if flags.contains(gdk::AxisFlags::PRESSURE) {
+                                Some(axes[2])
+                            } else {
+                                pressure
+                            };
+                            let b_sample = InputSample::new(
+                                (bx, by),
+                                bp,
+                                now_ns,
+                                DeviceKind::Stylus,
+                                InputPhase::Move,
+                            );
+                            builder.process_sample(b_sample.clone());
+                            if let Some(ref mut rec) = st.recorder {
+                                rec.record_sample(b_sample);
+                            }
+                        }
+                    }
+                }
+
+                // 2. Elabora il punto di motion corrente
                 let sample = InputSample::new(
                     (x, y),
                     pressure,
@@ -263,8 +373,9 @@ impl NoteCanvas {
         let area = area_clone.clone();
         let hud = hud_clone.clone();
         stylus.connect_up(move |gesture, x, y| {
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
             let pressure = gesture.axis(gdk::AxisUse::Pressure);
-            let now_ns = Instant::now().elapsed().as_nanos() as u64;
+            let now_ns = app_start.elapsed().as_nanos() as u64;
 
             let mut st = state.borrow_mut();
             let sample =
@@ -297,7 +408,7 @@ impl NoteCanvas {
         let state = state_clone.clone();
         let hud = hud_clone.clone();
         stylus.connect_proximity(move |_gesture, _x, _y| {
-            let now_ns = Instant::now().elapsed().as_nanos() as u64;
+            let now_ns = app_start.elapsed().as_nanos() as u64;
             let mut st = state.borrow_mut();
             st.palm_engine.on_pen_proximity(true, now_ns);
             let palm_state = st.palm_engine.current_state();
@@ -314,9 +425,11 @@ impl NoteCanvas {
 
     fn setup_mouse_controller(&self) {
         let drag = gtk4::GestureDrag::new();
+        drag.set_touch_only(false);
         let state_clone = self.state.clone();
         let area_clone = self.area.clone();
         let hud_clone = self.hud.clone();
+        let app_start = self.app_start;
 
         // Drag Begin (Mouse Down)
         let state = state_clone.clone();
@@ -329,21 +442,41 @@ impl NoteCanvas {
                 None => return,
             };
 
-            // Prevenzione duplicazione stilo/mouse: se l'evento proviene dallo stilo, ignoralo!
+            // Rifiuto categorico di qualsiasi evento emulato, touch o originato da penna
             if let Some(event) = gesture.current_event() {
+                if event.is_pointer_emulated() || event.device_tool().is_some() {
+                    gesture.set_state(gtk4::EventSequenceState::Denied);
+                    return;
+                }
+                let event_type = event.event_type();
+                if event_type == gdk::EventType::TouchBegin
+                    || event_type == gdk::EventType::TouchUpdate
+                    || event_type == gdk::EventType::TouchEnd
+                    || event_type == gdk::EventType::TouchCancel
+                {
+                    gesture.set_state(gtk4::EventSequenceState::Denied);
+                    return;
+                }
                 if let Some(device) = event.device() {
-                    let source = device.source();
-                    if source == gdk::InputSource::Pen || source == gdk::InputSource::Touchscreen {
-                        return; // Gestito da GtkGestureStylus o soppresso per palm rejection
+                    if device.source() != gdk::InputSource::Mouse {
+                        gesture.set_state(gtk4::EventSequenceState::Denied);
+                        return;
                     }
                 }
             }
 
-            let now_ns = Instant::now().elapsed().as_nanos() as u64;
+            let mut st = state.borrow_mut();
+            // Se la penna è attiva (scrittura, prossimità o cooldown) o c'è già uno stroke in corso: NEGA
+            if st.palm_engine.is_pen_active() || st.active_builder.is_some() {
+                drop(st);
+                gesture.set_state(gtk4::EventSequenceState::Denied);
+                return;
+            }
+
+            let now_ns = app_start.elapsed().as_nanos() as u64;
             let sample =
                 InputSample::new((x, y), None, now_ns, DeviceKind::Mouse, InputPhase::Down);
 
-            let mut st = state.borrow_mut();
             if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
                 st.mouse_drag_start = Some((x, y));
                 let id = st.next_stroke_id;
@@ -366,6 +499,8 @@ impl NoteCanvas {
                     m.palm_state = palm_state;
                     m.samples_received += 1;
                 });
+            } else {
+                gesture.set_state(gtk4::EventSequenceState::Denied);
             }
 
             area.queue_draw();
@@ -381,7 +516,7 @@ impl NoteCanvas {
             if let Some((start_x, start_y)) = st.mouse_drag_start {
                 let cur_x = start_x + offset_x;
                 let cur_y = start_y + offset_y;
-                let now_ns = Instant::now().elapsed().as_nanos() as u64;
+                let now_ns = app_start.elapsed().as_nanos() as u64;
 
                 if let Some(ref mut builder) = st.active_builder {
                     let sample = InputSample::new(
@@ -419,7 +554,7 @@ impl NoteCanvas {
             if let Some((start_x, start_y)) = st.mouse_drag_start.take() {
                 let cur_x = start_x + offset_x;
                 let cur_y = start_y + offset_y;
-                let now_ns = Instant::now().elapsed().as_nanos() as u64;
+                let now_ns = app_start.elapsed().as_nanos() as u64;
 
                 let sample = InputSample::new(
                     (cur_x, cur_y),

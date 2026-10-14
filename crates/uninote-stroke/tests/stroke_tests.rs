@@ -232,3 +232,108 @@ fn test_recorder_and_replay_determinism() {
     assert_eq!(strokes_base[0].points[1].x, 20.0);
     assert_eq!(strokes_base[0].points[1].y, 20.0);
 }
+
+#[test]
+fn test_one_euro_filter_high_frequency_and_direction_reversal() {
+    let mut filter = OneEuroPointFilter::new(OneEuroConfig::default());
+
+    // Simula digitizer ad alta frequenza (240 Hz = ~4.16 ms per campione)
+    let dt_ns = 4_166_666;
+    let mut t_ns = 1_000_000_000;
+
+    // Tratto verso destra ad alta velocità: da x=0 a x=100
+    for i in 0..10 {
+        t_ns += dt_ns;
+        let raw_x = i as f64 * 10.0;
+        let (fx, fy) = filter.filter(raw_x, 50.0, t_ns);
+        assert!(fx.is_finite());
+        assert!(fy.is_finite());
+    }
+
+    // Inversione improvvisa verso sinistra a spigolo acuto (come nella lettera 'V')
+    for i in 1..=10 {
+        t_ns += dt_ns;
+        let raw_x = 100.0 - (i as f64 * 10.0);
+        let (fx, fy) = filter.filter(raw_x, 50.0, t_ns);
+        assert!(fx.is_finite());
+        assert!(fy.is_finite());
+        // Non deve esserci overshoot oltre 105.0
+        assert!(fx <= 105.0);
+    }
+}
+
+#[test]
+fn test_palm_raw_touch_capture_suppression() {
+    let mut engine = PalmRejectionEngine::new(TouchMode::Off);
+
+    // In TouchMode::Off qualsiasi tocco a livello Capture viene soppresso immediatamente
+    assert!(engine.should_suppress_raw_touch(true, 100, 1_000_000));
+    assert!(engine.should_suppress_raw_touch(false, 100, 2_000_000));
+    assert_eq!(engine.suppressed_touch_events, 2);
+
+    // In TouchMode::GesturesOnly con penna in prossimità
+    engine.set_touch_mode(TouchMode::GesturesOnly);
+    engine.on_pen_proximity(true, 3_000_000);
+    assert_eq!(engine.current_state(), PalmState::PenProximity);
+
+    // Palmo che tocca il vetro: bloccato al 100%
+    assert!(engine.should_suppress_raw_touch(true, 200, 4_000_000));
+    assert!(engine.should_suppress_raw_touch(false, 200, 5_000_000));
+
+    // Rilascio slot touch
+    engine.on_touch_release(200);
+}
+
+#[test]
+fn test_mouse_strictly_suppressed_when_pen_active() {
+    let mut engine = PalmRejectionEngine::new(TouchMode::Off);
+
+    // Con penna in prossimità, il mouse non deve poter iniziare a disegnare
+    engine.on_pen_proximity(true, 1_000_000);
+    let mouse_sample = InputSample::new(
+        (50.0, 50.0),
+        None,
+        2_000_000,
+        DeviceKind::Mouse,
+        InputPhase::Down,
+    );
+    assert_eq!(
+        engine.evaluate_sample(&mouse_sample),
+        InputDisposition::Suppress
+    );
+
+    // Con penna che scrive, mouse soppresso
+    let pen_down = InputSample::new(
+        (10.0, 10.0),
+        Some(0.8),
+        3_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Down,
+    );
+    assert_eq!(
+        engine.evaluate_sample(&pen_down),
+        InputDisposition::AcceptDraw
+    );
+    assert_eq!(
+        engine.evaluate_sample(&mouse_sample),
+        InputDisposition::Suppress
+    );
+
+    // Con penna in cooldown, mouse ancora soppresso
+    let pen_up = InputSample::new(
+        (12.0, 12.0),
+        Some(0.1),
+        4_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Up,
+    );
+    assert_eq!(
+        engine.evaluate_sample(&pen_up),
+        InputDisposition::AcceptDraw
+    );
+    assert_eq!(engine.current_state(), PalmState::PenCooldown);
+    assert_eq!(
+        engine.evaluate_sample(&mouse_sample),
+        InputDisposition::Suppress
+    );
+}

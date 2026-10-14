@@ -16,8 +16,8 @@ pub struct OneEuroConfig {
 impl Default for OneEuroConfig {
     fn default() -> Self {
         Self {
-            min_cutoff: 1.2,
-            beta: 0.008,
+            min_cutoff: 1.0,
+            beta: 0.007,
             d_cutoff: 1.0,
         }
     }
@@ -84,7 +84,14 @@ impl OneEuroScalar {
         }
 
         let dt = match self.last_time_s {
-            Some(prev_t) => (timestamp_s - prev_t).max(1e-4),
+            Some(prev_t) => {
+                let diff = timestamp_s - prev_t;
+                if diff <= 0.0 {
+                    1e-3 // Fallback protetto a 1ms (1000 Hz) per campioni con timestamp coincidente
+                } else {
+                    diff.clamp(5e-4, 1.0) // Clamping tra 0.5ms (max 2000 Hz) e 1s per evitare spike
+                }
+            }
             None => {
                 self.last_time_s = Some(timestamp_s);
                 return self.x_filter.filter(value, 1.0);
