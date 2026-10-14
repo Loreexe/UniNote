@@ -63,7 +63,15 @@ impl PalmRejectionEngine {
             accepted_touch_events: 0,
         }
     }
+}
 
+impl Default for PalmRejectionEngine {
+    fn default() -> Self {
+        Self::new(TouchMode::GesturesOnly)
+    }
+}
+
+impl PalmRejectionEngine {
     pub fn set_touch_mode(&mut self, mode: TouchMode) {
         self.touch_mode = mode;
         if mode == TouchMode::Off {

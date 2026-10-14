@@ -55,7 +55,7 @@ impl CanvasState {
             active_tool: ActiveTool::Pen,
             active_builder: None,
             active_device: None,
-            palm_engine: PalmRejectionEngine::new(TouchMode::Off),
+            palm_engine: PalmRejectionEngine::new(TouchMode::GesturesOnly),
             pipeline_mode: PipelineMode::CatmullRomSpline,
             current_style: StrokeStyle::default(),
             next_stroke_id: 1,
@@ -219,6 +219,8 @@ impl NoteCanvas {
         let new_page = uninote_core::Page::new_a4(idx, bg);
         st.add_page(new_page);
         let count = st.document.pages.len();
+        let page_rect = Viewport::page_rect(idx);
+        st.viewport.offset_y = -page_rect.y * st.viewport.zoom + 40.0;
         drop(st);
         self.hud.update_metrics(|m| m.page_count = count);
         self.hud.update_view();
@@ -348,15 +350,27 @@ impl NoteCanvas {
                     continue;
                 }
 
-                // Ombra leggera del foglio A4
-                cr.set_source_rgba(0.0, 0.0, 0.0, 0.10);
-                cr.rectangle(sx + 3.0, sy + 3.0, sw, sh);
+                // Ombra multi-livello a profondità naturale del foglio A4
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.04);
+                cr.rectangle(sx - 1.0, sy + 6.0, sw + 6.0, sh + 6.0);
+                let _ = cr.fill();
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.07);
+                cr.rectangle(sx + 1.0, sy + 3.0, sw + 3.0, sh + 3.0);
+                let _ = cr.fill();
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.12);
+                cr.rectangle(sx + 1.0, sy + 1.0, sw + 1.0, sh + 1.0);
                 let _ = cr.fill();
 
-                // Foglio A4 (bianco caldo naturale)
-                cr.set_source_rgb(0.99, 0.99, 1.0);
+                // Foglio A4 (bianco puro con tenue calore)
+                cr.set_source_rgb(0.995, 0.995, 1.0);
                 cr.rectangle(sx, sy, sw, sh);
                 let _ = cr.fill();
+
+                // Bordo perimetrale nitido della pagina (visibile chiaramente ad ogni livello di zoom)
+                cr.set_source_rgba(0.68, 0.72, 0.80, 0.90);
+                cr.set_line_width(1.0);
+                cr.rectangle(sx, sy, sw, sh);
+                let _ = cr.stroke();
 
                 // Ritaglio (Clip) sul perimetro del foglio
                 let _ = cr.save();
@@ -425,6 +439,14 @@ impl NoteCanvas {
                 let _ = cr.restore();
 
                 let _ = cr.restore(); // Fine clip pagina
+
+                if page.index + 1 < st.document.pages.len() {
+                    cr.set_source_rgba(0.50, 0.54, 0.62, 0.70);
+                    cr.set_font_size(11.0);
+                    let label = format!("— Pagina {} —", page.index + 1);
+                    cr.move_to(sx + (sw / 2.0) - 40.0, sy + sh + 20.0);
+                    let _ = cr.show_text(&label);
+                }
             }
 
             // 3. Disegno del tratto live attivo in corso di scrittura (se presente)
@@ -554,7 +576,7 @@ impl NoteCanvas {
                 if is_up {
                     st.palm_engine.on_touch_release(slot);
                 }
-                let _ = st
+                let suppress = st
                     .palm_engine
                     .should_suppress_raw_touch(is_down, slot, now_ns);
                 let suppressed_count = st.palm_engine.suppressed_touch_events;
@@ -566,7 +588,10 @@ impl NoteCanvas {
                     m.palm_state = palm_state;
                 });
 
-                return glib::Propagation::Stop;
+                if suppress {
+                    return glib::Propagation::Stop;
+                }
+                return glib::Propagation::Proceed;
             }
 
             if event.is_pointer_emulated() {
@@ -602,9 +627,25 @@ impl NoteCanvas {
 
             let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
 
-            // Gestione Strumento Gomma
-            if st.active_tool == ActiveTool::Eraser {
-                let radius = 12.0 / st.viewport.zoom;
+            // Gestione Strumento Gomma (a schermo o tramite gomma hardware / pulsante laterale penna)
+            let is_eraser_hardware = gesture
+                .device_tool()
+                .is_some_and(|t| t.tool_type() == gdk::DeviceToolType::Eraser)
+                || gesture.current_button() == 2
+                || gesture.current_button() == 3
+                || gesture.current_event().is_some_and(|ev| {
+                    let m = ev.modifier_state();
+                    m.contains(gdk::ModifierType::BUTTON2_MASK)
+                        || m.contains(gdk::ModifierType::BUTTON3_MASK)
+                });
+            let is_eraser = st.active_tool == ActiveTool::Eraser || is_eraser_hardware;
+
+            if is_eraser {
+                if let Some(prev_builder) = st.active_builder.take() {
+                    let stroke = prev_builder.finish();
+                    Self::commit_finished_stroke(&mut st, stroke);
+                }
+                let radius = 16.0 / st.viewport.zoom;
                 Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
                 drop(st);
                 area.queue_draw();
@@ -676,8 +717,25 @@ impl NoteCanvas {
 
             let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
 
-            if st.active_tool == ActiveTool::Eraser {
-                let radius = 12.0 / st.viewport.zoom;
+            // Gestione Strumento Gomma (a schermo o tramite gomma hardware / pulsante laterale penna)
+            let is_eraser_hardware = gesture
+                .device_tool()
+                .is_some_and(|t| t.tool_type() == gdk::DeviceToolType::Eraser)
+                || gesture.current_button() == 2
+                || gesture.current_button() == 3
+                || gesture.current_event().is_some_and(|ev| {
+                    let m = ev.modifier_state();
+                    m.contains(gdk::ModifierType::BUTTON2_MASK)
+                        || m.contains(gdk::ModifierType::BUTTON3_MASK)
+                });
+            let is_eraser = st.active_tool == ActiveTool::Eraser || is_eraser_hardware;
+
+            if is_eraser {
+                if let Some(prev_builder) = st.active_builder.take() {
+                    let stroke = prev_builder.finish();
+                    Self::commit_finished_stroke(st, stroke);
+                }
+                let radius = 16.0 / st.viewport.zoom;
                 Self::erase_strokes_at(st, (doc_x, doc_y), radius);
                 drop(st_guard);
                 area.queue_draw();
@@ -1099,18 +1157,55 @@ impl NoteCanvas {
         let area = self.area.clone();
         let hud = self.hud.clone();
 
-        zoom.connect_scale_changed(move |_gesture, scale| {
-            let mut st = state.borrow_mut();
+        let last_scale = Rc::new(std::cell::Cell::new(1.0));
+        let last_center = Rc::new(std::cell::Cell::new(None));
+
+        let ls_begin = last_scale.clone();
+        let lc_begin = last_center.clone();
+        zoom.connect_begin(move |gesture, _seq| {
+            ls_begin.set(1.0);
+            lc_begin.set(gesture.bounding_box_center());
+        });
+
+        let ls_scale = last_scale.clone();
+        let lc_scale = last_center.clone();
+        zoom.connect_scale_changed(move |gesture, scale| {
+            let prev_scale = ls_scale.get();
+            ls_scale.set(scale);
+            let factor = if prev_scale > 0.001 {
+                scale / prev_scale
+            } else {
+                1.0
+            };
+
             let w = area.width() as f64;
             let h = area.height() as f64;
-            if scale > 0.05 && scale < 20.0 {
-                st.viewport.zoom_at((w / 2.0, h / 2.0), scale);
-                let pct = (st.viewport.zoom * 100.0).round() as usize;
-                drop(st);
-                hud.update_metrics(|m| m.zoom_pct = pct);
-                hud.update_view();
-                area.queue_draw();
+            let default_center = (w / 2.0, h / 2.0);
+            let current_center = gesture.bounding_box_center().unwrap_or(default_center);
+            let prev_center = lc_scale.get().unwrap_or(current_center);
+            lc_scale.set(Some(current_center));
+
+            let dx = current_center.0 - prev_center.0;
+            let dy = current_center.1 - prev_center.1;
+
+            let mut st = state.borrow_mut();
+            if dx.abs() > 0.01 || dy.abs() > 0.01 {
+                st.viewport.pan(dx, dy);
             }
+            if (factor - 1.0).abs() > 0.001 && factor > 0.5 && factor < 2.0 {
+                st.viewport.zoom_at(current_center, factor);
+            }
+            let pct = (st.viewport.zoom * 100.0).round() as usize;
+            drop(st);
+
+            hud.update_metrics(|m| m.zoom_pct = pct);
+            hud.update_view();
+            area.queue_draw();
+        });
+
+        let lc_end = last_center.clone();
+        zoom.connect_end(move |_gesture, _seq| {
+            lc_end.set(None);
         });
         self.area.add_controller(zoom);
     }

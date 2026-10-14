@@ -4,7 +4,7 @@ use gtk4::gdk;
 use gtk4::gio;
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, DropDown, EventControllerKey, FileDialog, FileFilter, MenuButton,
+    Box as GtkBox, Button, DropDown, EventControllerKey, FileDialog, FileFilter, Label, MenuButton,
     Orientation, Overlay, Popover, ToggleButton,
 };
 use libadwaita::prelude::*;
@@ -22,8 +22,8 @@ impl UniNoteWindow {
         let window = ApplicationWindow::builder()
             .application(app)
             .title("UniNote — Quaderno Universitario")
-            .default_width(1280)
-            .default_height(850)
+            .default_width(1100)
+            .default_height(750)
             .build();
 
         let header_bar = HeaderBar::new();
@@ -72,34 +72,50 @@ impl UniNoteWindow {
         tools_box.append(&btn_eraser);
         header_bar.pack_start(&tools_box);
 
-        // --- 2. PALETTE COLORI RAPIDA ---
-        let colors = [
-            ("Nero", (0.12, 0.12, 0.14, 1.0)),
-            ("Blu", (0.10, 0.35, 0.75, 1.0)),
-            ("Rosso", (0.75, 0.12, 0.15, 1.0)),
-            ("Verde", (0.15, 0.55, 0.25, 1.0)),
-        ];
-
-        let color_box = GtkBox::builder()
+        // --- 2. MENU COLORE PENNA (posizionato a sinistra in popover compatto) ---
+        let color_btn = MenuButton::builder()
+            .icon_name("color-select-symbolic")
+            .tooltip_text("Colore Inchiostro")
+            .build();
+        let color_popover = Popover::new();
+        let color_pop_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
-            .css_classes(["linked"])
+            .spacing(8)
+            .margin_top(8)
+            .margin_bottom(8)
+            .margin_start(8)
+            .margin_end(8)
             .build();
 
-        for (name, rgba) in colors {
-            let btn_c = Button::builder().tooltip_text(name).label(name).build();
+        let colors = [
+            ("Nero", (0.12, 0.12, 0.14, 1.0), "●"),
+            ("Blu", (0.10, 0.35, 0.75, 1.0), "●"),
+            ("Rosso", (0.75, 0.12, 0.15, 1.0), "●"),
+            ("Verde", (0.15, 0.55, 0.25, 1.0), "●"),
+        ];
+
+        for (name, rgba, dot) in colors {
+            let btn_c = Button::builder()
+                .label(format!("{} {}", dot, name))
+                .tooltip_text(format!("Inchiostro {}", name))
+                .build();
             let canvas_c = canvas.clone();
+            let pop_ref = color_popover.clone();
             btn_c.connect_clicked(move |_| {
                 canvas_c.set_pen_color(rgba);
+                pop_ref.popdown();
             });
-            color_box.append(&btn_c);
+            color_pop_box.append(&btn_c);
         }
-        header_bar.pack_start(&color_box);
+        color_popover.set_child(Some(&color_pop_box));
+        color_btn.set_popover(Some(&color_popover));
+        header_bar.pack_start(&color_btn);
 
         // --- 3. SPESSORE PENNA ---
-        let width_strings = ["Fine (1.8 pt)", "Medio (2.8 pt)", "Spesso (4.5 pt)"];
+        let width_strings = ["1.8 pt", "2.8 pt", "4.5 pt"];
         let dropdown_width = DropDown::from_strings(&width_strings);
         dropdown_width.set_selected(1);
-        dropdown_width.set_tooltip_text(Some("Spessore base del tratto della penna"));
+        dropdown_width.set_tooltip_text(Some("Spessore tratto penna"));
         let canvas_w = canvas.clone();
         dropdown_width.connect_selected_notify(move |dd| {
             let w = match dd.selected() {
@@ -138,9 +154,10 @@ impl UniNoteWindow {
         undo_redo_box.append(&btn_redo);
         header_bar.pack_start(&undo_redo_box);
 
-        // --- 5. AGGIUNGI PAGINA A4 (+) ---
+        // --- 5. AGGIUNGI PAGINA A4 ---
         let btn_add_page = Button::builder()
             .icon_name("list-add-symbolic")
+            .label("+ Pagina")
             .tooltip_text("Aggiungi nuova pagina A4 in coda")
             .build();
         let canvas_add_page = canvas.clone();
@@ -148,72 +165,6 @@ impl UniNoteWindow {
             canvas_add_page.add_page(PageBackground::default());
         });
         header_bar.pack_start(&btn_add_page);
-
-        // --- 6. SFONDO PAGINA (Quadretti, Righe, Bianco) ---
-        let bg_strings = [
-            "Quadretti 5mm (Default)",
-            "Righe Universitarie 8mm",
-            "Foglio Bianco",
-        ];
-        let dropdown_bg = DropDown::from_strings(&bg_strings);
-        dropdown_bg.set_selected(0);
-        dropdown_bg.set_tooltip_text(Some("Template di sfondo per le pagine del quaderno"));
-        let canvas_bg = canvas.clone();
-        dropdown_bg.connect_selected_notify(move |dd| {
-            let new_bg = match dd.selected() {
-                1 => PageBackground::Ruled {
-                    line_spacing: 22.68,
-                    margin_left: 35.0,
-                },
-                2 => PageBackground::Blank,
-                _ => PageBackground::Grid { grid_size: 14.17 },
-            };
-            let state_rc = canvas_bg.state();
-            let mut st = state_rc.borrow_mut();
-            if let Some(p) = st.document.pages.first_mut() {
-                p.background = new_bg;
-            }
-            drop(st);
-            canvas_bg.widget().queue_draw();
-        });
-        header_bar.pack_start(&dropdown_bg);
-
-        // --- 7. CONTROLLI ZOOM ( - / 100% / + ) ---
-        let btn_zoom_out = Button::builder()
-            .icon_name("zoom-out-symbolic")
-            .tooltip_text("Riduci zoom")
-            .build();
-        let canvas_z_out = canvas.clone();
-        btn_zoom_out.connect_clicked(move |_| {
-            canvas_z_out.zoom_out();
-        });
-
-        let btn_zoom_reset = Button::builder()
-            .label("100%")
-            .tooltip_text("Reimposta zoom a 100% e centra il foglio A4")
-            .build();
-        let canvas_z_reset = canvas.clone();
-        btn_zoom_reset.connect_clicked(move |_| {
-            canvas_z_reset.reset_zoom();
-        });
-
-        let btn_zoom_in = Button::builder()
-            .icon_name("zoom-in-symbolic")
-            .tooltip_text("Aumenta zoom")
-            .build();
-        let canvas_z_in = canvas.clone();
-        btn_zoom_in.connect_clicked(move |_| {
-            canvas_z_in.zoom_in();
-        });
-
-        let zoom_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .css_classes(["linked"])
-            .build();
-        zoom_box.append(&btn_zoom_out);
-        zoom_box.append(&btn_zoom_reset);
-        zoom_box.append(&btn_zoom_in);
-        header_bar.pack_start(&zoom_box);
 
         // --- 8. MENU PRIMARIO (Nuovo, Apri, Salva, Salva con nome, Copia Portabile) ---
         let menu_btn = MenuButton::builder()
@@ -358,13 +309,168 @@ impl UniNoteWindow {
         menu_btn.set_popover(Some(&popover));
         header_bar.pack_end(&menu_btn);
 
-        // --- 9. SELETTORE SOGLIA & PIPELINE (Consolidati dalla Fase 0) ---
+        // --- 6. SFONDO PAGINA (Quadretti, Righe, Bianco) ---
+        let bg_strings = ["Quadretti 5mm", "Righe 8mm", "Foglio Bianco"];
+        let dropdown_bg = DropDown::from_strings(&bg_strings);
+        dropdown_bg.set_selected(0);
+        dropdown_bg.set_tooltip_text(Some("Sfondo foglio A4"));
+        let canvas_bg = canvas.clone();
+        dropdown_bg.connect_selected_notify(move |dd| {
+            let new_bg = match dd.selected() {
+                1 => PageBackground::Ruled {
+                    line_spacing: 22.68,
+                    margin_left: 35.0,
+                },
+                2 => PageBackground::Blank,
+                _ => PageBackground::Grid { grid_size: 14.17 },
+            };
+            let state_rc = canvas_bg.state();
+            let mut st = state_rc.borrow_mut();
+            if let Some(p) = st.document.pages.first_mut() {
+                p.background = new_bg;
+            }
+            drop(st);
+            canvas_bg.widget().queue_draw();
+        });
+
+        // --- 7. CONTROLLI ZOOM ( - / 100% / + ) ---
+        let btn_zoom_out = Button::builder()
+            .icon_name("zoom-out-symbolic")
+            .tooltip_text("Riduci zoom")
+            .build();
+        let canvas_z_out = canvas.clone();
+        btn_zoom_out.connect_clicked(move |_| {
+            canvas_z_out.zoom_out();
+        });
+
+        let btn_zoom_reset = Button::builder()
+            .label("100%")
+            .tooltip_text("Reimposta zoom a 100% e centra il foglio A4")
+            .build();
+        let canvas_z_reset = canvas.clone();
+        btn_zoom_reset.connect_clicked(move |_| {
+            canvas_z_reset.reset_zoom();
+        });
+
+        let btn_zoom_in = Button::builder()
+            .icon_name("zoom-in-symbolic")
+            .tooltip_text("Aumenta zoom")
+            .build();
+        let canvas_z_in = canvas.clone();
+        btn_zoom_in.connect_clicked(move |_| {
+            canvas_z_in.zoom_in();
+        });
+
+        let zoom_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .css_classes(["linked"])
+            .build();
+        zoom_box.append(&btn_zoom_out);
+        zoom_box.append(&btn_zoom_reset);
+        zoom_box.append(&btn_zoom_in);
+
+        // --- 8. MENU DIAGNOSTICA E HARDWARE (In popover dedicato per compattare la barra) ---
+        let diag_btn = MenuButton::builder()
+            .icon_name("preferences-system-symbolic")
+            .tooltip_text("Diagnostica e Configurazione Hardware")
+            .build();
+
+        let diag_popover = Popover::new();
+        let diag_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(8)
+            .margin_top(8)
+            .margin_bottom(8)
+            .margin_start(8)
+            .margin_end(8)
+            .build();
+
+        let toggle_hud = ToggleButton::builder()
+            .label("HUD Diagnostica: ON")
+            .active(true)
+            .tooltip_text("Mostra o nascondi il pannello diagnostico HUD")
+            .build();
+        let hud_widget = hud.widget().clone();
+        toggle_hud.connect_toggled(move |btn| {
+            let active = btn.is_active();
+            btn.set_label(if active {
+                "HUD Diagnostica: ON"
+            } else {
+                "HUD Diagnostica: OFF"
+            });
+            hud_widget.set_visible(active);
+        });
+        diag_box.append(&toggle_hud);
+
+        let toggle_rec = ToggleButton::builder()
+            .label("● Registra Sessione")
+            .active(false)
+            .tooltip_text("Registra i campioni stilo per verifiche e benchmark")
+            .build();
+        let canvas_rec = canvas.clone();
+        let hud_rec = hud.clone();
+        toggle_rec.connect_toggled(move |btn| {
+            let is_recording = btn.is_active();
+            let state_rc = canvas_rec.state();
+            let mut st = state_rc.borrow_mut();
+
+            if is_recording {
+                btn.set_label("■ Ferma Registrazione");
+                st.recorder = Some(RecordedSession::new("uninote_session"));
+                hud_rec.update_metrics(|m| m.is_recording = true);
+            } else {
+                btn.set_label("● Registra Sessione");
+                hud_rec.update_metrics(|m| m.is_recording = false);
+                if let Some(rec) = st.recorder.take() {
+                    if let Ok(json) = rec.to_json() {
+                        let _ = std::fs::write("uninote_session.json", json);
+                    }
+                }
+            }
+            hud_rec.update_view();
+        });
+        diag_box.append(&toggle_rec);
+
+        let toggle_touch = ToggleButton::builder()
+            .label("Touchscreen: Gesti Attivi")
+            .active(true)
+            .tooltip_text(
+                "Protezione palmo: Gesti touch attivi vs Touchscreen completamente disabilitato",
+            )
+            .build();
+        let canvas_touch = canvas.clone();
+        let hud_touch = hud.clone();
+        toggle_touch.connect_toggled(move |btn| {
+            let is_gestures = btn.is_active();
+            let new_mode = if is_gestures {
+                btn.set_label("Touchscreen: Gesti Attivi");
+                TouchMode::GesturesOnly
+            } else {
+                btn.set_label("Touchscreen: Disabilitato (OFF)");
+                TouchMode::Off
+            };
+            canvas_touch
+                .state()
+                .borrow_mut()
+                .palm_engine
+                .set_touch_mode(new_mode);
+            hud_touch.update_metrics(|m| m.touch_mode = new_mode);
+            hud_touch.update_view();
+        });
+        diag_box.append(&toggle_touch);
+
+        let lbl_thresh = Label::builder()
+            .label("Soglia Pressione Stilo:")
+            .xalign(0.0)
+            .build();
+        diag_box.append(&lbl_thresh);
+
         let thresh_strings = [
-            "Soglia: 0.06 (Default Anti-Hover)",
-            "Soglia: 0.08 (Alta MPP)",
-            "Soglia: 0.12 (Massima)",
-            "Soglia: 0.04 (Media)",
-            "Soglia: 0.02 (Sensibile)",
+            "0.06 (Default Anti-Hover)",
+            "0.08 (Alta MPP)",
+            "0.12 (Massima)",
+            "0.04 (Media)",
+            "0.02 (Sensibile)",
         ];
         let dropdown_thresh = DropDown::from_strings(&thresh_strings);
         dropdown_thresh.set_selected(0);
@@ -382,7 +488,13 @@ impl UniNoteWindow {
             hud_thresh.update_metrics(|m| m.tip_threshold = new_thresh);
             hud_thresh.update_view();
         });
-        header_bar.pack_end(&dropdown_thresh);
+        diag_box.append(&dropdown_thresh);
+
+        let lbl_mode = Label::builder()
+            .label("Pipeline Smoothing:")
+            .xalign(0.0)
+            .build();
+        diag_box.append(&lbl_mode);
 
         let mode_strings = [
             "Spline Naturale (Default)",
@@ -404,75 +516,15 @@ impl UniNoteWindow {
             hud_smooth.update_view();
             canvas_smooth.widget().queue_draw();
         });
-        header_bar.pack_end(&dropdown_mode);
+        diag_box.append(&dropdown_mode);
 
-        // --- 10. TOUCH OFF / GESTI ---
-        let toggle_touch = ToggleButton::builder()
-            .label("Touch: OFF")
-            .active(false)
-            .tooltip_text("Protezione palmo: Touch OFF vs Gesti a due dita")
-            .build();
-        let canvas_touch = canvas.clone();
-        let hud_touch = hud.clone();
-        toggle_touch.connect_toggled(move |btn| {
-            let is_gestures = btn.is_active();
-            let new_mode = if is_gestures {
-                btn.set_label("Touch: Gesti");
-                TouchMode::GesturesOnly
-            } else {
-                btn.set_label("Touch: OFF");
-                TouchMode::Off
-            };
-            canvas_touch
-                .state()
-                .borrow_mut()
-                .palm_engine
-                .set_touch_mode(new_mode);
-            hud_touch.update_metrics(|m| m.touch_mode = new_mode);
-            hud_touch.update_view();
-        });
-        header_bar.pack_end(&toggle_touch);
+        diag_popover.set_child(Some(&diag_box));
+        diag_btn.set_popover(Some(&diag_popover));
 
-        // --- 11. REGISTRAZIONE INPUT & HUD TOGGLE ---
-        let toggle_rec = ToggleButton::builder()
-            .label("● Rec")
-            .active(false)
-            .tooltip_text("Registra i campioni per verifiche e benchmark")
-            .build();
-        let canvas_rec = canvas.clone();
-        let hud_rec = hud.clone();
-        toggle_rec.connect_toggled(move |btn| {
-            let is_recording = btn.is_active();
-            let state_rc = canvas_rec.state();
-            let mut st = state_rc.borrow_mut();
-
-            if is_recording {
-                btn.set_label("■ Stop");
-                st.recorder = Some(RecordedSession::new("uninote_session"));
-                hud_rec.update_metrics(|m| m.is_recording = true);
-            } else {
-                btn.set_label("● Rec");
-                hud_rec.update_metrics(|m| m.is_recording = false);
-                if let Some(rec) = st.recorder.take() {
-                    if let Ok(json) = rec.to_json() {
-                        let _ = std::fs::write("uninote_session.json", json);
-                    }
-                }
-            }
-            hud_rec.update_view();
-        });
-        header_bar.pack_end(&toggle_rec);
-
-        let toggle_hud = ToggleButton::builder()
-            .label("HUD")
-            .active(true)
-            .tooltip_text("Mostra o nascondi il pannello diagnostico")
-            .build();
-        let hud_widget = hud.widget().clone();
-        toggle_hud.connect_toggled(move |btn| {
-            hud_widget.set_visible(btn.is_active());
-        });
-        header_bar.pack_end(&toggle_hud);
+        // Impacchettamento lato destro della HeaderBar
+        header_bar.pack_end(&diag_btn);
+        header_bar.pack_end(&dropdown_bg);
+        header_bar.pack_end(&zoom_box);
 
         // --- 12. SCORCIATOIE DA TASTIERA GLOBALI (Ctrl+Z, Ctrl+Y, Ctrl+S, Ctrl+O, Ctrl+N) ---
         let key_controller = EventControllerKey::new();

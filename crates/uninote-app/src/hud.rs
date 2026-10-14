@@ -31,7 +31,7 @@ impl Default for DiagnosticMetrics {
         Self {
             device_name: "In attesa di input".to_string(),
             pipeline_mode: PipelineMode::CatmullRomSpline,
-            touch_mode: TouchMode::Off,
+            touch_mode: TouchMode::GesturesOnly,
             palm_state: PalmState::Idle,
             live_pressure: None,
             sample_rate_hz: 0.0,
