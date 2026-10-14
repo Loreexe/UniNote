@@ -200,29 +200,26 @@ impl NoteCanvas {
                 if is_up {
                     st.palm_engine.on_touch_release(slot);
                 }
-                let suppress = st
+                let _ = st
                     .palm_engine
                     .should_suppress_raw_touch(is_down, slot, now_ns);
                 let suppressed_count = st.palm_engine.suppressed_touch_events;
                 let palm_state = st.palm_engine.current_state();
                 drop(st);
 
-                if suppress {
-                    hud_clone.update_metrics(|m| {
-                        m.touch_suppressed = suppressed_count;
-                        m.palm_state = palm_state;
-                    });
-                    hud_clone.update_view();
-                    return glib::Propagation::Stop;
-                }
+                hud_clone.update_metrics(|m| {
+                    m.touch_suppressed = suppressed_count;
+                    m.palm_state = palm_state;
+                });
+                hud_clone.update_view();
+
+                // IL TOCCO NON SCRIVE MAI SUL CANVAS DI DISEGNO: stop assoluto alla propagazione
+                return glib::Propagation::Stop;
             }
 
-            // Soppressione puntatore emulato se la penna è attiva/prossimità o se il touch è OFF
+            // Soppressione categorica dei puntatori emulati sul canvas di disegno
             if event.is_pointer_emulated() {
-                let st = state_clone.borrow();
-                if st.palm_engine.is_pen_active() || st.palm_engine.touch_mode() == TouchMode::Off {
-                    return glib::Propagation::Stop;
-                }
+                return glib::Propagation::Stop;
             }
 
             glib::Propagation::Proceed
@@ -310,35 +307,7 @@ impl NoteCanvas {
                 }
                 st.last_sample_time = Some(now);
 
-                // 1. Elabora tutti i campioni intermedi ad alta frequenza del backlog hardware
-                if let Some(backlog) = gesture.backlog() {
-                    for coord in backlog {
-                        let flags = coord.flags();
-                        if flags.contains(gdk::AxisFlags::X) && flags.contains(gdk::AxisFlags::Y) {
-                            let axes = coord.axes();
-                            let bx = axes[0];
-                            let by = axes[1];
-                            let bp = if flags.contains(gdk::AxisFlags::PRESSURE) {
-                                Some(axes[2])
-                            } else {
-                                pressure
-                            };
-                            let b_sample = InputSample::new(
-                                (bx, by),
-                                bp,
-                                now_ns,
-                                DeviceKind::Stylus,
-                                InputPhase::Move,
-                            );
-                            builder.process_sample(b_sample.clone());
-                            if let Some(ref mut rec) = st.recorder {
-                                rec.record_sample(b_sample);
-                            }
-                        }
-                    }
-                }
-
-                // 2. Elabora il punto di motion corrente
+                // Elabora il punto di motion corrente direttamente con coordinate native sub-pixel
                 let sample = InputSample::new(
                     (x, y),
                     pressure,
