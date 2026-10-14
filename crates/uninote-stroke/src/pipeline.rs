@@ -91,6 +91,15 @@ impl StrokeBuilder {
                     }
                 }
 
+                // Controllo stacco punta: se la pressione hardware è sotto soglia di contatto (1.5%),
+                // la penna ha fisicamente staccato dal vetro: scarta il campione per impedire code e spike.
+                if let Some(raw_p) = sample.pressure {
+                    if raw_p <= 0.015 {
+                        self.samples_dropped += 1;
+                        return None;
+                    }
+                }
+
                 let (x, y) = match self.mode {
                     PipelineMode::Baseline | PipelineMode::CatmullRomSpline => sample.position,
                     PipelineMode::OneEuroFiltered => self.point_filter.filter(
@@ -139,6 +148,18 @@ impl StrokeBuilder {
 
     /// Conclude il tratto e restituisce la struttura Stroke completa.
     pub fn finish(mut self) -> Stroke {
+        // Rifilatura delle code aeree (Tail Trimming): se gli ultimi campioni registrati durante lo stacco
+        // avevano pressione quasi nulla (<= 0.015), vengono rimossi per eliminare qualsiasi sbavatura terminale.
+        while self.stroke.points.len() > 1 {
+            if let Some(last) = self.stroke.points.last() {
+                if last.pressure <= 0.015 {
+                    self.stroke.points.pop();
+                    continue;
+                }
+            }
+            break;
+        }
+
         self.stroke.is_dot = is_discrete_dot(&self.stroke.points, 2.5);
         self.stroke
     }

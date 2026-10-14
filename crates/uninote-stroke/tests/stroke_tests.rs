@@ -500,3 +500,45 @@ fn test_sample_catmull_rom_spline_density_and_width() {
         assert!(d <= 3.5, "Distanza campionata troppo ampia: {d}");
     }
 }
+
+#[test]
+fn test_tail_trimming_on_stroke_finish() {
+    let style = StrokeStyle::default();
+    let mut builder = StrokeBuilder::new(10, style, PipelineMode::CatmullRomSpline);
+
+    // Down con pressione valida
+    builder.process_sample(InputSample::new(
+        (10.0, 10.0),
+        Some(0.5),
+        1_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Down,
+    ));
+
+    // Move con pressione valida
+    builder.process_sample(InputSample::new(
+        (20.0, 10.0),
+        Some(0.4),
+        2_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Move,
+    ));
+
+    // Move con pressione di stacco quasi nulla (p = 0.005) generata in fase di follow-through aereo
+    builder.process_sample(InputSample::new(
+        (40.0, 10.0),
+        Some(0.005),
+        3_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Move,
+    ));
+
+    // Finish deve rifilare via il punto a pressione <= 0.015
+    let stroke = builder.finish();
+    assert_eq!(
+        stroke.points.len(),
+        2,
+        "Il punto di follow-through aereo con p <= 0.015 deve essere rifilato"
+    );
+    assert_eq!(stroke.points.last().unwrap().x, 20.0);
+}

@@ -268,6 +268,8 @@ impl NoteCanvas {
     }
 
     fn setup_stylus_controller(&self) {
+        const TIP_LIFT_PRESSURE_THRESHOLD: f64 = 0.015;
+
         let stylus = gtk4::GestureStylus::new();
         let state_clone = self.state.clone();
         let area_clone = self.area.clone();
@@ -293,6 +295,13 @@ impl NoteCanvas {
             );
 
             let mut st = state.borrow_mut();
+
+            // Sicurezza: se per qualsiasi motivo era rimasto un tratto pendente non chiuso, finalizzalo ora
+            if let Some(prev_builder) = st.active_builder.take() {
+                let stroke = prev_builder.finish();
+                st.completed_strokes.push(stroke);
+            }
+
             if st.palm_engine.evaluate_sample(&sample) == InputDisposition::AcceptDraw {
                 let id = st.next_stroke_id;
                 st.next_stroke_id += 1;
@@ -334,6 +343,40 @@ impl NoteCanvas {
             let mut st_guard = state.borrow_mut();
             let st = &mut *st_guard;
             if let Some(ref mut builder) = st.active_builder {
+                // 1. Controllo di stacco fisico (Tip-Up Threshold): se la pressione scende sotto l'1.5%,
+                // la penna ha interrotto il contatto con il vetro. Finalizziamo all'istante il tratto
+                // per bloccare sul nascere qualsiasi spike generato dal follow-through aereo della mano.
+                if let Some(p) = pressure {
+                    if p <= TIP_LIFT_PRESSURE_THRESHOLD {
+                        if let Some(b) = st.active_builder.take() {
+                            let stroke = b.finish();
+                            st.completed_strokes.push(stroke);
+                        }
+                        st.last_sample_time = None;
+                        drop(st_guard);
+                        area.queue_draw();
+                        return;
+                    }
+                }
+
+                // 2. Protezione dai salti aerei (Leap Detection): se tra l'ultimo punto e quello corrente
+                // c'è un salto anomalo (> 35 px in 16ms) a pressione debole (< 0.08), si tratta di uno
+                // spostamento in volo verso la lettera successiva. Chiudiamo il tratto senza connettere il salto.
+                if let Some(last_pt) = builder.stroke.points.last() {
+                    let dist = ((last_pt.x - x).powi(2) + (last_pt.y - y).powi(2)).sqrt();
+                    let p_val = pressure.unwrap_or(0.0);
+                    if dist > 35.0 && p_val < 0.08 {
+                        if let Some(b) = st.active_builder.take() {
+                            let stroke = b.finish();
+                            st.completed_strokes.push(stroke);
+                        }
+                        st.last_sample_time = None;
+                        drop(st_guard);
+                        area.queue_draw();
+                        return;
+                    }
+                }
+
                 // Calcolo sample rate istantaneo
                 if let Some(last_time) = st.last_sample_time {
                     let dt = now.duration_since(last_time).as_secs_f64();
@@ -414,13 +457,28 @@ impl NoteCanvas {
 
         // Proximity
         let state = state_clone.clone();
+        let area = area_clone.clone();
         let hud = hud_clone.clone();
         stylus.connect_proximity(move |_gesture, _x, _y| {
             let now_ns = app_start.elapsed().as_nanos() as u64;
             let mut st = state.borrow_mut();
             st.palm_engine.on_pen_proximity(true, now_ns);
+
+            // Se la penna entra in prossimità aerea (hover), qualsiasi tratto in corso è terminato
+            let closed_stroke = if let Some(builder) = st.active_builder.take() {
+                let stroke = builder.finish();
+                st.completed_strokes.push(stroke);
+                true
+            } else {
+                false
+            };
+
             let palm_state = st.palm_engine.current_state();
             drop(st);
+
+            if closed_stroke {
+                area.queue_draw();
+            }
 
             hud.update_metrics(|m| {
                 m.palm_state = palm_state;
