@@ -26,7 +26,7 @@ impl Default for DiagnosticMetrics {
     fn default() -> Self {
         Self {
             device_name: "In attesa di input".to_string(),
-            pipeline_mode: PipelineMode::OneEuroFiltered,
+            pipeline_mode: PipelineMode::CatmullRomSpline,
             touch_mode: TouchMode::Off,
             palm_state: PalmState::Idle,
             live_pressure: None,
@@ -135,8 +135,9 @@ impl DiagnosticHud {
         };
 
         let mode_str = match m.pipeline_mode {
-            PipelineMode::Baseline => "Baseline (Zero lag)",
-            PipelineMode::OneEuroFiltered => "One Euro (Filtrato)",
+            PipelineMode::CatmullRomSpline => "Spline Naturale (Zero lag)",
+            PipelineMode::OneEuroFiltered => "One Euro (Filtrato + Spline)",
+            PipelineMode::Baseline => "Baseline (Poligonale Off)",
         };
 
         let touch_str = match m.touch_mode {

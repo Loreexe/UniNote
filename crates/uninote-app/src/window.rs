@@ -1,7 +1,7 @@
 use crate::canvas::NoteCanvas;
 use crate::hud::DiagnosticHud;
 use gtk4::prelude::*;
-use gtk4::{Button, Overlay, ToggleButton};
+use gtk4::{Button, DropDown, Overlay, ToggleButton};
 use libadwaita::prelude::*;
 use libadwaita::{Application, ApplicationWindow, HeaderBar, WindowTitle};
 use std::rc::Rc;
@@ -39,31 +39,32 @@ impl UniNoteWindow {
         });
         header_bar.pack_start(&btn_clear);
 
-        // Selettore Pipeline: Baseline vs One Euro
-        let toggle_smoothing = ToggleButton::builder()
-            .label("Smoothing: One Euro")
-            .active(true)
-            .tooltip_text(
-                "Attiva o disattiva il filtro One Euro (Baseline = nessun filtro e nessun lag)",
-            )
-            .build();
+        // Selettore Pipeline a 3 modalità: Spline Naturale (default) vs One Euro vs Baseline Off
+        let mode_strings = [
+            "Spline Naturale (Default)",
+            "One Euro + Spline",
+            "Baseline (Off)",
+        ];
+        let dropdown_mode = DropDown::from_strings(&mode_strings);
+        dropdown_mode.set_selected(0);
+        dropdown_mode.set_tooltip_text(Some(
+            "Modalità tratto: Spline Naturale (Catmull-Rom fluida), One Euro (filtro tremolio), Baseline (poligonale pura)",
+        ));
         let canvas_smooth = canvas.clone();
         let hud_smooth = hud.clone();
-        toggle_smoothing.connect_toggled(move |btn| {
-            let is_filtered = btn.is_active();
-            let new_mode = if is_filtered {
-                btn.set_label("Smoothing: One Euro");
-                PipelineMode::OneEuroFiltered
-            } else {
-                btn.set_label("Smoothing: Baseline (Off)");
-                PipelineMode::Baseline
+        dropdown_mode.connect_selected_notify(move |dd| {
+            let new_mode = match dd.selected() {
+                0 => PipelineMode::CatmullRomSpline,
+                1 => PipelineMode::OneEuroFiltered,
+                _ => PipelineMode::Baseline,
             };
 
             canvas_smooth.state().borrow_mut().pipeline_mode = new_mode;
             hud_smooth.update_metrics(|m| m.pipeline_mode = new_mode);
             hud_smooth.update_view();
+            canvas_smooth.widget().queue_draw();
         });
-        header_bar.pack_start(&toggle_smoothing);
+        header_bar.pack_start(&dropdown_mode);
 
         // Selettore Touch: Off vs Gesti
         let toggle_touch = ToggleButton::builder()

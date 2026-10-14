@@ -1,7 +1,7 @@
 use uninote_stroke::{
-    DeviceKind, InputDisposition, InputPhase, InputSample, OneEuroConfig, OneEuroPointFilter,
-    PalmRejectionEngine, PalmState, PipelineMode, RecordedSession, StrokeBuilder, StrokeStyle,
-    TouchMode,
+    catmull_rom_to_bezier, sample_catmull_rom_spline, DeviceKind, InputDisposition, InputPhase,
+    InputSample, OneEuroConfig, OneEuroPointFilter, PalmRejectionEngine, PalmState, PipelineMode,
+    RecordedSession, StrokeBuilder, StrokePoint, StrokeStyle, TouchMode,
 };
 
 #[test]
@@ -336,4 +336,167 @@ fn test_mouse_strictly_suppressed_when_pen_active() {
         engine.evaluate_sample(&mouse_sample),
         InputDisposition::Suppress
     );
+}
+
+#[test]
+fn test_catmull_rom_spline_math_and_continuity() {
+    // 0 o 1 punto non generano segmenti
+    assert!(catmull_rom_to_bezier(&[]).is_empty());
+
+    let pt0 = StrokePoint {
+        x: 0.0,
+        y: 0.0,
+        pressure: 0.5,
+        width: 2.0,
+        timestamp_ns: 1,
+    };
+    assert!(catmull_rom_to_bezier(std::slice::from_ref(&pt0)).is_empty());
+
+    // 2 punti generano 1 segmento retto con punti di controllo a 1/3 e 2/3
+    let pt1 = StrokePoint {
+        x: 30.0,
+        y: 0.0,
+        pressure: 0.6,
+        width: 2.5,
+        timestamp_ns: 2,
+    };
+    let two_pts = catmull_rom_to_bezier(&[pt0.clone(), pt1.clone()]);
+    assert_eq!(two_pts.len(), 1);
+    assert!((two_pts[0].cp1.0 - 10.0).abs() < 1e-4);
+    assert!((two_pts[0].cp2.0 - 20.0).abs() < 1e-4);
+
+    // 4 punti che formano una curva
+    let pt2 = StrokePoint {
+        x: 40.0,
+        y: 20.0,
+        pressure: 0.7,
+        width: 3.0,
+        timestamp_ns: 3,
+    };
+    let pt3 = StrokePoint {
+        x: 30.0,
+        y: 40.0,
+        pressure: 0.8,
+        width: 3.5,
+        timestamp_ns: 4,
+    };
+
+    let segments = catmull_rom_to_bezier(&[pt0, pt1, pt2, pt3]);
+    assert_eq!(segments.len(), 3);
+
+    // C0 continuity: p1 del segmento i coincide con p0 del segmento i+1
+    for i in 0..(segments.len() - 1) {
+        let seg_curr = &segments[i];
+        let seg_next = &segments[i + 1];
+        assert!((seg_curr.p1.0 - seg_next.p0.0).abs() < 1e-5);
+        assert!((seg_curr.p1.1 - seg_next.p0.1).abs() < 1e-5);
+    }
+
+    // C1 continuity: vettore tangente uscente seg[i] collineare al vettore entrante seg[i+1]
+    for i in 0..(segments.len() - 1) {
+        let incoming_tan = (
+            segments[i].p1.0 - segments[i].cp2.0,
+            segments[i].p1.1 - segments[i].cp2.1,
+        );
+        let outgoing_tan = (
+            segments[i + 1].cp1.0 - segments[i + 1].p0.0,
+            segments[i + 1].cp1.1 - segments[i + 1].p0.1,
+        );
+
+        assert!((incoming_tan.0 - outgoing_tan.0).abs() < 1e-5);
+        assert!((incoming_tan.1 - outgoing_tan.1).abs() < 1e-5);
+    }
+}
+
+#[test]
+fn test_catmull_rom_overshoot_control() {
+    // Sequenza con brusco salto per innescare potenziale overshoot
+    let points = vec![
+        StrokePoint {
+            x: 0.0,
+            y: 0.0,
+            pressure: 0.5,
+            width: 2.0,
+            timestamp_ns: 1,
+        },
+        StrokePoint {
+            x: 10.0,
+            y: 0.0,
+            pressure: 0.5,
+            width: 2.0,
+            timestamp_ns: 2,
+        },
+        StrokePoint {
+            x: 10.1,
+            y: 50.0,
+            pressure: 0.5,
+            width: 2.0,
+            timestamp_ns: 3,
+        },
+        StrokePoint {
+            x: 10.2,
+            y: 50.1,
+            pressure: 0.5,
+            width: 2.0,
+            timestamp_ns: 4,
+        },
+    ];
+
+    let segments = catmull_rom_to_bezier(&points);
+    assert_eq!(segments.len(), 3);
+
+    // Controllo che i bracci tangenti non superino chord_len / 3.0
+    for seg in &segments {
+        let chord = ((seg.p1.0 - seg.p0.0).powi(2) + (seg.p1.1 - seg.p0.1).powi(2)).sqrt();
+        let max_allowed = chord / 3.0 + 1e-6;
+
+        let handle1 = ((seg.cp1.0 - seg.p0.0).powi(2) + (seg.cp1.1 - seg.p0.1).powi(2)).sqrt();
+        let handle2 = ((seg.p1.0 - seg.cp2.0).powi(2) + (seg.p1.1 - seg.cp2.1).powi(2)).sqrt();
+
+        assert!(handle1 <= max_allowed, "Handle 1 {handle1} > {max_allowed}");
+        assert!(handle2 <= max_allowed, "Handle 2 {handle2} > {max_allowed}");
+    }
+}
+
+#[test]
+fn test_sample_catmull_rom_spline_density_and_width() {
+    let points = vec![
+        StrokePoint {
+            x: 0.0,
+            y: 0.0,
+            pressure: 0.2,
+            width: 1.0,
+            timestamp_ns: 1,
+        },
+        StrokePoint {
+            x: 10.0,
+            y: 10.0,
+            pressure: 0.5,
+            width: 2.0,
+            timestamp_ns: 2,
+        },
+        StrokePoint {
+            x: 30.0,
+            y: 15.0,
+            pressure: 0.8,
+            width: 4.0,
+            timestamp_ns: 3,
+        },
+    ];
+
+    let sampled = sample_catmull_rom_spline(&points, 2.0);
+    assert!(!sampled.is_empty());
+
+    // Coordinate e larghezze finite
+    for (x, y, w) in &sampled {
+        assert!(x.is_finite());
+        assert!(y.is_finite());
+        assert!(*w >= 0.99 && *w <= 4.01);
+    }
+
+    // Distanza massima tra punti consecutivi campionati non deve superare significativamente max_step_px
+    for w in sampled.windows(2) {
+        let d = ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt();
+        assert!(d <= 3.5, "Distanza campionata troppo ampia: {d}");
+    }
 }

@@ -29,7 +29,7 @@ impl CanvasState {
             completed_strokes: Vec::new(),
             active_builder: None,
             palm_engine: PalmRejectionEngine::new(TouchMode::Off),
-            pipeline_mode: PipelineMode::OneEuroFiltered,
+            pipeline_mode: PipelineMode::CatmullRomSpline,
             current_style: StrokeStyle::default(),
             next_stroke_id: 1,
             recorder: None,
@@ -114,13 +114,14 @@ impl NoteCanvas {
 
             // 3. Disegno dei tratti completati
             let state = state_clone.borrow();
+            let current_mode = state.pipeline_mode;
             for stroke in &state.completed_strokes {
-                Self::draw_stroke(cr, stroke);
+                Self::draw_stroke(cr, stroke, current_mode);
             }
 
             // 4. Disegno del tratto live in corso
             if let Some(ref builder) = state.active_builder {
-                Self::draw_stroke(cr, &builder.stroke);
+                Self::draw_stroke(cr, &builder.stroke, current_mode);
             }
 
             // 5. Aggiornamento metriche di rendering
@@ -133,7 +134,7 @@ impl NoteCanvas {
         });
     }
 
-    fn draw_stroke(cr: &gtk4::cairo::Context, stroke: &Stroke) {
+    fn draw_stroke(cr: &gtk4::cairo::Context, stroke: &Stroke, mode: PipelineMode) {
         if stroke.points.is_empty() {
             return;
         }
@@ -151,15 +152,53 @@ impl NoteCanvas {
             return;
         }
 
-        // Disegno polilineare continuo con round join e cap
-        for w in stroke.points.windows(2) {
-            let p0 = &w[0];
-            let p1 = &w[1];
-            let avg_width = (p0.width + p1.width) / 2.0;
-            cr.set_line_width(avg_width.max(1.0));
-            cr.move_to(p0.x, p0.y);
-            cr.line_to(p1.x, p1.y);
-            let _ = cr.stroke();
+        match mode {
+            PipelineMode::Baseline => {
+                // Disegno polilineare diretto a segmenti retti (Baseline Off da specifica)
+                for w in stroke.points.windows(2) {
+                    let p0 = &w[0];
+                    let p1 = &w[1];
+                    let avg_width = (p0.width + p1.width) / 2.0;
+                    cr.set_line_width(avg_width.max(1.0));
+                    cr.move_to(p0.x, p0.y);
+                    cr.line_to(p1.x, p1.y);
+                    let _ = cr.stroke();
+                }
+            }
+            PipelineMode::CatmullRomSpline | PipelineMode::OneEuroFiltered => {
+                let segments = uninote_stroke::geometry::catmull_rom_to_bezier(&stroke.points);
+                for seg in &segments {
+                    let len = seg.approximate_length();
+                    let width_diff = (seg.width1 - seg.width0).abs();
+
+                    // Se la variazione di spessore è minima, usiamo curve_to nativo di Cairo
+                    if width_diff < 0.25 || len <= 3.0 {
+                        let avg_w = (seg.width0 + seg.width1) / 2.0;
+                        cr.set_line_width(avg_w.max(1.0));
+                        cr.move_to(seg.p0.0, seg.p0.1);
+                        cr.curve_to(
+                            seg.cp1.0, seg.cp1.1, seg.cp2.0, seg.cp2.1, seg.p1.0, seg.p1.1,
+                        );
+                        let _ = cr.stroke();
+                    } else {
+                        // Suddivisione in micro-passi lungo la Bézier per variazioni fluide di pressione
+                        let steps = ((len / 2.0).ceil() as usize).clamp(2, 16);
+                        let mut prev_pt = seg.p0;
+                        let mut prev_w = seg.width0;
+                        for s in 1..=steps {
+                            let t = (s as f64) / (steps as f64);
+                            let pt = seg.evaluate(t);
+                            let w = seg.evaluate_width(t);
+                            cr.set_line_width(((prev_w + w) / 2.0).max(1.0));
+                            cr.move_to(prev_pt.0, prev_pt.1);
+                            cr.line_to(pt.0, pt.1);
+                            let _ = cr.stroke();
+                            prev_pt = pt;
+                            prev_w = w;
+                        }
+                    }
+                }
+            }
         }
     }
 

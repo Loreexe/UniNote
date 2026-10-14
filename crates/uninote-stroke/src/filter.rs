@@ -16,8 +16,8 @@ pub struct OneEuroConfig {
 impl Default for OneEuroConfig {
     fn default() -> Self {
         Self {
-            min_cutoff: 1.0,
-            beta: 0.007,
+            min_cutoff: 4.5,
+            beta: 0.04,
             d_cutoff: 1.0,
         }
     }

@@ -1,15 +1,7 @@
 use crate::filter::{OneEuroConfig, OneEuroPointFilter, OneEuroScalar};
 use crate::geometry::{compute_width, is_discrete_dot};
+pub use crate::types::PipelineMode;
 use crate::types::{InputPhase, InputSample, Stroke, StrokePoint, StrokeStyle};
-
-/// Modalità della pipeline di elaborazione del tratto.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PipelineMode {
-    /// Baseline diretta senza smoothing e senza lag algoritmico.
-    Baseline,
-    /// Tratto filtrato con One Euro Filter disaccoppiato su posizione e pressione.
-    OneEuroFiltered,
-}
 
 /// Costruttore di un singolo tratto a partire dal flusso di campioni di input.
 pub struct StrokeBuilder {
@@ -25,13 +17,13 @@ impl StrokeBuilder {
     pub fn new(id: u64, style: StrokeStyle, mode: PipelineMode) -> Self {
         let point_filter = OneEuroPointFilter::new(OneEuroConfig::default());
         let pressure_filter = OneEuroScalar::new(OneEuroConfig {
-            min_cutoff: 2.0,
-            beta: 0.01,
+            min_cutoff: 3.0,
+            beta: 0.02,
             d_cutoff: 1.0,
         });
 
         Self {
-            stroke: Stroke::new(id, style),
+            stroke: Stroke::new(id, style, mode),
             mode,
             point_filter,
             pressure_filter,
@@ -51,7 +43,7 @@ impl StrokeBuilder {
                 self.pressure_filter.reset();
 
                 let (x, y) = match self.mode {
-                    PipelineMode::Baseline => sample.position,
+                    PipelineMode::Baseline | PipelineMode::CatmullRomSpline => sample.position,
                     PipelineMode::OneEuroFiltered => self.point_filter.filter(
                         sample.position.0,
                         sample.position.1,
@@ -62,7 +54,7 @@ impl StrokeBuilder {
                 let effective_pressure = match sample.pressure {
                     Some(p) => match self.mode {
                         PipelineMode::Baseline => p,
-                        PipelineMode::OneEuroFiltered => {
+                        PipelineMode::CatmullRomSpline | PipelineMode::OneEuroFiltered => {
                             let t_s = (sample.timestamp_ns as f64) / 1_000_000_000.0;
                             self.pressure_filter.filter(p, t_s)
                         }
@@ -100,7 +92,7 @@ impl StrokeBuilder {
                 }
 
                 let (x, y) = match self.mode {
-                    PipelineMode::Baseline => sample.position,
+                    PipelineMode::Baseline | PipelineMode::CatmullRomSpline => sample.position,
                     PipelineMode::OneEuroFiltered => self.point_filter.filter(
                         sample.position.0,
                         sample.position.1,
@@ -111,7 +103,7 @@ impl StrokeBuilder {
                 let effective_pressure = match sample.pressure {
                     Some(p) => match self.mode {
                         PipelineMode::Baseline => p,
-                        PipelineMode::OneEuroFiltered => {
+                        PipelineMode::CatmullRomSpline | PipelineMode::OneEuroFiltered => {
                             let t_s = (sample.timestamp_ns as f64) / 1_000_000_000.0;
                             self.pressure_filter.filter(p, t_s)
                         }

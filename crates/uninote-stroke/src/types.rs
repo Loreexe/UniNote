@@ -154,6 +154,18 @@ impl Default for StrokeStyle {
     }
 }
 
+/// Modalità della pipeline di elaborazione e rendering del tratto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum PipelineMode {
+    /// Spline Catmull-Rom naturale (predefinita): curve C1 fluide e naturali, zero lag su coordinate stilo.
+    #[default]
+    CatmullRomSpline,
+    /// One Euro Filter ricalibrato + Spline Catmull-Rom: filtraggio rumore per mano tremolante o scrittura lenta.
+    OneEuroFiltered,
+    /// Baseline diretta senza smoothing e senza filtri (poligonale pura da specifica).
+    Baseline,
+}
+
 /// Rappresentazione di un tratto vettoriale completato o in corso.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Stroke {
@@ -162,16 +174,18 @@ pub struct Stroke {
     pub points: Vec<StrokePoint>,
     pub raw_samples: Vec<InputSample>,
     pub is_dot: bool,
+    pub mode: PipelineMode,
 }
 
 impl Stroke {
-    pub fn new(id: u64, style: StrokeStyle) -> Self {
+    pub fn new(id: u64, style: StrokeStyle, mode: PipelineMode) -> Self {
         Self {
             id,
             style,
             points: Vec::new(),
             raw_samples: Vec::new(),
             is_dot: false,
+            mode,
         }
     }
 
