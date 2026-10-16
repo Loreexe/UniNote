@@ -1,19 +1,31 @@
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, Result, TransactionBehavior};
 
 pub const APPLICATION_ID: u32 = 0x554E_494E; // "UNIN"
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
-/// Inizializza lo schema del database SQLite configurando WAL e tabelle.
+/// Inizializza o aggiorna lo schema del database SQLite con migrazione V1 -> V2.
 pub fn initialize_schema(conn: &mut Connection) -> Result<()> {
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
     conn.execute_batch(&format!(
         "PRAGMA application_id = {APPLICATION_ID};
-         PRAGMA journal_mode = WAL;
          PRAGMA synchronous = NORMAL;
          PRAGMA foreign_keys = ON;
-         PRAGMA user_version = {SCHEMA_VERSION};"
+         PRAGMA busy_timeout = 5000;"
     ))?;
 
-    let tx = conn.transaction()?;
+    let current_mode: String = conn
+        .query_row("PRAGMA journal_mode;", [], |r| r.get(0))
+        .unwrap_or_default();
+    if !current_mode.eq_ignore_ascii_case("wal") {
+        let _ = conn.execute_batch("PRAGMA journal_mode = WAL;");
+    }
+
+    let current_version: u32 = conn.query_row("PRAGMA user_version;", [], |r| r.get(0))?;
+    if current_version == SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
     tx.execute(
         "CREATE TABLE IF NOT EXISTS metadata (
@@ -30,10 +42,33 @@ pub fn initialize_schema(conn: &mut Connection) -> Result<()> {
             width REAL NOT NULL,
             height REAL NOT NULL,
             background_type TEXT NOT NULL,
-            background_spacing REAL NOT NULL
+            background_spacing REAL NOT NULL,
+            background_extra TEXT NOT NULL DEFAULT ''
         )",
         [],
     )?;
+
+    // Verifica dinamica e migrazione trasparente per database V1 preesistenti
+    let has_background_extra: bool = {
+        let mut stmt = tx.prepare("PRAGMA table_info(pages)")?;
+        let mut rows = stmt.query([])?;
+        let mut found = false;
+        while let Some(row) = rows.next()? {
+            let col_name: String = row.get(1)?;
+            if col_name == "background_extra" {
+                found = true;
+                break;
+            }
+        }
+        found
+    };
+
+    if !has_background_extra {
+        tx.execute(
+            "ALTER TABLE pages ADD COLUMN background_extra TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
 
     tx.execute(
         "CREATE TABLE IF NOT EXISTS items (
@@ -51,6 +86,8 @@ pub fn initialize_schema(conn: &mut Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_items_page ON items(page_id)",
         [],
     )?;
+
+    tx.execute(&format!("PRAGMA user_version = {SCHEMA_VERSION};"), [])?;
 
     tx.commit()?;
     Ok(())

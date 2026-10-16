@@ -1094,6 +1094,7 @@ fn test_t1_r7_paper_type_visual_cards_rendering() {
                 }
                 cr.stroke().unwrap();
             }
+            PageBackground::PdfPage { .. } => {}
         }
         assert!(cr.status().is_ok());
     }

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  ci:
+    name: UniNote CI Pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libcairo2-dev \
+            libpoppler-glib-dev \
+            libsqlite3-dev \
+            xvfb
+
+      - name: Setup Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check code formatting (cargo fmt)
+        run: cargo fmt --all --check
+
+      - name: Run strict linter (cargo clippy)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run test suite with virtual display (cargo test)
+        run: xvfb-run --auto-servernum cargo test --workspace
+
+      - name: Validate Wiki freshness (check_freshness.py)
+        run: |
+          if [ -f .uninote-wiki/check_freshness.py ]; then
+            python3 .uninote-wiki/check_freshness.py
+          else
+            echo "::notice::.uninote-wiki/check_freshness.py is local/excluded. Skipping wiki check."
+          fi

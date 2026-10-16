@@ -6,12 +6,56 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Instant;
-use uninote_core::{CommandHistory, DocCommand, Document, ItemKind, PageBackground, Viewport};
+use uninote_core::{
+    CommandHistory, DocCommand, Document, DocumentFormat, ItemId, ItemKind, PageBackground,
+    Viewport,
+};
 use uninote_storage::{DocumentStore, SaveStatus, StorageWorker};
+use uninote_stroke::selection::{SelectionEngine, SelectionMode};
 use uninote_stroke::{
     DeviceKind, InputDisposition, InputPhase, InputSample, PalmRejectionEngine, PipelineMode,
-    RecordedSession, Stroke, StrokeBuilder, StrokeStyle, TouchMode,
+    RecordedSession, Rect, Stroke, StrokeBuilder, StrokeStyle, TouchMode,
 };
+
+/// Specifica dinamica procedurale della griglia Cairo in base al livello di zoom.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DynamicGridSpec {
+    pub step_pt: f64,
+    pub alpha: f64,
+    pub major_step_pt: f64,
+}
+
+/// Calcola i parametri ottimali della griglia procedurale in base al fattore di ingrandimento dello schermo.
+pub fn dynamic_grid_spec(zoom: f64) -> DynamicGridSpec {
+    let clamped_zoom = if zoom.is_finite() {
+        zoom.clamp(0.25, 5.0)
+    } else {
+        1.0
+    };
+    let base_step = 20.0;
+
+    if clamped_zoom < 0.5 {
+        let t = (clamped_zoom - 0.25) / 0.25; // 0.0 a 0.25, 1.0 a 0.5
+        DynamicGridSpec {
+            step_pt: base_step * 2.0, // 40.0 pt
+            alpha: 0.15 + 0.15 * t,
+            major_step_pt: base_step * 8.0,
+        }
+    } else if clamped_zoom <= 2.0 {
+        DynamicGridSpec {
+            step_pt: base_step, // 20.0 pt
+            alpha: 0.25,
+            major_step_pt: base_step * 5.0, // 100.0 pt
+        }
+    } else {
+        let t = ((clamped_zoom - 2.0) / 3.0).min(1.0); // 0.0 a 2.0, 1.0 a 5.0
+        DynamicGridSpec {
+            step_pt: base_step / 2.0, // 10.0 pt
+            alpha: 0.15 + 0.20 * t,
+            major_step_pt: base_step,
+        }
+    }
+}
 
 /// Strumento di disegno/modifica attualmente selezionato.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +66,81 @@ pub enum ActiveTool {
     Text,
     Line,
     Shapes,
+    Select,
+}
+
+/// Stato della selezione interattiva su canvas (Lazo libero e Rettangolo diagonale).
+#[derive(Debug, Clone)]
+pub struct SelectionState {
+    /// Modalità attiva (Lasso a mano libera o Rettangolo diagonale).
+    pub mode: SelectionMode,
+    /// Indice della pagina a cui appartengono gli elementi selezionati.
+    pub page_index: Option<usize>,
+    /// Identificatori degli elementi selezionati (Item::id).
+    pub selected_ids: Vec<ItemId>,
+    /// Bounding box complessivo dei tratti selezionati in coordinate documento.
+    pub bbox: Option<Rect>,
+    /// Traccia poligonale del lazo in corso di disegno (coordinate documento).
+    pub active_lasso: Vec<(f64, f64)>,
+    /// Punto iniziale del rettangolo di selezione in corso (coordinate documento).
+    pub active_rect_start: Option<(f64, f64)>,
+    /// Punto corrente del rettangolo di selezione in corso (coordinate documento).
+    pub active_rect_current: Option<(f64, f64)>,
+    /// Flag che indica se è in corso un'operazione di trascinamento (drag translation).
+    pub is_dragging: bool,
+    /// Punto iniziale del drag in coordinate documento.
+    pub drag_start_doc: Option<(f64, f64)>,
+    /// Offset corrente di trascinamento (delta_x, delta_y) in coordinate documento.
+    pub drag_offset: (f64, f64),
+}
+
+impl Default for SelectionState {
+    fn default() -> Self {
+        Self {
+            mode: SelectionMode::Lasso,
+            page_index: None,
+            selected_ids: Vec::new(),
+            bbox: None,
+            active_lasso: Vec::new(),
+            active_rect_start: None,
+            active_rect_current: None,
+            is_dragging: false,
+            drag_start_doc: None,
+            drag_offset: (0.0, 0.0),
+        }
+    }
+}
+
+impl SelectionState {
+    pub fn has_selection(&self) -> bool {
+        !self.selected_ids.is_empty() && self.bbox.is_some()
+    }
+
+    pub fn is_selecting(&self) -> bool {
+        !self.active_lasso.is_empty() || self.active_rect_start.is_some()
+    }
+
+    pub fn clear(&mut self) {
+        self.page_index = None;
+        self.selected_ids.clear();
+        self.bbox = None;
+        self.active_lasso.clear();
+        self.active_rect_start = None;
+        self.active_rect_current = None;
+        self.is_dragging = false;
+        self.drag_start_doc = None;
+        self.drag_offset = (0.0, 0.0);
+    }
+
+    pub fn hit_test_handle_or_bbox(&self, doc_pt: (f64, f64), tolerance: f64) -> bool {
+        if let Some(ref bbox) = self.bbox {
+            let current_bbox = bbox.translate(self.drag_offset.0, self.drag_offset.1);
+            let expanded = current_bbox.expand(tolerance);
+            expanded.contains_point(doc_pt.0, doc_pt.1)
+        } else {
+            false
+        }
+    }
 }
 
 /// Stato interno condiviso del canvas di UniNote.
@@ -33,6 +152,7 @@ pub struct CanvasState {
     pub save_status: SaveStatus,
     pub viewport: Viewport,
     pub active_tool: ActiveTool,
+    pub selection: SelectionState,
     pub active_builder: Option<StrokeBuilder>,
     pub active_device: Option<DeviceKind>,
     pub palm_engine: PalmRejectionEngine,
@@ -45,6 +165,7 @@ pub struct CanvasState {
     pub mouse_drag_start: Option<(f64, f64)>,
     pub mouse_pan_start: Option<(f64, f64)>,
     pub tip_pressure_threshold: f64,
+    pub pdf_cache: std::cell::RefCell<crate::pdf_cache::PdfCacheManager>,
 }
 
 impl CanvasState {
@@ -57,6 +178,7 @@ impl CanvasState {
             save_status: SaveStatus::Saved(0),
             viewport: Viewport::default(),
             active_tool: ActiveTool::Pen,
+            selection: SelectionState::default(),
             active_builder: None,
             active_device: None,
             palm_engine: PalmRejectionEngine::new(TouchMode::GesturesOnly),
@@ -69,6 +191,7 @@ impl CanvasState {
             mouse_drag_start: None,
             mouse_pan_start: None,
             tip_pressure_threshold: 0.06,
+            pdf_cache: std::cell::RefCell::new(crate::pdf_cache::PdfCacheManager::default_120hz()),
         }
     }
 
@@ -76,6 +199,7 @@ impl CanvasState {
         let res = self.history.undo(&mut self.document);
         if res {
             self.persist_changes();
+            self.selection.clear();
         }
         res
     }
@@ -84,6 +208,7 @@ impl CanvasState {
         let res = self.history.redo(&mut self.document);
         if res {
             self.persist_changes();
+            self.selection.clear();
         }
         res
     }
@@ -224,6 +349,9 @@ impl NoteCanvas {
     pub fn set_active_tool(&self, tool: ActiveTool) {
         let mut st = self.state.borrow_mut();
         st.active_tool = tool;
+        if tool != ActiveTool::Select {
+            st.selection.clear();
+        }
         let tool_name = match tool {
             ActiveTool::Pen => "Penna",
             ActiveTool::Eraser => "Gomma (Tratto Intero)",
@@ -231,10 +359,39 @@ impl NoteCanvas {
             ActiveTool::Text => "Testo",
             ActiveTool::Line => "Linea Dritta",
             ActiveTool::Shapes => "Forme",
+            ActiveTool::Select => "Selezione (Lazo / Rettangolo)",
         };
         self.hud
             .update_metrics(|m| m.current_tool = tool_name.to_string());
         self.hud.update_view();
+        self.area.queue_draw();
+    }
+
+    pub fn selection_mode(&self) -> SelectionMode {
+        self.state.borrow().selection.mode
+    }
+
+    pub fn set_selection_mode(&self, mode: SelectionMode) {
+        let mut st = self.state.borrow_mut();
+        st.selection.mode = mode;
+        self.area.queue_draw();
+    }
+
+    pub fn clear_selection(&self) {
+        let mut st = self.state.borrow_mut();
+        st.selection.clear();
+        drop(st);
+        self.area.queue_draw();
+    }
+
+    pub fn delete_selected(&self) -> bool {
+        let mut st = self.state.borrow_mut();
+        let deleted = Self::delete_selected_items(&mut st);
+        drop(st);
+        if deleted {
+            self.area.queue_draw();
+        }
+        deleted
     }
 
     pub fn set_pen_color(&self, color: (f64, f64, f64, f64)) {
@@ -267,8 +424,81 @@ impl NoteCanvas {
         res
     }
 
+    /// Calcola il bounding box complessivo (AABB) di tutti i tratti del documento.
+    pub fn compute_document_bounding_box(
+        doc: &Document,
+    ) -> Option<uninote_core::coordinates::Rect2D> {
+        let mut min_x = f64::INFINITY;
+        let mut min_y = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
+        let mut max_y = f64::NEG_INFINITY;
+        let mut has_strokes = false;
+
+        for page in &doc.pages {
+            for item in &page.items {
+                let ItemKind::Stroke(ref s) = item.kind;
+                if let Some(bbox) = s.bounding_box() {
+                    min_x = min_x.min(bbox.min_x);
+                    min_y = min_y.min(bbox.min_y);
+                    max_x = max_x.max(bbox.max_x);
+                    max_y = max_y.max(bbox.max_y);
+                    has_strokes = true;
+                }
+            }
+        }
+
+        if has_strokes
+            && min_x.is_finite()
+            && min_y.is_finite()
+            && max_x.is_finite()
+            && max_y.is_finite()
+        {
+            Some(uninote_core::coordinates::Rect2D::new(
+                min_x,
+                min_y,
+                max_x - min_x,
+                max_y - min_y,
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Inquadra e centra tutti i contenuti disegnati nella lavagna o nel quaderno.
+    /// Calcola l'AABB di tutti i tratti e adatta zoom e pan del viewport.
+    pub fn center_content(&self) {
+        let mut st = self.state.borrow_mut();
+        let win_w = self.area.width() as f64;
+        let win_h = self.area.height() as f64;
+
+        let bbox = Self::compute_document_bounding_box(&st.document);
+        if let Some(rect) = bbox {
+            st.viewport.center_on_rect(rect, win_w, win_h);
+        } else {
+            // Se non ci sono tratti, reimposta la vista al centro (0, 0)
+            if st.document.format == DocumentFormat::Whiteboard {
+                st.viewport.center_on_rect(
+                    uninote_core::coordinates::Rect2D::new(0.0, 0.0, 0.0, 0.0),
+                    win_w,
+                    win_h,
+                );
+            } else {
+                st.viewport.reset_zoom_and_center(win_w);
+            }
+        }
+
+        let pct = (st.viewport.zoom * 100.0).round() as usize;
+        drop(st);
+        self.hud.update_metrics(|m| m.zoom_pct = pct);
+        self.hud.update_view();
+        self.area.queue_draw();
+    }
+
     pub fn add_page(&self, bg: PageBackground) {
         let mut st = self.state.borrow_mut();
+        if st.document.format == DocumentFormat::Whiteboard {
+            return;
+        }
         let idx = st.document.pages.len();
         let new_page = uninote_core::Page::new_a4(idx, bg);
         st.add_page(new_page);
@@ -308,7 +538,21 @@ impl NoteCanvas {
     pub fn reset_zoom(&self) {
         let mut st = self.state.borrow_mut();
         let w = self.area.width() as f64;
-        st.viewport.reset_zoom_and_center(w);
+        let h = self.area.height() as f64;
+        if st.document.format == DocumentFormat::Whiteboard {
+            let bbox = Self::compute_document_bounding_box(&st.document);
+            if let Some(rect) = bbox {
+                st.viewport.center_on_rect(rect, w, h);
+            } else {
+                st.viewport.center_on_rect(
+                    uninote_core::coordinates::Rect2D::new(0.0, 0.0, 0.0, 0.0),
+                    w,
+                    h,
+                );
+            }
+        } else {
+            st.viewport.reset_zoom_and_center(w);
+        }
         let pct = (st.viewport.zoom * 100.0).round() as usize;
         drop(st);
         self.hud.update_metrics(|m| m.zoom_pct = pct);
@@ -317,11 +561,18 @@ impl NoteCanvas {
     }
 
     pub fn total_pages(&self) -> usize {
-        self.state.borrow().document.pages.len().max(1)
+        let st = self.state.borrow();
+        if st.document.format == DocumentFormat::Whiteboard {
+            return 1;
+        }
+        st.document.pages.len().max(1)
     }
 
     pub fn current_page_index(&self) -> usize {
         let st = self.state.borrow();
+        if st.document.format == DocumentFormat::Whiteboard {
+            return 0;
+        }
         let center_screen_y = (self.area.height() as f64) / 2.0;
         let (_doc_x, doc_y) = st.viewport.screen_to_document((0.0, center_screen_y));
         for (i, _) in st.document.pages.iter().enumerate() {
@@ -335,6 +586,9 @@ impl NoteCanvas {
 
     pub fn scroll_to_page(&self, page_idx: usize) {
         let mut st = self.state.borrow_mut();
+        if st.document.format == DocumentFormat::Whiteboard {
+            return;
+        }
         let count = st.document.pages.len();
         if page_idx < count {
             let page_rect = Viewport::page_rect(page_idx);
@@ -346,7 +600,9 @@ impl NoteCanvas {
 
     pub fn set_current_page_background(&self, bg: PageBackground) {
         let mut st = self.state.borrow_mut();
-        let cur_idx = {
+        let cur_idx = if st.document.format == DocumentFormat::Whiteboard {
+            0
+        } else {
             let center_screen_y = (self.area.height() as f64) / 2.0;
             let (_doc_x, doc_y) = st.viewport.screen_to_document((0.0, center_screen_y));
             let mut found = 0;
@@ -370,6 +626,43 @@ impl NoteCanvas {
     pub fn new_document(&self) {
         let mut st = self.state.borrow_mut();
         st.document = Document::new_empty("Nuovo Quaderno");
+        st.history = CommandHistory::default();
+        st.storage_worker = None;
+        st.file_path = None;
+        st.active_builder = None;
+        st.active_device = None;
+        st.active_tool = ActiveTool::Pen;
+        st.mouse_drag_start = None;
+        st.mouse_pan_start = None;
+        st.last_sample_time = None;
+        st.last_stylus_time = None;
+        st.palm_engine = PalmRejectionEngine::new(TouchMode::GesturesOnly);
+        st.viewport = Viewport::default();
+        drop(st);
+
+        self.hud.update_metrics(|m| {
+            m.current_tool = "Penna".into();
+            m.page_count = 1;
+            m.zoom_pct = 100;
+            m.touch_mode = TouchMode::GesturesOnly;
+        });
+        self.hud.update_view();
+        self.area.queue_draw();
+    }
+
+    /// Crea un nuovo documento con titolo, formato e sfondo specificati.
+    pub fn create_document(&self, title: &str, format: DocumentFormat, bg: PageBackground) {
+        let mut st = self.state.borrow_mut();
+        st.document = match format {
+            DocumentFormat::Notebook => {
+                let mut doc = Document::new_notebook(title);
+                if let Some(first_page) = doc.pages.first_mut() {
+                    first_page.background = bg;
+                }
+                doc
+            }
+            DocumentFormat::Whiteboard => Document::new_whiteboard_with_title(title, bg),
+        };
         st.history = CommandHistory::default();
         st.storage_worker = None;
         st.file_path = None;
@@ -458,6 +751,72 @@ impl NoteCanvas {
         }
     }
 
+    /// Esporta il documento corrente in un file PDF vettoriale ad alta definizione.
+    pub fn export_pdf(
+        &self,
+        target_path: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let st = self.state.borrow();
+        crate::pdf_export::export_to_pdf(&st.document, target_path)
+    }
+
+    /// Carica un nuovo documento sostituendo lo stato corrente e aggiornando l'HUD e la vista.
+    pub fn load_document(&self, doc: uninote_core::Document) {
+        let mut st = self.state.borrow_mut();
+        st.document = doc;
+        st.history = CommandHistory::new(100);
+        st.storage_worker = None;
+        st.file_path = None;
+        st.active_builder = None;
+        st.active_device = None;
+        st.active_tool = ActiveTool::Pen;
+        st.mouse_drag_start = None;
+        st.mouse_pan_start = None;
+        st.last_sample_time = None;
+        st.last_stylus_time = None;
+        st.palm_engine = PalmRejectionEngine::new(TouchMode::GesturesOnly);
+        st.viewport = Viewport::default();
+        st.selection.clear();
+        drop(st);
+
+        let count = self.total_pages();
+        self.hud.update_metrics(|m| {
+            m.current_tool = "Penna".into();
+            m.page_count = count;
+            m.zoom_pct = 100;
+            m.touch_mode = TouchMode::GesturesOnly;
+        });
+        self.hud.update_view();
+        self.area.queue_draw();
+    }
+
+    /// Crea un nuovo quaderno a partire da un file PDF esterno.
+    pub fn create_from_pdf(
+        &self,
+        pdf_path: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let doc = crate::pdf_export::import_from_pdf(pdf_path)?;
+        self.load_document(doc);
+        Ok(())
+    }
+
+    /// Accoda le pagine di un file PDF in fondo al documento corrente.
+    pub fn append_pdf(
+        &self,
+        pdf_path: &std::path::Path,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let mut st = self.state.borrow_mut();
+        let count = crate::pdf_export::append_pdf_pages(&mut st.document, pdf_path)?;
+        drop(st);
+        let total = self.total_pages();
+        self.hud.update_metrics(|m| {
+            m.page_count = total;
+        });
+        self.hud.update_view();
+        self.area.queue_draw();
+        Ok(count)
+    }
+
     fn setup_drawing(&self) {
         let state_clone = self.state.clone();
         let hud_clone = self.hud.clone();
@@ -469,140 +828,278 @@ impl NoteCanvas {
             let current_mode = st.pipeline_mode;
             let is_dark = libadwaita::StyleManager::default().is_dark();
 
-            // 1. Sfondo desktop canvas
-            if is_dark {
-                cr.set_source_rgb(0.039, 0.082, 0.102); // #0A151A
-            } else {
-                cr.set_source_rgb(0.910, 0.925, 0.937); // #E8ECEF
-            }
-            let _ = cr.paint();
+            match st.document.format {
+                DocumentFormat::Notebook => {
+                    // 1. Sfondo desktop canvas per quaderno A4
+                    if is_dark {
+                        cr.set_source_rgb(0.039, 0.082, 0.102); // #0A151A
+                    } else {
+                        cr.set_source_rgb(0.910, 0.925, 0.937); // #E8ECEF
+                    }
+                    let _ = cr.paint();
 
-            // 2. Rendering di ciascuna pagina A4
-            for page in &st.document.pages {
-                let doc_rect = Viewport::page_rect(page.index);
-                let (sx, sy) = vp.document_to_screen((doc_rect.x, doc_rect.y));
-                let sw = doc_rect.width * vp.zoom;
-                let sh = doc_rect.height * vp.zoom;
+                    // 2. Rendering di ciascuna pagina A4
+                    for page in &st.document.pages {
+                        let doc_rect = st
+                            .document
+                            .page_rect(page.index)
+                            .unwrap_or_else(|| Viewport::page_rect(page.index));
+                        let (sx, sy) = vp.document_to_screen((doc_rect.x, doc_rect.y));
+                        let sw = doc_rect.width * vp.zoom;
+                        let sh = doc_rect.height * vp.zoom;
 
-                // Culling viewport: scarta pagine completamente fuori dallo schermo
-                if sx + sw < 0.0 || sx > width as f64 || sy + sh < 0.0 || sy > height as f64 {
-                    continue;
-                }
+                        // Culling viewport: scarta pagine completamente fuori dallo schermo
+                        if sx + sw < 0.0 || sx > width as f64 || sy + sh < 0.0 || sy > height as f64
+                        {
+                            continue;
+                        }
 
-                // Ombra ad elevazione per foglio A4
-                if is_dark {
-                    cr.set_source_rgba(0.0, 0.0, 0.0, 0.65);
-                } else {
-                    cr.set_source_rgba(0.0, 0.0, 0.0, 0.14);
-                }
-                cr.rectangle(sx - 2.0, sy + 4.0, sw + 8.0, sh + 8.0);
-                let _ = cr.fill();
-
-                // Corpo foglio A4
-                if is_dark {
-                    cr.set_source_rgb(0.090, 0.129, 0.149); // #172126 Deep Slate
-                } else {
-                    cr.set_source_rgb(0.985, 0.980, 0.965); // #FAF9F6 Natural White
-                }
-                cr.rectangle(sx, sy, sw, sh);
-                let _ = cr.fill();
-
-                // Bordo perimetrale
-                if is_dark {
-                    cr.set_source_rgba(0.243, 0.282, 0.306, 0.80); // #3E484E
-                } else {
-                    cr.set_source_rgba(0.0, 0.0, 0.0, 0.09);
-                }
-                cr.set_line_width(1.0);
-                cr.rectangle(sx, sy, sw, sh);
-                let _ = cr.stroke();
-
-                // Ritaglio (Clip) sul perimetro del foglio
-                let _ = cr.save();
-                cr.rectangle(sx, sy, sw, sh);
-                cr.clip();
-
-                // Disegno del pattern di sfondo della pagina
-                match &page.background {
-                    PageBackground::Blank => {}
-                    PageBackground::Ruled {
-                        line_spacing,
-                        margin_left,
-                    } => {
-                        let spacing_px = line_spacing * vp.zoom;
-                        let margin_px = margin_left * vp.zoom;
-
-                        // Margine sinistro
+                        // Ombra ad elevazione per foglio A4
                         if is_dark {
-                            cr.set_source_rgba(1.0, 0.706, 0.670, 0.35); // #FFB4AB Corallo DMS
+                            cr.set_source_rgba(0.0, 0.0, 0.0, 0.65);
                         } else {
-                            cr.set_source_rgba(0.88, 0.35, 0.35, 0.35);
+                            cr.set_source_rgba(0.0, 0.0, 0.0, 0.14);
+                        }
+                        cr.rectangle(sx - 2.0, sy + 4.0, sw + 8.0, sh + 8.0);
+                        let _ = cr.fill();
+
+                        // Corpo foglio A4
+                        if is_dark {
+                            cr.set_source_rgb(0.090, 0.129, 0.149); // #172126 Deep Slate
+                        } else {
+                            cr.set_source_rgb(0.985, 0.980, 0.965); // #FAF9F6 Natural White
+                        }
+                        cr.rectangle(sx, sy, sw, sh);
+                        let _ = cr.fill();
+
+                        // Bordo perimetrale
+                        if is_dark {
+                            cr.set_source_rgba(0.243, 0.282, 0.306, 0.80); // #3E484E
+                        } else {
+                            cr.set_source_rgba(0.0, 0.0, 0.0, 0.09);
                         }
                         cr.set_line_width(1.0);
-                        cr.move_to(sx + margin_px, sy);
-                        cr.line_to(sx + margin_px, sy + sh);
+                        cr.rectangle(sx, sy, sw, sh);
                         let _ = cr.stroke();
 
-                        // Righe orizzontali
-                        if is_dark {
-                            cr.set_source_rgba(0.427, 0.824, 1.0, 0.18); // Ciano soft
-                        } else {
-                            cr.set_source_rgba(0.35, 0.50, 0.70, 0.35);
-                        }
-                        cr.set_line_width(0.8);
-                        let mut line_y = sy + spacing_px * 2.0;
-                        while line_y < sy + sh {
-                            cr.move_to(sx, line_y);
-                            cr.line_to(sx + sw, line_y);
-                            line_y += spacing_px;
-                        }
-                        let _ = cr.stroke();
-                    }
-                    PageBackground::Grid { grid_size } => {
-                        let grid_px = grid_size * vp.zoom;
-                        if is_dark {
-                            cr.set_source_rgba(0.427, 0.824, 1.0, 0.14); // Ciano soft
-                        } else {
-                            cr.set_source_rgba(0.45, 0.60, 0.80, 0.28);
-                        }
-                        cr.set_line_width(0.7);
+                        // Ritaglio (Clip) sul perimetro del foglio
+                        let _ = cr.save();
+                        cr.rectangle(sx, sy, sw, sh);
+                        cr.clip();
 
-                        let mut gx = sx + grid_px;
-                        while gx < sx + sw {
-                            cr.move_to(gx, sy);
-                            cr.line_to(gx, sy + sh);
-                            gx += grid_px;
+                        // Disegno del pattern di sfondo della pagina
+                        match &page.background {
+                            PageBackground::Blank => {}
+                            PageBackground::Ruled {
+                                line_spacing,
+                                margin_left,
+                            } => {
+                                let spacing_px = line_spacing * vp.zoom;
+                                let margin_px = margin_left * vp.zoom;
+
+                                if is_dark {
+                                    cr.set_source_rgba(1.0, 0.706, 0.670, 0.35);
+                                // #FFB4AB Corallo DMS
+                                } else {
+                                    cr.set_source_rgba(0.88, 0.35, 0.35, 0.35);
+                                }
+                                cr.set_line_width(1.0);
+                                cr.move_to(sx + margin_px, sy);
+                                cr.line_to(sx + margin_px, sy + sh);
+                                let _ = cr.stroke();
+
+                                if is_dark {
+                                    cr.set_source_rgba(0.427, 0.824, 1.0, 0.18);
+                                } else {
+                                    cr.set_source_rgba(0.35, 0.50, 0.70, 0.35);
+                                }
+                                cr.set_line_width(0.8);
+                                let mut line_y = sy + spacing_px * 2.0;
+                                while line_y < sy + sh {
+                                    cr.move_to(sx, line_y);
+                                    cr.line_to(sx + sw, line_y);
+                                    line_y += spacing_px;
+                                }
+                                let _ = cr.stroke();
+                            }
+                            PageBackground::Grid { grid_size } => {
+                                let grid_px = grid_size * vp.zoom;
+                                if is_dark {
+                                    cr.set_source_rgba(0.427, 0.824, 1.0, 0.14);
+                                } else {
+                                    cr.set_source_rgba(0.45, 0.60, 0.80, 0.28);
+                                }
+                                cr.set_line_width(0.7);
+
+                                let mut gx = sx + grid_px;
+                                while gx < sx + sw {
+                                    cr.move_to(gx, sy);
+                                    cr.line_to(gx, sy + sh);
+                                    gx += grid_px;
+                                }
+
+                                let mut gy = sy + grid_px;
+                                while gy < sy + sh {
+                                    cr.move_to(sx, gy);
+                                    cr.line_to(sx + sw, gy);
+                                    gy += grid_px;
+                                }
+                                let _ = cr.stroke();
+                            }
+                            PageBackground::PdfPage {
+                                source_path,
+                                page_index,
+                                original_width,
+                                original_height,
+                            } => {
+                                let path = std::path::Path::new(source_path);
+                                let rendered = if let Ok(surface) = st
+                                    .pdf_cache
+                                    .borrow_mut()
+                                    .get_or_render_raster(path, *page_index)
+                                {
+                                    let _ = cr.save();
+                                    cr.translate(sx, sy);
+                                    let surf_w = surface.width() as f64;
+                                    let surf_h = surface.height() as f64;
+                                    if surf_w > 0.0 && surf_h > 0.0 {
+                                        cr.scale(sw / surf_w, sh / surf_h);
+                                        let _ = cr.set_source_surface(&surface, 0.0, 0.0);
+                                        let pattern = cr.source();
+                                        pattern.set_filter(gtk4::cairo::Filter::Bilinear);
+                                        let _ = cr.paint();
+                                    }
+                                    let _ = cr.restore();
+                                    true
+                                } else {
+                                    false
+                                };
+
+                                if !rendered {
+                                    // Segnaposto elegante DMS per PDF non ancora caricato o file assente
+                                    cr.set_source_rgba(0.50, 0.54, 0.62, 0.20);
+                                    cr.set_line_width(1.0);
+                                    cr.rectangle(sx + 12.0, sy + 12.0, sw - 24.0, sh - 24.0);
+                                    let _ = cr.stroke();
+
+                                    cr.set_source_rgba(0.50, 0.54, 0.62, 0.75);
+                                    cr.set_font_size(12.0);
+                                    let label = format!(
+                                        "PDF Slide {} ({:.0} × {:.0} pt)",
+                                        page_index + 1,
+                                        original_width,
+                                        original_height
+                                    );
+                                    cr.move_to(sx + 24.0, sy + 40.0);
+                                    let _ = cr.show_text(&label);
+
+                                    if !path.exists() {
+                                        cr.set_source_rgba(0.95, 0.35, 0.35, 0.85);
+                                        cr.set_font_size(11.0);
+                                        cr.move_to(sx + 24.0, sy + 62.0);
+                                        let warn = format!("File non trovato: {}", source_path);
+                                        let _ = cr.show_text(&warn);
+                                    }
+                                }
+                            }
                         }
 
-                        let mut gy = sy + grid_px;
-                        while gy < sy + sh {
-                            cr.move_to(sx, gy);
-                            cr.line_to(sx + sw, gy);
-                            gy += grid_px;
+                        // Tratti della pagina
+                        let _ = cr.save();
+                        cr.translate(vp.offset_x, vp.offset_y);
+                        cr.scale(vp.zoom, vp.zoom);
+
+                        for item in &page.items {
+                            let ItemKind::Stroke(stroke) = &item.kind;
+                            let is_selected_drag = st.selection.is_dragging
+                                && st.selection.selected_ids.contains(&item.id);
+                            if is_selected_drag {
+                                let _ = cr.save();
+                                cr.translate(
+                                    st.selection.drag_offset.0,
+                                    st.selection.drag_offset.1,
+                                );
+                                Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                let _ = cr.restore();
+                            } else {
+                                Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                            }
                         }
-                        let _ = cr.stroke();
+                        let _ = cr.restore();
+
+                        let _ = cr.restore(); // Fine clip pagina
+
+                        if page.index + 1 < st.document.pages.len() {
+                            cr.set_source_rgba(0.50, 0.54, 0.62, 0.70);
+                            cr.set_font_size(11.0);
+                            let label = format!("— Pagina {} —", page.index + 1);
+                            cr.move_to(sx + (sw / 2.0) - 40.0, sy + sh + 20.0);
+                            let _ = cr.show_text(&label);
+                        }
                     }
                 }
+                DocumentFormat::Whiteboard => {
+                    // Rendering procedurale della Lavagna Infinita
+                    let spec = dynamic_grid_spec(vp.zoom);
+                    let bg = st
+                        .document
+                        .pages
+                        .first()
+                        .map(|p| &p.background)
+                        .unwrap_or(&PageBackground::Grid { grid_size: 14.17 });
 
-                // Disegno di tutti gli elementi della pagina con matrice di trasformazione Viewport
-                let _ = cr.save();
-                cr.translate(vp.offset_x, vp.offset_y);
-                cr.scale(vp.zoom, vp.zoom);
+                    Self::draw_whiteboard_background(
+                        cr,
+                        width as f64,
+                        height as f64,
+                        &vp,
+                        spec,
+                        bg,
+                        is_dark,
+                    );
 
-                for item in &page.items {
-                    let ItemKind::Stroke(stroke) = &item.kind;
-                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                }
-                let _ = cr.restore();
+                    // Rendering vettoriale dei tratti su tutta la superficie senza clipping
+                    let _ = cr.save();
+                    cr.translate(vp.offset_x, vp.offset_y);
+                    cr.scale(vp.zoom, vp.zoom);
 
-                let _ = cr.restore(); // Fine clip pagina
+                    let vis_rect = uninote_core::coordinates::Rect2D::new(
+                        -vp.offset_x / vp.zoom,
+                        -vp.offset_y / vp.zoom,
+                        width as f64 / vp.zoom,
+                        height as f64 / vp.zoom,
+                    );
 
-                if page.index + 1 < st.document.pages.len() {
-                    cr.set_source_rgba(0.50, 0.54, 0.62, 0.70);
-                    cr.set_font_size(11.0);
-                    let label = format!("— Pagina {} —", page.index + 1);
-                    cr.move_to(sx + (sw / 2.0) - 40.0, sy + sh + 20.0);
-                    let _ = cr.show_text(&label);
+                    for page in &st.document.pages {
+                        for item in &page.items {
+                            let ItemKind::Stroke(stroke) = &item.kind;
+                            if let Some(bbox) = stroke.bounding_box() {
+                                let stroke_rect = uninote_core::coordinates::Rect2D::new(
+                                    bbox.min_x,
+                                    bbox.min_y,
+                                    bbox.max_x - bbox.min_x,
+                                    bbox.max_y - bbox.min_y,
+                                );
+                                if !vis_rect.intersects(&stroke_rect) {
+                                    continue;
+                                }
+                            }
+                            let is_selected_drag = st.selection.is_dragging
+                                && st.selection.selected_ids.contains(&item.id);
+                            if is_selected_drag {
+                                let _ = cr.save();
+                                cr.translate(
+                                    st.selection.drag_offset.0,
+                                    st.selection.drag_offset.1,
+                                );
+                                Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                let _ = cr.restore();
+                            } else {
+                                Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                            }
+                        }
+                    }
+                    let _ = cr.restore();
                 }
             }
 
@@ -614,6 +1111,9 @@ impl NoteCanvas {
                 Self::draw_stroke(cr, &builder.stroke, current_mode, is_dark);
                 let _ = cr.restore();
             }
+
+            // 4. Disegno overlay di selezione (Lasso trail, rubber band, bbox tratteggiato #6DD2FF con maniglia)
+            Self::draw_selection_overlay(cr, &st.selection, &vp, is_dark);
 
             // 4. Aggiornamento metriche di rendering HUD
             let render_duration = start_render.elapsed().as_micros() as u64;
@@ -784,6 +1284,32 @@ impl NoteCanvas {
 
             let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
 
+            // Gestione Strumento Selezione (Stylus Down)
+            if st.active_tool == ActiveTool::Select {
+                let hit = st
+                    .selection
+                    .hit_test_handle_or_bbox((doc_x, doc_y), 12.0 / st.viewport.zoom);
+                if hit {
+                    st.selection.is_dragging = true;
+                    st.selection.drag_start_doc = Some((doc_x, doc_y));
+                    st.selection.drag_offset = (0.0, 0.0);
+                } else {
+                    st.selection.clear();
+                    match st.selection.mode {
+                        SelectionMode::Lasso => {
+                            st.selection.active_lasso.push((doc_x, doc_y));
+                        }
+                        SelectionMode::Rectangle => {
+                            st.selection.active_rect_start = Some((doc_x, doc_y));
+                            st.selection.active_rect_current = Some((doc_x, doc_y));
+                        }
+                    }
+                }
+                drop(st);
+                area.queue_draw();
+                return;
+            }
+
             // Gestione Strumento Gomma (a schermo o tramite gomma hardware / pulsante laterale penna)
             let is_eraser_hardware = gesture
                 .device_tool()
@@ -877,6 +1403,32 @@ impl NoteCanvas {
             st.last_stylus_time = Some(now);
 
             let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
+
+            // Gestione Strumento Selezione (Stylus Motion)
+            if st.active_tool == ActiveTool::Select {
+                if st.selection.is_dragging {
+                    if let Some(start) = st.selection.drag_start_doc {
+                        st.selection.drag_offset = (doc_x - start.0, doc_y - start.1);
+                    }
+                    drop(st_guard);
+                    area.queue_draw();
+                    return;
+                } else if st.selection.is_selecting() {
+                    match st.selection.mode {
+                        SelectionMode::Lasso => {
+                            st.selection.active_lasso.push((doc_x, doc_y));
+                        }
+                        SelectionMode::Rectangle => {
+                            st.selection.active_rect_current = Some((doc_x, doc_y));
+                        }
+                    }
+                    drop(st_guard);
+                    area.queue_draw();
+                    return;
+                }
+                drop(st_guard);
+                return;
+            }
 
             // Gestione Strumento Gomma (a schermo o tramite gomma hardware / pulsante laterale penna)
             let is_eraser_hardware = gesture
@@ -1039,6 +1591,44 @@ impl NoteCanvas {
 
             let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
 
+            // Gestione Strumento Selezione (Stylus Up)
+            if st.active_tool == ActiveTool::Select {
+                if st.selection.is_dragging {
+                    let (dx, dy) = st.selection.drag_offset;
+                    st.selection.is_dragging = false;
+                    st.selection.drag_start_doc = None;
+                    st.selection.drag_offset = (0.0, 0.0);
+
+                    if (dx.abs() > 0.001 || dy.abs() > 0.001)
+                        && !st.selection.selected_ids.is_empty()
+                    {
+                        if let Some(page_idx) = st.selection.page_index {
+                            if let Some(page) = st.document.pages.get(page_idx) {
+                                let page_id = page.id;
+                                let item_ids = st.selection.selected_ids.clone();
+                                let cmd = DocCommand::MoveItems {
+                                    page_id,
+                                    item_ids,
+                                    delta_x: dx,
+                                    delta_y: dy,
+                                };
+                                let st = &mut *st;
+                                st.history.execute(cmd, &mut st.document);
+                                st.persist_changes();
+                                if let Some(bbox) = st.selection.bbox.as_mut() {
+                                    *bbox = bbox.translate(dx, dy);
+                                }
+                            }
+                        }
+                    }
+                } else if st.selection.is_selecting() {
+                    Self::finalize_selection_gesture(&mut st);
+                }
+                drop(st);
+                area.queue_draw();
+                return;
+            }
+
             let sample = InputSample::new(
                 (doc_x, doc_y),
                 pressure,
@@ -1152,6 +1742,32 @@ impl NoteCanvas {
                 let (doc_x, doc_y) = st.viewport.screen_to_document((start_x, start_y));
                 let now_ns = app_start.elapsed().as_nanos() as u64;
 
+                // Gestione Strumento Selezione (Mouse Drag Begin)
+                if st.active_tool == ActiveTool::Select {
+                    let hit = st
+                        .selection
+                        .hit_test_handle_or_bbox((doc_x, doc_y), 12.0 / st.viewport.zoom);
+                    if hit {
+                        st.selection.is_dragging = true;
+                        st.selection.drag_start_doc = Some((doc_x, doc_y));
+                        st.selection.drag_offset = (0.0, 0.0);
+                    } else {
+                        st.selection.clear();
+                        match st.selection.mode {
+                            SelectionMode::Lasso => {
+                                st.selection.active_lasso.push((doc_x, doc_y));
+                            }
+                            SelectionMode::Rectangle => {
+                                st.selection.active_rect_start = Some((doc_x, doc_y));
+                                st.selection.active_rect_current = Some((doc_x, doc_y));
+                            }
+                        }
+                    }
+                    drop(st);
+                    area.queue_draw();
+                    return;
+                }
+
                 if st.active_tool == ActiveTool::Eraser {
                     let radius = 12.0 / st.viewport.zoom;
                     Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
@@ -1235,6 +1851,32 @@ impl NoteCanvas {
                 let (doc_x, doc_y) = st.viewport.screen_to_document((cur_screen_x, cur_screen_y));
                 let now_ns = app_start.elapsed().as_nanos() as u64;
 
+                // Gestione Strumento Selezione (Mouse Drag Update)
+                if st.active_tool == ActiveTool::Select {
+                    if st.selection.is_dragging {
+                        if let Some(start) = st.selection.drag_start_doc {
+                            st.selection.drag_offset = (doc_x - start.0, doc_y - start.1);
+                        }
+                        drop(st_guard);
+                        area.queue_draw();
+                        return;
+                    } else if st.selection.is_selecting() {
+                        match st.selection.mode {
+                            SelectionMode::Lasso => {
+                                st.selection.active_lasso.push((doc_x, doc_y));
+                            }
+                            SelectionMode::Rectangle => {
+                                st.selection.active_rect_current = Some((doc_x, doc_y));
+                            }
+                        }
+                        drop(st_guard);
+                        area.queue_draw();
+                        return;
+                    }
+                    drop(st_guard);
+                    return;
+                }
+
                 if st.active_tool == ActiveTool::Eraser {
                     let radius = 12.0 / st.viewport.zoom;
                     Self::erase_strokes_at(st, (doc_x, doc_y), radius);
@@ -1292,6 +1934,44 @@ impl NoteCanvas {
                 let cur_y = start_y + offset_y;
                 let (doc_x, doc_y) = st.viewport.screen_to_document((cur_x, cur_y));
                 let now_ns = app_start.elapsed().as_nanos() as u64;
+
+                // Gestione Strumento Selezione (Mouse Drag End)
+                if st.active_tool == ActiveTool::Select {
+                    if st.selection.is_dragging {
+                        let (dx, dy) = st.selection.drag_offset;
+                        st.selection.is_dragging = false;
+                        st.selection.drag_start_doc = None;
+                        st.selection.drag_offset = (0.0, 0.0);
+
+                        if (dx.abs() > 0.001 || dy.abs() > 0.001)
+                            && !st.selection.selected_ids.is_empty()
+                        {
+                            if let Some(page_idx) = st.selection.page_index {
+                                if let Some(page) = st.document.pages.get(page_idx) {
+                                    let page_id = page.id;
+                                    let item_ids = st.selection.selected_ids.clone();
+                                    let cmd = DocCommand::MoveItems {
+                                        page_id,
+                                        item_ids,
+                                        delta_x: dx,
+                                        delta_y: dy,
+                                    };
+                                    let st = &mut *st;
+                                    st.history.execute(cmd, &mut st.document);
+                                    st.persist_changes();
+                                    if let Some(bbox) = st.selection.bbox.as_mut() {
+                                        *bbox = bbox.translate(dx, dy);
+                                    }
+                                }
+                            }
+                        }
+                    } else if st.selection.is_selecting() {
+                        Self::finalize_selection_gesture(&mut st);
+                    }
+                    drop(st);
+                    area.queue_draw();
+                    return;
+                }
 
                 if st.active_tool == ActiveTool::Eraser {
                     let radius = 12.0 / st.viewport.zoom;
@@ -1446,7 +2126,11 @@ impl NoteCanvas {
             return;
         }
 
-        let page_idx = Viewport::find_page_index_at_y(doc_pt.1, st.document.pages.len());
+        let page_idx = if st.document.format == DocumentFormat::Whiteboard {
+            0
+        } else {
+            Viewport::find_page_index_at_y(doc_pt.1, st.document.pages.len())
+        };
         if let Some(page) = st.document.pages.get_mut(page_idx) {
             let page_id = page.id;
             let mut erased = Vec::new();
@@ -1488,12 +2172,462 @@ impl NoteCanvas {
         }
 
         let first_pt = &stroke.points[0];
-        let page_idx = Viewport::find_page_index_at_y(first_pt.y, st.document.pages.len());
+        let page_idx = if st.document.format == DocumentFormat::Whiteboard {
+            0
+        } else {
+            st.document.find_page_index_at_y(first_pt.y).unwrap_or(0)
+        };
         let page_id = st.document.pages[page_idx].id;
 
         st.history
             .execute(DocCommand::AddStroke { page_id, stroke }, &mut st.document);
         st.persist_changes();
+    }
+
+    fn draw_whiteboard_background(
+        cr: &gtk4::cairo::Context,
+        width: f64,
+        height: f64,
+        vp: &Viewport,
+        spec: DynamicGridSpec,
+        bg: &PageBackground,
+        is_dark: bool,
+    ) {
+        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+            return;
+        }
+
+        // 1. Desktop background flood fill
+        if is_dark {
+            cr.set_source_rgb(0.039, 0.082, 0.102); // #0A151A Dark OLED
+        } else {
+            cr.set_source_rgb(0.975, 0.978, 0.980); // #F8F9FA Natural Crisp White
+        }
+        let _ = cr.paint();
+
+        // Palette cromatiche DMS per la griglia
+        let (grid_r, grid_g, grid_b) = if is_dark {
+            (0.475, 0.851, 0.647) // #79D8A5 Verde menta DMS
+        } else {
+            (0.350, 0.520, 0.650) // Ciano-ardesia soft DMS
+        };
+
+        let doc_left = -vp.offset_x / vp.zoom;
+        let doc_top = -vp.offset_y / vp.zoom;
+        let doc_right = (width - vp.offset_x) / vp.zoom;
+        let doc_bottom = (height - vp.offset_y) / vp.zoom;
+
+        let start_col = (doc_left / spec.step_pt).floor() as i64;
+        let end_col = (doc_right / spec.step_pt).ceil() as i64;
+        let start_row = (doc_top / spec.step_pt).floor() as i64;
+        let end_row = (doc_bottom / spec.step_pt).ceil() as i64;
+
+        match bg {
+            PageBackground::Blank | PageBackground::PdfPage { .. } => {
+                // Matrice di punti procedurali discreti con fading allo zoom
+                cr.set_source_rgba(grid_r, grid_g, grid_b, spec.alpha * 0.7);
+                let dot_radius = if is_dark { 1.1 } else { 1.2 };
+                for col in start_col..=end_col {
+                    let sx = (col as f64 * spec.step_pt) * vp.zoom + vp.offset_x;
+                    for row in start_row..=end_row {
+                        let sy = (row as f64 * spec.step_pt) * vp.zoom + vp.offset_y;
+                        cr.arc(sx, sy, dot_radius, 0.0, 2.0 * std::f64::consts::PI);
+                    }
+                }
+                let _ = cr.fill();
+            }
+            PageBackground::Grid { .. } => {
+                // Linee di griglia minori
+                cr.set_source_rgba(grid_r, grid_g, grid_b, spec.alpha * 0.45);
+                cr.set_line_width(0.7);
+
+                for col in start_col..=end_col {
+                    let sx = (col as f64 * spec.step_pt) * vp.zoom + vp.offset_x;
+                    cr.move_to(sx, 0.0);
+                    cr.line_to(sx, height);
+                }
+                for row in start_row..=end_row {
+                    let sy = (row as f64 * spec.step_pt) * vp.zoom + vp.offset_y;
+                    cr.move_to(0.0, sy);
+                    cr.line_to(width, sy);
+                }
+                let _ = cr.stroke();
+
+                // Linee di griglia maggiori (major_step_pt)
+                let major_step = spec.major_step_pt.max(spec.step_pt);
+                let major_start_col = (doc_left / major_step).floor() as i64;
+                let major_end_col = (doc_right / major_step).ceil() as i64;
+                let major_start_row = (doc_top / major_step).floor() as i64;
+                let major_end_row = (doc_bottom / major_step).ceil() as i64;
+
+                cr.set_source_rgba(grid_r, grid_g, grid_b, (spec.alpha * 0.9).min(0.50));
+                cr.set_line_width(1.0);
+
+                for col in major_start_col..=major_end_col {
+                    let sx = (col as f64 * major_step) * vp.zoom + vp.offset_x;
+                    cr.move_to(sx, 0.0);
+                    cr.line_to(sx, height);
+                }
+                for row in major_start_row..=major_end_row {
+                    let sy = (row as f64 * major_step) * vp.zoom + vp.offset_y;
+                    cr.move_to(0.0, sy);
+                    cr.line_to(width, sy);
+                }
+                let _ = cr.stroke();
+
+                // Assi cartesiani principali di origine X = 0 e Y = 0 (se visibili a schermo)
+                let origin_x = vp.offset_x;
+                let origin_y = vp.offset_y;
+
+                if origin_x >= 0.0 && origin_x <= width {
+                    if is_dark {
+                        cr.set_source_rgba(0.427, 0.824, 1.0, 0.45); // Ciano elettrico DMS per asse Y
+                    } else {
+                        cr.set_source_rgba(0.20, 0.45, 0.70, 0.45);
+                    }
+                    cr.set_line_width(1.2);
+                    cr.move_to(origin_x, 0.0);
+                    cr.line_to(origin_x, height);
+                    let _ = cr.stroke();
+                }
+
+                if origin_y >= 0.0 && origin_y <= height {
+                    if is_dark {
+                        cr.set_source_rgba(0.427, 0.824, 1.0, 0.45); // Ciano elettrico DMS per asse X
+                    } else {
+                        cr.set_source_rgba(0.20, 0.45, 0.70, 0.45);
+                    }
+                    cr.set_line_width(1.2);
+                    cr.move_to(0.0, origin_y);
+                    cr.line_to(width, origin_y);
+                    let _ = cr.stroke();
+                }
+            }
+            PageBackground::Ruled { line_spacing, .. } => {
+                let spacing = if *line_spacing > 5.0 {
+                    *line_spacing
+                } else {
+                    spec.step_pt
+                };
+                let r_start = (doc_top / spacing).floor() as i64;
+                let r_end = (doc_bottom / spacing).ceil() as i64;
+
+                cr.set_source_rgba(grid_r, grid_g, grid_b, spec.alpha * 0.55);
+                cr.set_line_width(0.8);
+
+                for row in r_start..=r_end {
+                    let sy = (row as f64 * spacing) * vp.zoom + vp.offset_y;
+                    cr.move_to(0.0, sy);
+                    cr.line_to(width, sy);
+                }
+                let _ = cr.stroke();
+
+                // Margine verticale di riferimento all'asse X = 0 (se visibile)
+                let origin_x = vp.offset_x;
+                if origin_x >= 0.0 && origin_x <= width {
+                    if is_dark {
+                        cr.set_source_rgba(1.0, 0.706, 0.670, 0.40); // Corallo DMS
+                    } else {
+                        cr.set_source_rgba(0.88, 0.35, 0.35, 0.40);
+                    }
+                    cr.set_line_width(1.0);
+                    cr.move_to(origin_x, 0.0);
+                    cr.line_to(origin_x, height);
+                    let _ = cr.stroke();
+                }
+            }
+        }
+    }
+
+    /// Conclude il gesto di selezione poligonale o rettangolare e rileva i tratti selezionati.
+    fn finalize_selection_gesture(st: &mut CanvasState) {
+        if st.document.pages.is_empty() {
+            st.selection.clear();
+            return;
+        }
+
+        match st.selection.mode {
+            SelectionMode::Lasso => {
+                let poly = std::mem::take(&mut st.selection.active_lasso);
+                if poly.len() < 3 {
+                    st.selection.clear();
+                    return;
+                }
+
+                let min_y = poly.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+                let max_y = poly.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+                let center_y = (min_y + max_y) / 2.0;
+
+                let page_idx = if st.document.format == DocumentFormat::Whiteboard {
+                    0
+                } else {
+                    Viewport::find_page_index_at_y(center_y, st.document.pages.len())
+                };
+                let page = &st.document.pages[page_idx];
+
+                let strokes: Vec<&Stroke> = page
+                    .items
+                    .iter()
+                    .map(|it| match &it.kind {
+                        ItemKind::Stroke(s) => s,
+                    })
+                    .collect();
+
+                let selected_stroke_ids =
+                    SelectionEngine::select_lasso(strokes.iter().copied(), &poly);
+                let stroke_id_set: std::collections::HashSet<u64> =
+                    selected_stroke_ids.into_iter().collect();
+
+                let mut selected_item_ids = Vec::new();
+                let mut selected_strokes = Vec::new();
+                for it in &page.items {
+                    let ItemKind::Stroke(ref s) = it.kind;
+                    if stroke_id_set.contains(&s.id) {
+                        selected_item_ids.push(it.id);
+                        selected_strokes.push(s);
+                    }
+                }
+
+                if !selected_item_ids.is_empty() {
+                    let bbox = SelectionEngine::compute_selection_bounding_box(selected_strokes);
+                    st.selection.page_index = Some(page_idx);
+                    st.selection.selected_ids = selected_item_ids;
+                    st.selection.bbox = bbox;
+                } else {
+                    st.selection.clear();
+                }
+            }
+            SelectionMode::Rectangle => {
+                let start = st.selection.active_rect_start.take();
+                let current = st.selection.active_rect_current.take();
+                let (p1, p2) = match (start, current) {
+                    (Some(a), Some(b)) => (a, b),
+                    _ => {
+                        st.selection.clear();
+                        return;
+                    }
+                };
+
+                let rect = Rect::new(p1.0, p1.1, p2.0, p2.1).normalized();
+                if rect.width() < 2.0 && rect.height() < 2.0 {
+                    st.selection.clear();
+                    return;
+                }
+
+                let center_y = (rect.min_y + rect.max_y) / 2.0;
+                let page_idx = if st.document.format == DocumentFormat::Whiteboard {
+                    0
+                } else {
+                    Viewport::find_page_index_at_y(center_y, st.document.pages.len())
+                };
+                let page = &st.document.pages[page_idx];
+
+                let strokes: Vec<&Stroke> = page
+                    .items
+                    .iter()
+                    .map(|it| match &it.kind {
+                        ItemKind::Stroke(s) => s,
+                    })
+                    .collect();
+
+                let selected_stroke_ids =
+                    SelectionEngine::select_rect(strokes.iter().copied(), rect);
+                let stroke_id_set: std::collections::HashSet<u64> =
+                    selected_stroke_ids.into_iter().collect();
+
+                let mut selected_item_ids = Vec::new();
+                let mut selected_strokes = Vec::new();
+                for it in &page.items {
+                    let ItemKind::Stroke(ref s) = it.kind;
+                    if stroke_id_set.contains(&s.id) {
+                        selected_item_ids.push(it.id);
+                        selected_strokes.push(s);
+                    }
+                }
+
+                if !selected_item_ids.is_empty() {
+                    let bbox = SelectionEngine::compute_selection_bounding_box(selected_strokes);
+                    st.selection.page_index = Some(page_idx);
+                    st.selection.selected_ids = selected_item_ids;
+                    st.selection.bbox = bbox;
+                } else {
+                    st.selection.clear();
+                }
+            }
+        }
+    }
+
+    /// Elimina in blocco gli elementi attualmente selezionati tramite DocCommand::EraseItems.
+    fn delete_selected_items(st: &mut CanvasState) -> bool {
+        if !st.selection.has_selection() {
+            return false;
+        }
+
+        let page_idx = match st.selection.page_index {
+            Some(idx) => idx,
+            None => return false,
+        };
+
+        let page = match st.document.pages.get_mut(page_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let page_id = page.id;
+        let id_set: std::collections::HashSet<ItemId> =
+            st.selection.selected_ids.iter().copied().collect();
+        let erased: Vec<uninote_core::model::Item> = page
+            .items
+            .iter()
+            .filter(|it| id_set.contains(&it.id))
+            .cloned()
+            .collect();
+
+        if !erased.is_empty() {
+            st.history.execute(
+                DocCommand::EraseItems {
+                    page_id,
+                    erased_items: erased,
+                },
+                &mut st.document,
+            );
+            st.persist_changes();
+            st.selection.clear();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Disegna l'overlay visivo della selezione (traccia lazo, rubber band, bbox tratteggiato #6DD2FF con maniglia).
+    fn draw_selection_overlay(
+        cr: &gtk4::cairo::Context,
+        selection: &SelectionState,
+        vp: &Viewport,
+        is_dark: bool,
+    ) {
+        let cyan = (0.427, 0.824, 1.0); // #6DD2FF UniNote Electric Cyan
+
+        // 1. Traccia attiva durante il disegno del gesto
+        if selection.is_selecting() {
+            match selection.mode {
+                SelectionMode::Lasso => {
+                    if selection.active_lasso.len() >= 2 {
+                        let _ = cr.save();
+                        cr.set_source_rgba(cyan.0, cyan.1, cyan.2, 0.85);
+                        cr.set_line_width(1.5);
+                        cr.set_dash(&[5.0, 4.0], 0.0);
+
+                        let first = vp.document_to_screen(selection.active_lasso[0]);
+                        cr.move_to(first.0, first.1);
+                        for &pt in &selection.active_lasso[1..] {
+                            let (sx, sy) = vp.document_to_screen(pt);
+                            cr.line_to(sx, sy);
+                        }
+                        let _ = cr.stroke_preserve();
+
+                        cr.set_source_rgba(cyan.0, cyan.1, cyan.2, 0.06);
+                        let _ = cr.fill();
+                        let _ = cr.restore();
+                    }
+                }
+                SelectionMode::Rectangle => {
+                    if let (Some(start), Some(curr)) =
+                        (selection.active_rect_start, selection.active_rect_current)
+                    {
+                        let r = Rect::new(start.0, start.1, curr.0, curr.1).normalized();
+                        let (s_min_x, s_min_y) = vp.document_to_screen((r.min_x, r.min_y));
+                        let (s_max_x, s_max_y) = vp.document_to_screen((r.max_x, r.max_y));
+                        let sw = s_max_x - s_min_x;
+                        let sh = s_max_y - s_min_y;
+
+                        let _ = cr.save();
+                        cr.set_source_rgba(cyan.0, cyan.1, cyan.2, 0.08);
+                        cr.rectangle(s_min_x, s_min_y, sw, sh);
+                        let _ = cr.fill();
+
+                        cr.set_source_rgba(cyan.0, cyan.1, cyan.2, 0.90);
+                        cr.set_line_width(1.5);
+                        cr.set_dash(&[6.0, 4.0], 0.0);
+                        cr.rectangle(s_min_x, s_min_y, sw, sh);
+                        let _ = cr.stroke();
+                        let _ = cr.restore();
+                    }
+                }
+            }
+        }
+
+        // 2. Bounding box tratteggiato #6DD2FF con maniglia centrale
+        if let Some(ref base_bbox) = selection.bbox {
+            let (dx, dy) = if selection.is_dragging {
+                selection.drag_offset
+            } else {
+                (0.0, 0.0)
+            };
+            let live_bbox = base_bbox.translate(dx, dy);
+
+            let (s_min_x, s_min_y) = vp.document_to_screen((live_bbox.min_x, live_bbox.min_y));
+            let (s_max_x, s_max_y) = vp.document_to_screen((live_bbox.max_x, live_bbox.max_y));
+            let sw = (s_max_x - s_min_x).max(1.0);
+            let sh = (s_max_y - s_min_y).max(1.0);
+
+            let _ = cr.save();
+            cr.set_source_rgba(cyan.0, cyan.1, cyan.2, 0.05);
+            cr.rectangle(s_min_x, s_min_y, sw, sh);
+            let _ = cr.fill();
+
+            cr.set_source_rgba(cyan.0, cyan.1, cyan.2, 0.95);
+            cr.set_line_width(1.8);
+            cr.set_dash(&[6.0, 4.0], 0.0);
+            cr.rectangle(s_min_x, s_min_y, sw, sh);
+            let _ = cr.stroke();
+            cr.set_dash(&[], 0.0);
+
+            // Maniglia centrale
+            let center_x = s_min_x + sw / 2.0;
+            let center_y = s_min_y + sh / 2.0;
+            let handle_radius = 8.0;
+
+            cr.set_source_rgba(0.0, 0.0, 0.0, 0.25);
+            cr.arc(
+                center_x,
+                center_y + 1.0,
+                handle_radius + 1.0,
+                0.0,
+                2.0 * std::f64::consts::PI,
+            );
+            let _ = cr.fill();
+
+            cr.set_source_rgb(cyan.0, cyan.1, cyan.2);
+            cr.arc(
+                center_x,
+                center_y,
+                handle_radius,
+                0.0,
+                2.0 * std::f64::consts::PI,
+            );
+            let _ = cr.fill();
+
+            if is_dark {
+                cr.set_source_rgb(0.039, 0.082, 0.102);
+            } else {
+                cr.set_source_rgb(1.0, 1.0, 1.0);
+            }
+            cr.set_line_width(2.0);
+            cr.arc(
+                center_x,
+                center_y,
+                handle_radius,
+                0.0,
+                2.0 * std::f64::consts::PI,
+            );
+            let _ = cr.stroke();
+
+            cr.arc(center_x, center_y, 2.5, 0.0, 2.0 * std::f64::consts::PI);
+            let _ = cr.fill();
+
+            let _ = cr.restore();
+        }
     }
 }
 

@@ -297,7 +297,7 @@ pub fn recognize_shape(stroke: &Stroke) -> Option<Stroke> {
         stroke.points.iter().map(|p| p.pressure).sum::<f64>() / stroke.points.len() as f64;
 
     // 1. Candidato Linea Retta (tratto aperto e ben teso)
-    if closure_ratio >= 0.70 && end_dist >= 15.0 {
+    if closure_ratio >= 0.60 && end_dist >= 10.0 {
         let mut max_line_dev = 0.0;
         for &p in &pts {
             let d = dist_to_line(p, p0, p_last);
@@ -305,14 +305,14 @@ pub fn recognize_shape(stroke: &Stroke) -> Option<Stroke> {
                 max_line_dev = d;
             }
         }
-        let allowed_dev = (0.10 * end_dist).max(10.0);
+        let allowed_dev = (0.14 * end_dist).max(12.0);
         if max_line_dev <= allowed_dev {
             return snap_line_orthogonal(stroke);
         }
     }
 
     // Se il tracciato non è chiuso, non può essere un poligono o ellisse
-    let is_closed = end_dist <= 35.0 || (end_dist <= 0.25 * diag && closure_ratio <= 0.35);
+    let is_closed = end_dist <= 45.0 || (end_dist <= 0.32 * diag && closure_ratio <= 0.40);
     if !is_closed {
         return None;
     }
@@ -340,9 +340,9 @@ pub fn recognize_shape(stroke: &Stroke) -> Option<Stroke> {
         .map(|r| (r - mean_r).abs() / mean_r)
         .fold(0.0_f64, f64::max);
 
-    // Cerchio: CV <= 0.14, aspect ratio <= 1.25 e deviazione radiale massima <= 0.18
+    // Cerchio: CV <= 0.16, aspect ratio <= 1.28 e deviazione radiale massima <= 0.20
     // (un quadrato ha max deviazione > 0.23 sui vertici)
-    if cv_r <= 0.14 && aspect_ratio <= 1.25 && max_r_dev <= 0.18 {
+    if cv_r <= 0.16 && aspect_ratio <= 1.28 && max_r_dev <= 0.20 {
         let radius = (w + h) / 4.0;
         let circle_points = synthesize_ellipse(cx, cy, radius, radius, 0.0, 48);
         let synthesized =
@@ -350,8 +350,8 @@ pub fn recognize_shape(stroke: &Stroke) -> Option<Stroke> {
         return Some(synthesized);
     }
 
-    // Ellisse generale: aspect ratio <= 4.0, CV moderato o fit su assi ruotati
-    if aspect_ratio <= 4.0 && cv_r <= 0.32 {
+    // Ellisse generale: aspect ratio <= 4.2, CV moderato o fit su assi ruotati
+    if aspect_ratio <= 4.2 && cv_r <= 0.35 {
         // Matrice di covarianza per determinare orientamento ed assi
         let n = pts.len() as f64;
         let cov_xx = pts.iter().map(|p| (p.x - cx).powi(2)).sum::<f64>() / n;
@@ -406,7 +406,7 @@ pub fn recognize_shape(stroke: &Stroke) -> Option<Stroke> {
             let mean_rel_err = total_rel_err / n;
 
             // Su un rettangolo, max_rel_err supera 0.40 sui vertici
-            if mean_rel_err <= 0.14 && max_rel_err <= 0.24 {
+            if mean_rel_err <= 0.16 && max_rel_err <= 0.26 {
                 let ellipse_points = synthesize_ellipse(cx, cy, semi_a, semi_b, angle, 48);
                 let synthesized =
                     create_stroke_from_points(stroke, &ellipse_points, avg_width, avg_pressure);
@@ -416,7 +416,7 @@ pub fn recognize_shape(stroke: &Stroke) -> Option<Stroke> {
     }
 
     // 3. Prova riconoscimento Poligoni con RDP (Rettangolo e Triangolo)
-    let epsilons = [0.035 * diag, 0.050 * diag];
+    let epsilons = [0.030 * diag, 0.045 * diag, 0.060 * diag];
 
     for &eps in &epsilons {
         let verts = rdp_closed(&pts, eps);
@@ -441,7 +441,7 @@ pub fn recognize_shape(stroke: &Stroke) -> Option<Stroke> {
             if right_angles_ok {
                 // Verifica aderenza: i punti del tratto devono cadere vicini ai bordi
                 let mean_dev = mean_dist_to_polygon(&pts, &verts);
-                let allowed_dev = (0.12 * w.min(h)).max(10.0);
+                let allowed_dev = (0.15 * w.min(h)).max(12.0);
                 if mean_dev <= allowed_dev {
                     // Snap opzionale agli assi ortogonali se entro 12°
                     let edge0_dx = verts[1].x - verts[0].x;
@@ -453,17 +453,14 @@ pub fn recognize_shape(stroke: &Stroke) -> Option<Stroke> {
                         || (PI - edge_angle.abs()).abs() <= snap_tol
                         || (edge_angle.abs() - std::f64::consts::FRAC_PI_2).abs() <= snap_tol;
 
-                    let rect_points = if is_axis_aligned {
-                        vec![
-                            Point2D::new(min_x, min_y),
-                            Point2D::new(max_x, min_y),
-                            Point2D::new(max_x, max_y),
-                            Point2D::new(min_x, max_y),
-                            Point2D::new(min_x, min_y),
-                        ]
-                    } else {
-                        vec![verts[0], verts[1], verts[2], verts[3], verts[0]]
-                    };
+                    let rect_points = synthesize_perfect_rectangle(
+                        &verts,
+                        min_x,
+                        min_y,
+                        max_x,
+                        max_y,
+                        is_axis_aligned,
+                    );
 
                     let synthesized =
                         create_stroke_from_points(stroke, &rect_points, avg_width, avg_pressure);
@@ -499,7 +496,7 @@ pub fn recognize_shape(stroke: &Stroke) -> Option<Stroke> {
 
             if sharp_corners_ok && area >= 0.05 * bb_area && bb_area > 20.0 {
                 let mean_dev = mean_dist_to_polygon(&pts, &verts);
-                let allowed_dev = (0.14 * w.min(h)).max(12.0);
+                let allowed_dev = (0.16 * w.min(h)).max(14.0);
                 if mean_dev <= allowed_dev {
                     let tri_points = vec![verts[0], verts[1], verts[2], verts[0]];
                     let synthesized =
@@ -562,4 +559,87 @@ fn create_stroke_from_points(
         })
         .collect();
     new_stroke
+}
+
+/// Sintetizza un rettangolo matematicamente perfetto al 100% (4 angoli a 90° esatti, lati opposti paralleli e identici).
+/// Se quasi allineato agli assi, snappa all'AABB ortogonale; se ruotato, sintetizza un OBB perfetto.
+fn synthesize_perfect_rectangle(
+    verts: &[Point2D],
+    min_x: f64,
+    min_y: f64,
+    max_x: f64,
+    max_y: f64,
+    is_axis_aligned: bool,
+) -> Vec<Point2D> {
+    if is_axis_aligned || verts.len() < 4 {
+        return vec![
+            Point2D::new(min_x, min_y),
+            Point2D::new(max_x, min_y),
+            Point2D::new(max_x, max_y),
+            Point2D::new(min_x, max_y),
+            Point2D::new(min_x, min_y),
+        ];
+    }
+
+    // Centroide dei 4 vertici
+    let cx = (verts[0].x + verts[1].x + verts[2].x + verts[3].x) / 4.0;
+    let cy = (verts[0].y + verts[1].y + verts[2].y + verts[3].y) / 4.0;
+    let center = Point2D::new(cx, cy);
+
+    // Vettore per il primo asse (lati opposti 0->1 e 3->2)
+    let u1x = (verts[1].x - verts[0].x) + (verts[2].x - verts[3].x);
+    let u1y = (verts[1].y - verts[0].y) + (verts[2].y - verts[3].y);
+    let len_u = (u1x * u1x + u1y * u1y).sqrt();
+
+    // Vettore per il secondo asse (lati opposti 1->2 e 0->3)
+    let v1x = (verts[2].x - verts[1].x) + (verts[3].x - verts[0].x);
+    let v1y = (verts[2].y - verts[1].y) + (verts[3].y - verts[0].y);
+    let len_v = (v1x * v1x + v1y * v1y).sqrt();
+
+    if len_u < 1e-4 || len_v < 1e-4 {
+        return vec![
+            Point2D::new(min_x, min_y),
+            Point2D::new(max_x, min_y),
+            Point2D::new(max_x, max_y),
+            Point2D::new(min_x, max_y),
+            Point2D::new(min_x, min_y),
+        ];
+    }
+
+    // Direzione unitaria per u
+    let angle_u = u1y.atan2(u1x);
+    let ux = angle_u.cos();
+    let uy = angle_u.sin();
+
+    // Vettore unitario ortogonale per v (ruotato di 90° esatti: (-uy, ux))
+    let mut vx = -uy;
+    let mut vy = ux;
+
+    // Preserva il verso relativo a v1
+    if v1x * vx + v1y * vy < 0.0 {
+        vx = -vx;
+        vy = -vy;
+    }
+
+    let half_w = len_u / 4.0;
+    let half_h = len_v / 4.0;
+
+    let p0 = Point2D::new(
+        center.x - half_w * ux - half_h * vx,
+        center.y - half_w * uy - half_h * vy,
+    );
+    let p1 = Point2D::new(
+        center.x + half_w * ux - half_h * vx,
+        center.y + half_w * uy - half_h * vy,
+    );
+    let p2 = Point2D::new(
+        center.x + half_w * ux + half_h * vx,
+        center.y + half_w * uy + half_h * vy,
+    );
+    let p3 = Point2D::new(
+        center.x - half_w * ux + half_h * vx,
+        center.y - half_w * uy + half_h * vy,
+    );
+
+    vec![p0, p1, p2, p3, p0]
 }

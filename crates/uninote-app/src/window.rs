@@ -16,11 +16,12 @@ use libadwaita::{Application, ApplicationWindow};
 use std::cell::{Cell, RefCell};
 use std::f64::consts::PI;
 use std::rc::Rc;
-use uninote_core::PageBackground;
+use uninote_core::{DocumentFormat, PageBackground};
 use uninote_stroke::{PipelineMode, TouchMode};
 
 pub struct UniNoteWindow {
     window: ApplicationWindow,
+    canvas: Rc<NoteCanvas>,
 }
 
 impl UniNoteWindow {
@@ -98,7 +99,7 @@ impl UniNoteWindow {
         badge_box.append(&dot_label);
 
         let ver_label = Label::builder()
-            .label("v0.1.0")
+            .label(concat!("v", env!("CARGO_PKG_VERSION")))
             .valign(Align::Center)
             .css_classes(["brand-ver"])
             .build();
@@ -297,7 +298,7 @@ impl UniNoteWindow {
         island_box.append(&sep2);
 
         // --- Gruppo Strumenti di Disegno ---
-        let tools: [(IconKind, ActiveTool, &str); 6] = [
+        let tools: [(IconKind, ActiveTool, &str); 7] = [
             (IconKind::PenTool, ActiveTool::Pen, "Penna Stilografica"),
             (
                 IconKind::Eraser,
@@ -308,6 +309,11 @@ impl UniNoteWindow {
                 IconKind::Highlighter,
                 ActiveTool::Highlighter,
                 "Evidenziatore Fluido",
+            ),
+            (
+                IconKind::Select,
+                ActiveTool::Select,
+                "Selezione (Lazo / Rettangolo)",
             ),
             (
                 IconKind::Type,
@@ -335,11 +341,25 @@ impl UniNoteWindow {
             let all_tools = tool_buttons.clone();
             let btn_self = btn.clone();
             btn.connect_clicked(move |_| {
+                let is_already_active = btn_self.has_css_class("active");
                 for b in all_tools.borrow().iter() {
                     b.remove_css_class("active");
                 }
                 btn_self.add_css_class("active");
-                c_tool.set_active_tool(tool_kind);
+                if tool_kind == ActiveTool::Select && is_already_active {
+                    let cur_mode = c_tool.selection_mode();
+                    let new_mode = match cur_mode {
+                        uninote_stroke::selection::SelectionMode::Lasso => {
+                            uninote_stroke::selection::SelectionMode::Rectangle
+                        }
+                        uninote_stroke::selection::SelectionMode::Rectangle => {
+                            uninote_stroke::selection::SelectionMode::Lasso
+                        }
+                    };
+                    c_tool.set_selection_mode(new_mode);
+                } else {
+                    c_tool.set_active_tool(tool_kind);
+                }
             });
 
             island_box.append(&btn);
@@ -600,10 +620,10 @@ impl UniNoteWindow {
         });
         export_box.append(&card_portable);
 
-        // Documento PDF (.pdf) - In arrivo
+        // Documento PDF (.pdf) - Attivo
         let card_pdf = Button::builder()
-            .css_classes(["dms-action-card", "disabled"])
-            .tooltip_text("Esportatore PDF in fase di sviluppo")
+            .css_classes(["dms-action-card"])
+            .tooltip_text("Esporta intero quaderno in formato PDF vettoriale ad alta definizione")
             .build();
         let pdf_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
@@ -628,7 +648,7 @@ impl UniNoteWindow {
             .css_classes(["dms-card-title"])
             .build();
         let pdf_sub = Label::builder()
-            .label("Esporta intero quaderno in formato PDF")
+            .label("Esporta intero quaderno in vettoriale per stampa e condivisione")
             .xalign(0.0)
             .css_classes(["dms-card-subtitle"])
             .build();
@@ -637,12 +657,54 @@ impl UniNoteWindow {
         pdf_box.append(&pdf_text_box);
 
         let pdf_badge = Label::builder()
-            .label("In arrivo")
+            .label(".pdf")
             .valign(Align::Center)
-            .css_classes(["dms-chip-coming-soon"])
+            .css_classes(["dms-shortcut-badge"])
             .build();
         pdf_box.append(&pdf_badge);
         card_pdf.set_child(Some(&pdf_box));
+
+        let c_pdf = canvas.clone();
+        let win_pdf = window.clone();
+        let exp_pop_ref_pdf = export_popover.clone();
+        card_pdf.connect_clicked(move |_| {
+            exp_pop_ref_pdf.popdown();
+            let doc_title = c_pdf.state().borrow().document.title.clone();
+            let initial_file = if doc_title.trim().is_empty() {
+                "quaderno.pdf".to_string()
+            } else {
+                format!("{}.pdf", doc_title)
+            };
+
+            let dialog = FileDialog::builder()
+                .title("Esporta Documento PDF")
+                .initial_name(&initial_file)
+                .modal(true)
+                .build();
+
+            let filter = gtk4::FileFilter::new();
+            filter.set_name(Some("Documento PDF (*.pdf)"));
+            filter.add_pattern("*.pdf");
+            filter.add_mime_type("application/pdf");
+            let filters = gio::ListStore::new::<gtk4::FileFilter>();
+            filters.append(&filter);
+            dialog.set_filters(Some(&filters));
+
+            let c_ref = c_pdf.clone();
+            dialog.save(Some(&win_pdf), gio::Cancellable::NONE, move |res| {
+                if let Ok(file) = res {
+                    if let Some(path) = file.path() {
+                        let mut export_path = path;
+                        if export_path.extension().is_none() {
+                            export_path.set_extension("pdf");
+                        }
+                        if let Err(e) = c_ref.export_pdf(&export_path) {
+                            eprintln!("Errore durante l'esportazione PDF: {}", e);
+                        }
+                    }
+                }
+            });
+        });
         export_box.append(&card_pdf);
 
         // Grafica Vettoriale SVG (.svg) - In arrivo
@@ -827,9 +889,9 @@ impl UniNoteWindow {
         settings_box.append(&dropdown_mode);
 
         settings_popover.set_child(Some(&settings_box));
-        let set_ref = settings_popover.clone();
         btn_settings.connect_clicked(move |_| {
-            set_ref.popup();
+            let settings_win = crate::settings::UniNoteSettingsWindow::new();
+            settings_win.present();
         });
         right_actions_box.append(&btn_settings);
 
@@ -864,20 +926,27 @@ impl UniNoteWindow {
 
         let gesture_drag = GestureDrag::new();
         let start_top = Rc::new(Cell::new(0.0f64));
+        let max_drag_y = Rc::new(Cell::new(72.0f64));
+
         let start_top_begin = start_top.clone();
+        let max_drag_y_begin = max_drag_y.clone();
         let dock_begin = left_dock.clone();
+        let win_begin = window.clone();
         gesture_drag.connect_drag_begin(move |_, _, _| {
-            start_top_begin.set(dock_begin.margin_top() as f64);
+            let init_y = dock_begin.margin_top() as f64;
+            start_top_begin.set(init_y);
+            let win_h = win_begin.height() as f64;
+            let dock_h = dock_begin.height() as f64;
+            let max_y = (win_h - dock_h - 60.0).max(72.0);
+            max_drag_y_begin.set(max_y);
         });
 
         let start_top_update = start_top.clone();
+        let max_drag_y_update = max_drag_y.clone();
         let dock_update = left_dock.clone();
-        let win_update = window.clone();
         gesture_drag.connect_drag_update(move |_, _, offset_y| {
             let init_y = start_top_update.get();
-            let win_h = win_update.height() as f64;
-            let dock_h = dock_update.height() as f64;
-            let max_y = (win_h - dock_h - 60.0).max(72.0);
+            let max_y = max_drag_y_update.get();
             let new_y = (init_y + offset_y).clamp(72.0, max_y);
             dock_update.set_margin_top(new_y as i32);
         });
@@ -1526,8 +1595,14 @@ impl UniNoteWindow {
         let lbl_z3 = lbl_zoom.clone();
         let click_gesture = GestureClick::new();
         click_gesture.connect_pressed(move |_, _, _, _| {
-            c_z_reset.reset_zoom();
-            lbl_z3.set_label("100%");
+            let is_wb = c_z_reset.state().borrow().document.format == DocumentFormat::Whiteboard;
+            if is_wb {
+                c_z_reset.center_content();
+            } else {
+                c_z_reset.reset_zoom();
+            }
+            let z = (c_z_reset.state().borrow().viewport.zoom * 100.0).round() as usize;
+            lbl_z3.set_label(&format!("{}%", z));
         });
         lbl_zoom.add_controller(click_gesture);
 
@@ -1555,6 +1630,7 @@ impl UniNoteWindow {
         let c_keys = canvas.clone();
         let win_keys = window.clone();
         let hud_keys = hud.clone();
+        let lbl_zoom_sync = lbl_zoom.clone();
         key_controller.connect_key_pressed(move |_ctrl, keyval, _keycode, modifier| {
             let is_ctrl = modifier.contains(gdk::ModifierType::CONTROL_MASK);
             let is_shift = modifier.contains(gdk::ModifierType::SHIFT_MASK);
@@ -1562,6 +1638,13 @@ impl UniNoteWindow {
             if keyval == gdk::Key::F12 {
                 let vis = hud_keys.widget().is_visible();
                 hud_keys.widget().set_visible(!vis);
+                return glib::Propagation::Stop;
+            }
+
+            // Cancellazione selezione con Delete o BackSpace
+            if (keyval == gdk::Key::Delete || keyval == gdk::Key::BackSpace)
+                && c_keys.delete_selected()
+            {
                 return glib::Propagation::Stop;
             }
 
@@ -1577,6 +1660,30 @@ impl UniNoteWindow {
                     }
                     gdk::Key::y | gdk::Key::Y => {
                         c_keys.redo();
+                        return glib::Propagation::Stop;
+                    }
+                    gdk::Key::_0 | gdk::Key::KP_0 => {
+                        let is_wb =
+                            c_keys.state().borrow().document.format == DocumentFormat::Whiteboard;
+                        if is_wb {
+                            c_keys.center_content();
+                        } else {
+                            c_keys.reset_zoom();
+                        }
+                        let z = (c_keys.state().borrow().viewport.zoom * 100.0).round() as usize;
+                        lbl_zoom_sync.set_label(&format!("{}%", z));
+                        return glib::Propagation::Stop;
+                    }
+                    gdk::Key::plus | gdk::Key::equal | gdk::Key::KP_Add => {
+                        c_keys.zoom_in();
+                        let z = (c_keys.state().borrow().viewport.zoom * 100.0).round() as usize;
+                        lbl_zoom_sync.set_label(&format!("{}%", z));
+                        return glib::Propagation::Stop;
+                    }
+                    gdk::Key::minus | gdk::Key::underscore | gdk::Key::KP_Subtract => {
+                        c_keys.zoom_out();
+                        let z = (c_keys.state().borrow().viewport.zoom * 100.0).round() as usize;
+                        lbl_zoom_sync.set_label(&format!("{}%", z));
                         return glib::Propagation::Stop;
                     }
                     gdk::Key::s | gdk::Key::S => {
@@ -1615,9 +1722,102 @@ impl UniNoteWindow {
         });
         window.add_controller(key_controller);
 
+        // =========================================================================
+        // 8. SINCRONIZZAZIONE DINAMICA TEMA CHIARO/SCURO DMS (libadwaita StyleManager)
+        // =========================================================================
+        let win_init = window.clone();
+        let p1_init = thick_popover.clone();
+        let p2_init = export_popover.clone();
+        let p3_init = settings_popover.clone();
+        let p4_init = grid_popover.clone();
+        let is_dark_init = libadwaita::StyleManager::default().is_dark();
+        if !is_dark_init {
+            win_init.add_css_class("light-theme");
+            p1_init.add_css_class("light-theme");
+            p2_init.add_css_class("light-theme");
+            p3_init.add_css_class("light-theme");
+            p4_init.add_css_class("light-theme");
+        }
+
+        let win_sm = window.clone();
+        let p1_sm = thick_popover.clone();
+        let p2_sm = export_popover.clone();
+        let p3_sm = settings_popover.clone();
+        let p4_sm = grid_popover.clone();
+        libadwaita::StyleManager::default().connect_dark_notify(move |sm| {
+            let is_dark = sm.is_dark();
+            if is_dark {
+                win_sm.remove_css_class("light-theme");
+                p1_sm.remove_css_class("light-theme");
+                p2_sm.remove_css_class("light-theme");
+                p3_sm.remove_css_class("light-theme");
+                p4_sm.remove_css_class("light-theme");
+            } else {
+                win_sm.add_css_class("light-theme");
+                p1_sm.add_css_class("light-theme");
+                p2_sm.add_css_class("light-theme");
+                p3_sm.add_css_class("light-theme");
+                p4_sm.add_css_class("light-theme");
+            }
+        });
+
         window.set_content(Some(&overlay));
 
-        Self { window }
+        Self { window, canvas }
+    }
+
+    pub fn canvas(&self) -> &Rc<NoteCanvas> {
+        &self.canvas
+    }
+
+    pub fn window(&self) -> &ApplicationWindow {
+        &self.window
+    }
+
+    pub fn open_file(app: &Application, path: &std::path::Path) -> Self {
+        let is_pdf = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("pdf"))
+            .unwrap_or(false);
+
+        if is_pdf {
+            match Self::create_from_pdf(app, path) {
+                Ok(win) => win,
+                Err(e) => {
+                    eprintln!(
+                        "Errore durante l'apertura del PDF {}: {}",
+                        path.display(),
+                        e
+                    );
+                    Self::new(app)
+                }
+            }
+        } else {
+            let win = Self::new(app);
+            let _ = win.canvas.open_file(path.to_path_buf());
+            win
+        }
+    }
+
+    pub fn create_document(
+        app: &Application,
+        title: &str,
+        format: uninote_core::model::DocumentFormat,
+        bg: uninote_core::model::PageBackground,
+    ) -> Self {
+        let win = Self::new(app);
+        win.canvas.create_document(title, format, bg);
+        win
+    }
+
+    pub fn create_from_pdf(
+        app: &Application,
+        pdf_path: &std::path::Path,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let win = Self::new(app);
+        win.canvas.create_from_pdf(pdf_path)?;
+        Ok(win)
     }
 
     pub fn present(&self) {

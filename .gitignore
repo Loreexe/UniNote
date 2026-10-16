@@ -1,6 +1,55 @@
-/target
+# =============================================================================
+# UniNote — Repository Hygiene & Ignore Rules (.gitignore)
+# =============================================================================
+
+# --- Rust & Cargo Build Outputs ---
+/target/
+Cargo.lock.bak
 **/*.rs.bk
+
+# --- SQLite 3 Persistence & WAL Artifacts ---
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# --- UniNote Local Runtime Sessions & Config Dumps ---
+# Note: Granular rules preserve essential project JSON assets (e.g. design/assets/lucide_paths.json)
+uninote_session*.json
+preferences.json
+
+# --- Temporary Test Artifacts & PDF Exports ---
+*.tmp
+*.temp
+test_output/
+uninote_test_*
+uninote_pdf_*.pdf
+export_*.pdf
+
+# --- Log Files ---
+*.log
+
+# --- Agent Metadata & Teamwork Coordination ---
+.agents/
+
+# --- Local Cargo Configuration ---
+.cargo/config.toml
+
+# --- Operating System & Editor Artifacts ---
 .DS_Store
-*.swp
+._*
+Thumbs.db
 *~
-*.json
+*.swp
+*.swo
+
+# --- IDE Directories ---
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# --- Whitelist / Explicit Preservation ---
+!design/assets/*.json
+!design/assets/lucide_paths.json

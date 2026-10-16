@@ -128,6 +128,46 @@ impl Rect {
     pub fn height(&self) -> f64 {
         (self.max_y - self.min_y).max(0.0)
     }
+
+    /// Restituisce una copia normalizzata del rettangolo tale che min_x <= max_x e min_y <= max_y.
+    pub fn normalized(&self) -> Self {
+        Self {
+            min_x: self.min_x.min(self.max_x),
+            min_y: self.min_y.min(self.max_y),
+            max_x: self.min_x.max(self.max_x),
+            max_y: self.min_y.max(self.max_y),
+        }
+    }
+
+    /// Verifica se un punto 2D (px, py) cade all'interno del rettangolo (inclusi i bordi).
+    pub fn contains_point(&self, px: f64, py: f64) -> bool {
+        let norm = self.normalized();
+        px >= norm.min_x && px <= norm.max_x && py >= norm.min_y && py <= norm.max_y
+    }
+
+    /// Verifica se un altro rettangolo è interamente contenuto in questo rettangolo.
+    pub fn contains_rect(&self, other: &Rect) -> bool {
+        let s = self.normalized();
+        let o = other.normalized();
+        o.min_x >= s.min_x && o.max_x <= s.max_x && o.min_y >= s.min_y && o.max_y <= s.max_y
+    }
+
+    /// Verifica se due rettangoli si intersecano o si sovrappongono.
+    pub fn intersects_rect(&self, other: &Rect) -> bool {
+        let s = self.normalized();
+        let o = other.normalized();
+        s.min_x <= o.max_x && s.max_x >= o.min_x && s.min_y <= o.max_y && s.max_y >= o.min_y
+    }
+
+    /// Trasla il rettangolo di un vettore di spostamento (dx, dy).
+    pub fn translate(&self, dx: f64, dy: f64) -> Self {
+        Self {
+            min_x: self.min_x + dx,
+            min_y: self.min_y + dy,
+            max_x: self.max_x + dx,
+            max_y: self.max_y + dy,
+        }
+    }
 }
 
 /// Stile visivo del tratto.
@@ -264,5 +304,17 @@ impl Stroke {
         }
 
         false
+    }
+
+    /// Trasla tutti i punti e campioni grezzi del tratto del delta specificato (dx, dy).
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        for p in &mut self.points {
+            p.x += dx;
+            p.y += dy;
+        }
+        for s in &mut self.raw_samples {
+            s.position.0 += dx;
+            s.position.1 += dy;
+        }
     }
 }

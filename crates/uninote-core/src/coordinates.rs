@@ -131,6 +131,46 @@ impl Viewport {
         self.offset_x = ((window_width - page_w) / 2.0).max(20.0);
     }
 
+    /// Centra e scala il viewport per inquadrare un bounding box (es. "Centra Contenuto" per Lavagna).
+    pub fn center_on_rect(&mut self, rect: Rect2D, win_w: f64, win_h: f64) {
+        if !rect.x.is_finite()
+            || !rect.y.is_finite()
+            || !rect.width.is_finite()
+            || !rect.height.is_finite()
+            || rect.width <= 0.0
+            || rect.height <= 0.0
+            || !win_w.is_finite()
+            || !win_h.is_finite()
+            || win_w <= 0.0
+            || win_h <= 0.0
+        {
+            self.offset_x = if win_w.is_finite() && win_w > 0.0 {
+                win_w / 2.0
+            } else {
+                0.0
+            };
+            self.offset_y = if win_h.is_finite() && win_h > 0.0 {
+                win_h / 2.0
+            } else {
+                0.0
+            };
+            self.zoom = 1.0;
+            return;
+        }
+
+        let padding = 60.0;
+        let avail_w = (win_w - padding * 2.0).max(100.0);
+        let avail_h = (win_h - padding * 2.0).max(100.0);
+        let scale_x = avail_w / rect.width;
+        let scale_y = avail_h / rect.height;
+        self.zoom = scale_x.min(scale_y).clamp(0.25, 3.0);
+
+        let center_x = rect.x + rect.width / 2.0;
+        let center_y = rect.y + rect.height / 2.0;
+        self.offset_x = win_w / 2.0 - center_x * self.zoom;
+        self.offset_y = win_h / 2.0 - center_y * self.zoom;
+    }
+
     /// Calcola il rettangolo globale della pagina dato il suo indice sequenziale.
     pub fn page_rect(page_index: usize) -> Rect2D {
         let top = PAGE_TOP_MARGIN_PT + (page_index as f64) * (A4_HEIGHT_PT + PAGE_GAP_PT);

@@ -17,6 +17,20 @@
 @define-color dms_text_primary #D9E4EB;
 @define-color dms_text_secondary #8E999F;
 
+/* Palette Tokens DMS — Light Theme */
+@define-color dms_surface_light #F5F7F9;
+@define-color dms_surface_container_light rgba(255, 255, 255, 0.96);
+@define-color dms_surface_container_high_light #E9ECEF;
+@define-color dms_surface_container_highest_light #DDE2E7;
+@define-color dms_outline_light #C2C6D0;
+@define-color dms_outline_variant_light #A8AFB8;
+@define-color dms_primary_light #00668B;
+@define-color dms_primary_container_light #C8E6FF;
+@define-color dms_on_primary_light #FFFFFF;
+@define-color dms_on_primary_container_light #001E2B;
+@define-color dms_text_primary_light #172126;
+@define-color dms_text_secondary_light #526068;
+
 /* Finestra principale a tutto schermo con canvas scuro */
 window.uninote-window {
     background-color: @dms_surface;
@@ -174,11 +188,6 @@ window.uninote-window {
 .dms-dock-handle-area {
     min-height: 18px;
     padding: 2px 0 6px 0;
-    cursor: grab;
-}
-
-.dms-dock-handle-area:active {
-    cursor: grabbing;
 }
 
 .dms-dock-handle {
@@ -478,4 +487,283 @@ scale.dms-pill-scale slider {
     border: 1px solid rgba(255, 180, 171, 0.3);
     border-radius: 6px;
     padding: 2px 6px;
+}
+
+/* =========================================================================
+   DMS Light Theme Variants (.light-theme)
+   ========================================================================= */
+
+window.uninote-window.light-theme {
+    background-color: @dms_surface_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-pill,
+.light-theme .dms-pill-dense {
+    background-color: @dms_surface_container_light;
+    border: 1px solid @dms_outline_light;
+    box-shadow: 0 4px 18px rgba(23, 33, 38, 0.12);
+    color: @dms_text_primary_light;
+}
+
+.light-theme .brand-title {
+    color: @dms_text_primary_light;
+    text-shadow: none;
+}
+
+.light-theme .brand-dot,
+.light-theme .brand-ver {
+    color: @dms_text_secondary_light;
+    text-shadow: none;
+}
+
+.light-theme .dms-action-btn {
+    background-color: @dms_surface_container_light;
+    border: 1px solid @dms_outline_light;
+    box-shadow: 0 4px 14px rgba(23, 33, 38, 0.10);
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-action-btn:hover {
+    background-color: @dms_surface_container_high_light;
+    border-color: @dms_outline_variant_light;
+}
+
+.light-theme .dms-action-btn:active {
+    background-color: @dms_primary_container_light;
+    color: @dms_primary_light;
+}
+
+.light-theme .dms-tool-btn {
+    color: @dms_text_secondary_light;
+}
+
+.light-theme .dms-tool-btn:hover {
+    background-color: @dms_surface_container_high_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-tool-btn.active {
+    background-color: @dms_primary_container_light;
+    color: @dms_primary_light;
+    border: 1.5px solid @dms_primary_light;
+}
+
+.light-theme .dms-tool-btn-neutral {
+    background-color: @dms_surface_container_high_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-tool-btn-neutral:hover {
+    background-color: @dms_surface_container_highest_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-thick-chip {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-thick-chip:hover {
+    background-color: @dms_surface_container_highest_light;
+    border-color: @dms_outline_variant_light;
+}
+
+.light-theme .thick-value {
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-left-dock {
+    background-color: @dms_surface_container_light;
+    border: 1px solid @dms_outline_light;
+    box-shadow: 0 4px 18px rgba(23, 33, 38, 0.12);
+}
+
+.light-theme .dms-dock-handle {
+    background-color: @dms_outline_light;
+}
+
+.light-theme .dms-dock-handle-area:hover .dms-dock-handle {
+    background-color: @dms_primary_light;
+}
+
+.light-theme .dms-pen-slot {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+}
+
+.light-theme .dms-pen-slot:hover {
+    background-color: @dms_surface_container_highest_light;
+    border-color: @dms_outline_variant_light;
+}
+
+.light-theme .dms-pen-slot.active {
+    border: 2px solid @dms_primary_light;
+    background-color: @dms_primary_light;
+    box-shadow: 0 0 10px rgba(0, 102, 139, 0.35);
+}
+
+.light-theme .dms-add-pen-btn {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_secondary_light;
+}
+
+.light-theme .dms-add-pen-btn:hover {
+    background-color: @dms_surface_container_highest_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-dock-divider {
+    background-color: @dms_outline_light;
+}
+
+.light-theme .dms-btn-add-page {
+    background-color: @dms_primary_container_light;
+    border: 1px solid @dms_primary_light;
+    color: @dms_on_primary_container_light;
+}
+
+.light-theme .dms-btn-add-page:hover {
+    background-color: #B2DAFC;
+    box-shadow: 0 0 8px rgba(0, 102, 139, 0.25);
+}
+
+.light-theme .dms-btn-grid-select {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-btn-grid-select:hover {
+    background-color: @dms_surface_container_highest_light;
+    border-color: @dms_outline_variant_light;
+}
+
+.light-theme .dms-zoom-segment {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+}
+
+.light-theme .dms-zoom-btn {
+    color: @dms_text_secondary_light;
+}
+
+.light-theme .dms-zoom-btn:hover {
+    color: @dms_text_primary_light;
+    background: rgba(0, 0, 0, 0.06);
+}
+
+.light-theme .zoom-value,
+.light-theme .dock-page-text {
+    color: @dms_text_primary_light;
+}
+
+/* Light Theme Popovers */
+popover.dms-popover.light-theme,
+.light-theme popover.dms-popover,
+.light-theme .dms-popover {
+    background-color: @dms_surface_container_light;
+    border: 1px solid @dms_outline_light;
+    box-shadow: 0 10px 28px rgba(23, 33, 38, 0.16);
+    color: @dms_text_primary_light;
+}
+
+popover.dms-popover.light-theme label,
+.light-theme popover.dms-popover label,
+.light-theme .dms-popover label {
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-popover-section-title {
+    color: @dms_text_secondary_light;
+}
+
+.light-theme .dms-stroke-preview-area {
+    background-color: @dms_surface_light;
+    border: 1px solid @dms_outline_light;
+}
+
+scale.dms-pill-scale trough {
+    background-color: @dms_surface_container_highest;
+}
+
+.light-theme scale.dms-pill-scale trough {
+    background-color: @dms_surface_container_highest_light;
+}
+
+.light-theme scale.dms-pill-scale highlight {
+    background-color: @dms_primary_light;
+}
+
+.light-theme scale.dms-pill-scale slider {
+    background-color: @dms_text_primary_light;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.light-theme .dms-preset-chip {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_secondary_light;
+}
+
+.light-theme .dms-preset-chip:hover {
+    background-color: @dms_surface_container_highest_light;
+    color: @dms_text_primary_light;
+    border-color: @dms_outline_variant_light;
+}
+
+.light-theme .dms-preset-chip.active {
+    background-color: @dms_primary_container_light;
+    color: @dms_primary_light;
+    border: 1.5px solid @dms_primary_light;
+}
+
+.light-theme .dms-paper-card {
+    background-color: @dms_surface_container_high_light;
+    border: 1.5px solid @dms_outline_light;
+}
+
+.light-theme .dms-paper-card:hover {
+    background-color: @dms_surface_container_highest_light;
+    border-color: @dms_outline_variant_light;
+}
+
+.light-theme .dms-paper-card.active {
+    border: 2px solid @dms_primary_light;
+    background-color: @dms_surface_container_highest_light;
+    box-shadow: 0 0 10px rgba(0, 102, 139, 0.25);
+}
+
+.light-theme .dms-paper-card-title {
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-action-card {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+}
+
+.light-theme .dms-action-card:hover {
+    background-color: @dms_surface_container_highest_light;
+    border-color: @dms_outline_variant_light;
+}
+
+.light-theme .dms-card-icon-box {
+    background-color: @dms_surface_container_highest_light;
+}
+
+.light-theme .dms-card-title {
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-card-subtitle {
+    color: @dms_text_secondary_light;
+}
+
+.light-theme .dms-shortcut-badge {
+    background-color: @dms_surface_container_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_secondary_light;
 }

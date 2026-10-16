@@ -14,16 +14,10 @@
 
 #![allow(dead_code, unused_variables)]
 
-#[path = "../src/hud.rs"]
-mod hud;
-
-#[path = "../src/canvas.rs"]
-mod canvas;
-
-use canvas::adapt_ink_color;
 use gtk4::cairo::{Context, Format, ImageSurface};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use uninote_app::canvas::adapt_ink_color;
 use uninote_core::coordinates::Viewport;
 use uninote_core::model::{Document, Item, ItemKind, PageBackground};
 use uninote_storage::DocumentStore;

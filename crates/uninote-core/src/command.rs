@@ -1,5 +1,6 @@
-use crate::model::{Document, Item, ItemKind, Page, PageBackground};
+use crate::model::{Document, Item, ItemId, ItemKind, Page, PageBackground};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use uninote_stroke::Stroke;
 use uuid::Uuid;
 
@@ -20,6 +21,13 @@ pub enum DocCommand {
         page_id: Uuid,
         old_bg: PageBackground,
         new_bg: PageBackground,
+    },
+    /// Spostamento relativo di uno o più elementi su una pagina.
+    MoveItems {
+        page_id: Uuid,
+        item_ids: Vec<ItemId>,
+        delta_x: f64,
+        delta_y: f64,
     },
 }
 
@@ -138,6 +146,35 @@ impl CommandHistory {
                     page.background = new_bg.clone();
                 }
             }
+            DocCommand::MoveItems {
+                page_id,
+                item_ids,
+                delta_x,
+                delta_y,
+            } => {
+                if !delta_x.is_finite() || !delta_y.is_finite() || item_ids.is_empty() {
+                    return;
+                }
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    let id_set: HashSet<ItemId> = item_ids.iter().copied().collect();
+                    for item in &mut page.items {
+                        if id_set.contains(&item.id) {
+                            match &mut item.kind {
+                                ItemKind::Stroke(stroke) => {
+                                    for p in &mut stroke.points {
+                                        p.x += delta_x;
+                                        p.y += delta_y;
+                                    }
+                                    for s in &mut stroke.raw_samples {
+                                        s.position.0 += delta_x;
+                                        s.position.1 += delta_y;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -173,6 +210,35 @@ impl CommandHistory {
             } => {
                 if let Some(page) = doc.get_page_mut(*page_id) {
                     page.background = old_bg.clone();
+                }
+            }
+            DocCommand::MoveItems {
+                page_id,
+                item_ids,
+                delta_x,
+                delta_y,
+            } => {
+                if !delta_x.is_finite() || !delta_y.is_finite() || item_ids.is_empty() {
+                    return;
+                }
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    let id_set: HashSet<ItemId> = item_ids.iter().copied().collect();
+                    for item in &mut page.items {
+                        if id_set.contains(&item.id) {
+                            match &mut item.kind {
+                                ItemKind::Stroke(stroke) => {
+                                    for p in &mut stroke.points {
+                                        p.x -= delta_x;
+                                        p.y -= delta_y;
+                                    }
+                                    for s in &mut stroke.raw_samples {
+                                        s.position.0 -= delta_x;
+                                        s.position.1 -= delta_y;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

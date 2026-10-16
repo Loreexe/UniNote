@@ -25,6 +25,7 @@ pub enum IconKind {
     Add,
     Minus,
     PenLine,
+    Select,
 }
 
 /// Crea una `DrawingArea` GTK4 che disegna l'icona vettoriale indicata con Cairo.
@@ -85,6 +86,7 @@ pub fn create_icon(kind: IconKind, size: i32, custom_color: Option<gdk::RGBA>) -
             IconKind::Add => draw_add(cr),
             IconKind::Minus => draw_minus(cr),
             IconKind::PenLine => draw_pen_line(cr),
+            IconKind::Select => draw_select(cr),
         }
 
         cr.restore().expect("cairo restore");
@@ -372,6 +374,28 @@ fn draw_minus(cr: &cairo::Context) {
     let _ = cr.stroke();
 }
 
+fn draw_select(cr: &cairo::Context) {
+    // Icona lazo di selezione (tratteggio superiore con nodo e coda)
+    let _ = cr.save();
+    cr.set_dash(&[3.5, 2.5], 0.0);
+    cr.move_to(10.0, 16.0);
+    cr.curve_to(5.0, 15.0, 4.0, 7.0, 12.0, 6.0);
+    cr.curve_to(20.0, 5.0, 21.0, 13.0, 14.0, 16.0);
+    let _ = cr.stroke();
+    let _ = cr.restore();
+
+    // Nodo dell'asola
+    cr.move_to(10.0, 16.0);
+    cr.curve_to(11.0, 18.0, 13.0, 18.0, 14.0, 16.0);
+    cr.curve_to(15.0, 14.5, 9.0, 14.5, 10.0, 16.0);
+    let _ = cr.stroke();
+
+    // Coda della fune
+    cr.move_to(12.0, 17.5);
+    cr.curve_to(12.0, 20.0, 15.0, 21.0, 18.0, 20.5);
+    let _ = cr.stroke();
+}
+
 /// Disegna il logo ufficiale UniNote: Monogramma 'U' accademico fuso con un pennino stilografico di precisione.
 fn draw_app_logo(cr: &cairo::Context, w: f64, h: f64) {
     if w <= 0.0 || h <= 0.0 {
@@ -405,20 +429,19 @@ fn draw_app_logo(cr: &cairo::Context, w: f64, h: f64) {
 
     // 2. Braccio sinistro e conca inferiore della 'U' (Bianco Ghiaccio #ECEFF4)
     cr.set_source_rgb(0.925, 0.937, 0.957);
-    cr.set_line_width(2.6);
+    cr.set_line_width(3.6);
     cr.move_to(10.5, 9.5);
     cr.line_to(10.5, 20.0);
     cr.curve_to(10.5, 25.5, 14.5, 28.5, 18.0, 28.5);
-    cr.curve_to(21.5, 28.5, 25.5, 25.5, 25.5, 20.0);
     let _ = cr.stroke();
 
     // 3. Pennino Stilografico angolato (Braccio destro della 'U' in Ciano #6DD2FF)
-    // Corpo sagomato a pennino
-    cr.move_to(25.5, 19.5);
-    cr.line_to(27.0, 14.5);
-    cr.line_to(22.5, 7.5); // Punta del pennino
-    cr.line_to(18.0, 14.5);
-    cr.line_to(19.5, 19.5);
+    // Orientato verso il centro in basso dello squircle (x=18.0, y ≈ 28.5)
+    cr.move_to(23.5, 9.5);
+    cr.line_to(27.5, 9.5);
+    cr.line_to(28.0, 17.5); // Spalla esterna del pennino
+    cr.line_to(18.0, 28.5); // Punta del pennino orientata al centro inferiore
+    cr.line_to(20.5, 19.5); // Spalla interna del pennino
     cr.close_path();
 
     cr.set_source_rgba(0.427, 0.824, 1.0, 0.25);
@@ -428,17 +451,17 @@ fn draw_app_logo(cr: &cairo::Context, w: f64, h: f64) {
     let _ = cr.stroke();
 
     // Fessura d'inchiostro (Ink Slit) e Foro di sfiato (Breather Hole)
-    cr.move_to(22.5, 7.5);
-    cr.line_to(22.5, 14.0);
+    cr.move_to(18.0, 28.5);
+    cr.line_to(23.0, 19.0);
     cr.set_line_width(1.4);
     let _ = cr.stroke();
 
-    cr.arc(22.5, 14.0, 1.2, 0.0, 2.0 * PI);
+    cr.arc(23.0, 19.0, 1.2, 0.0, 2.0 * PI);
     cr.set_source_rgb(0.925, 0.937, 0.957);
     let _ = cr.fill();
 
     // 4. Accento Verde Menta DMS (#79D9A5) all'apice del pennino
-    cr.arc(22.5, 5.2, 1.4, 0.0, 2.0 * PI);
+    cr.arc(17.2, 29.8, 1.4, 0.0, 2.0 * PI);
     cr.set_source_rgb(0.475, 0.851, 0.647);
     let _ = cr.fill();
 
