@@ -19,6 +19,7 @@ fn main() -> glib::ExitCode {
         .build();
 
     app.connect_activate(|app| {
+        gtk4::Window::set_default_icon_name(APP_ID);
         uninote_app::init_application_style();
 
         // Applica modalità tema salvata
@@ -36,60 +37,13 @@ fn main() -> glib::ExitCode {
             }
         }
 
-        let dash_win = libadwaita::ApplicationWindow::builder()
-            .application(app)
-            .title("UniNote — Hub Accademico")
-            .default_width(1180)
-            .default_height(800)
-            .css_classes(["uninote-window", "uninote-dashboard-window"])
-            .build();
-
-        let dashboard = uninote_app::dashboard::UniNoteDashboard::new();
-        dash_win.set_content(Some(dashboard.widget()));
-
-        let dash_win_open = dash_win.clone();
-        let app_open = app.clone();
-        dashboard.connect_open_document(move |path: std::path::PathBuf| {
-            let win = UniNoteWindow::open_file(&app_open, &path);
-            win.present();
-            dash_win_open.close();
-        });
-
-        let dash_win_create = dash_win.clone();
-        let app_create = app.clone();
-        dashboard.connect_create_document(move |title, format, bg| {
-            let win = UniNoteWindow::create_document(&app_create, &title, format, bg);
-            win.present();
-            dash_win_create.close();
-        });
-
-        let dash_win_import = dash_win.clone();
-        let app_import = app.clone();
-        dashboard.connect_import_pdf(move |path: std::path::PathBuf| {
-            match UniNoteWindow::create_from_pdf(&app_import, &path) {
-                Ok(win) => {
-                    win.present();
-                    dash_win_import.close();
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Errore durante l'apertura del PDF {}: {}",
-                        path.display(),
-                        e
-                    );
-                }
-            }
-        });
-
-        dashboard.connect_open_settings(move || {
-            let settings_win = uninote_app::settings::UniNoteSettingsWindow::new();
-            settings_win.present();
-        });
-
-        dash_win.present();
+        // Presenta la finestra principale persistente (la quale include dashboard.connect_import_pdf internamente)
+        let win = UniNoteWindow::new(app);
+        win.present();
     });
 
     app.connect_open(|app, files, _hint| {
+        gtk4::Window::set_default_icon_name(APP_ID);
         if let Some(file) = files.first() {
             if let Some(path) = file.path() {
                 let mut store = DashboardRecentStore::load();

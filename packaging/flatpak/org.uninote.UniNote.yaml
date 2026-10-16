@@ -1,0 +1,85 @@
+app-id: org.uninote.UniNote
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+command: uninote
+
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/uninote/cargo
+    PKG_CONFIG_PATH: /app/lib/pkgconfig:/usr/lib/pkgconfig
+    LIBRARY_PATH: /app/lib
+    LD_LIBRARY_PATH: /app/lib
+
+finish-args:
+  # Wayland display and X11 fallback for digitizer and stylus hardware events
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # Hardware GPU / Mesa DRI acceleration for Cairo and GTK4 GSK
+  - --device=dri
+  # Default notes directory access in XDG Documents
+  - --filesystem=xdg-documents/UniNote:create
+  - --filesystem=xdg-documents/UniNote
+  # Theming and portals
+  - --filesystem=xdg-config/gtk-4.0:ro
+  - --talk-name=org.freedesktop.portal.FileChooser
+  - --talk-name=org.freedesktop.portal.Settings
+  - --talk-name=org.freedesktop.portal.OpenURI
+
+modules:
+  - name: poppler
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DENABLE_UNSTABLE_API_ABI_HEADERS=OFF
+      - -DENABLE_GLIB=ON
+      - -DENABLE_CPP=OFF
+      - -DENABLE_QT5=OFF
+      - -DENABLE_QT6=OFF
+      - -DENABLE_UTILS=OFF
+      - -DENABLE_BOOST=OFF
+      - -DBUILD_GTK_TESTS=OFF
+      - -DBUILD_MANUAL_TESTS=OFF
+    sources:
+      - type: archive
+        url: https://poppler.freedesktop.org/poppler-24.08.0.tar.xz
+        sha256: 97453fbddf0c9a9eafa0ea45ac710d3d49bcf23a62e864585385d3c0b4403174
+
+  - name: uninote
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+      env:
+        CARGO_HOME: /run/build/uninote/cargo
+        CARGO_TARGET_DIR: /run/build/uninote/target
+        RUSTUP_TOOLCHAIN: stable
+    build-commands:
+      - cargo build --release --manifest-path Cargo.toml -p uninote-app
+      - install -Dm755 /run/build/uninote/target/release/uninote /app/bin/uninote
+      - install -Dm644 data/org.uninote.UniNote.desktop /app/share/applications/org.uninote.UniNote.desktop
+      - install -Dm644 data/org.uninote.UniNote.metainfo.xml /app/share/metainfo/org.uninote.UniNote.metainfo.xml
+      - install -Dm644 data/org.uninote.UniNote.xml /app/share/mime/packages/org.uninote.UniNote.xml
+      - install -Dm644 data/icons/hicolor/scalable/apps/org.uninote.UniNote.svg /app/share/icons/hicolor/scalable/apps/org.uninote.UniNote.svg
+      - install -Dm644 data/icons/hicolor/symbolic/apps/org.uninote.UniNote-symbolic.svg /app/share/icons/hicolor/symbolic/apps/org.uninote.UniNote-symbolic.svg
+      - install -Dm644 data/icons/hicolor/scalable/mimetypes/application-x-uninote.svg /app/share/icons/hicolor/scalable/mimetypes/application-x-uninote.svg
+      - |
+        for res in 16 32 48 64 128 256 512; do
+          if [ -f data/icons/hicolor/${res}x${res}/apps/org.uninote.UniNote.png ]; then
+            install -Dm644 data/icons/hicolor/${res}x${res}/apps/org.uninote.UniNote.png /app/share/icons/hicolor/${res}x${res}/apps/org.uninote.UniNote.png
+          fi
+        done
+      - |
+        for res in 48 128; do
+          if [ -f data/icons/hicolor/${res}x${res}/mimetypes/application-x-uninote.png ]; then
+            install -Dm644 data/icons/hicolor/${res}x${res}/mimetypes/application-x-uninote.png /app/share/icons/hicolor/${res}x${res}/mimetypes/application-x-uninote.png
+          fi
+        done
+      - install -Dm644 LICENSE /app/share/licenses/org.uninote.UniNote/LICENSE
+    sources:
+      - type: dir
+        path: ../../

@@ -36,61 +36,8 @@ pub fn init_application_style() {
     }
 }
 
-/// Crea o presenta la finestra Dashboard dell'applicazione UniNote.
+/// Crea o presenta la finestra principale con Dashboard dell'applicazione UniNote.
 pub fn main_open_dashboard(app: &libadwaita::Application) {
-    use gtk4::prelude::*;
-    use libadwaita::prelude::*;
-    use std::path::PathBuf;
-
-    let dash_win = libadwaita::ApplicationWindow::builder()
-        .application(app)
-        .title("UniNote — Hub Accademico")
-        .default_width(1180)
-        .default_height(800)
-        .css_classes(["uninote-window", "uninote-dashboard-window"])
-        .build();
-
-    let dashboard = UniNoteDashboard::new();
-    dash_win.set_content(Some(dashboard.widget()));
-
-    let dash_win_open = dash_win.clone();
-    let app_open = app.clone();
-    dashboard.connect_open_document(move |path: PathBuf| {
-        let win = UniNoteWindow::open_file(&app_open, &path);
-        win.present();
-        dash_win_open.close();
-    });
-
-    let dash_win_create = dash_win.clone();
-    let app_create = app.clone();
-    dashboard.connect_create_document(move |title, format, bg| {
-        let win = UniNoteWindow::create_document(&app_create, &title, format, bg);
-        win.present();
-        dash_win_create.close();
-    });
-
-    let dash_win_import = dash_win.clone();
-    let app_import = app.clone();
-    dashboard.connect_import_pdf(move |path: PathBuf| {
-        match UniNoteWindow::create_from_pdf(&app_import, &path) {
-            Ok(win) => {
-                win.present();
-                dash_win_import.close();
-            }
-            Err(e) => {
-                eprintln!(
-                    "Errore durante l'apertura del PDF {}: {}",
-                    path.display(),
-                    e
-                );
-            }
-        }
-    });
-
-    dashboard.connect_open_settings(move || {
-        let settings_win = UniNoteSettingsWindow::new();
-        settings_win.present();
-    });
-
-    dash_win.present();
+    let win = UniNoteWindow::new(app);
+    win.present();
 }

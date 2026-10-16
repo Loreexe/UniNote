@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.uninote.UniNote</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0</project_license>
+  <name>UniNote</name>
+  <summary>Academic Freehand Note-Taking and Vector PDF Annotation Suite for Linux</summary>
+  <description>
+    <p>
+      UniNote is a native, high-performance Linux desktop application engineered specifically for university STEM lectures, mathematical derivations, academic research, and engineering design. Built from the ground up in Rust, GTK 4, Libadwaita, and Cairo.
+    </p>
+    <ul>
+      <li>120Hz sub-millisecond vector inking engine with Catmull-Rom splines and cubic Bézier curves</li>
+      <li>Metric A4 notebooks and unbounded infinite whiteboard with procedural zoom grid</li>
+      <li>Non-destructive PDF slide import and typographic vector multi-page export</li>
+      <li>Spatial lasso and marquee selection with atomic undo/redo history</li>
+      <li>Crash-resilient embedded SQLite 3 WAL storage</li>
+      <li>Hardware-calibrated palm rejection and digitizer stylus handling for MPP and Wacom</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.uninote.UniNote.desktop</launchable>
+  <url type="homepage">https://github.com/UniNote/UniNote</url>
+  <url type="bugtracker">https://github.com/UniNote/UniNote/issues</url>
+  <url type="vcs-browser">https://github.com/UniNote/UniNote</url>
+  <developer id="org.uninote">
+    <name>UniNote Developers</name>
+  </developer>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/UniNote/UniNote/main/docs/screenshots/01_dashboard.png</image>
+      <caption>Academic Dashboard and recent notes hub</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/UniNote/UniNote/main/docs/screenshots/02_quaderno.png</image>
+      <caption>A4 notebook view with inking island and vector stroke rendering</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/UniNote/UniNote/main/docs/screenshots/03_lavagna_infinita.png</image>
+      <caption>Infinite whiteboard canvas with dynamic grid and lasso selection</caption>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Education</category>
+    <category>Graphics</category>
+    <category>2DGraphics</category>
+    <category>VectorGraphics</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.3.0" date="2026-10-16">
+      <description>
+        <p>Release v0.3.0: official Linux packaging support with Arch Linux (AUR) package, Flathub-compatible Flatpak bundle, desktop integration, and vector iconography.</p>
+      </description>
+    </release>
+  </releases>
+</component>

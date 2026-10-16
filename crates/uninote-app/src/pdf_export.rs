@@ -45,7 +45,10 @@ pub fn export_to_pdf(
             .map_err(|e| format!("Errore metadati titolo: {:?}", e))?;
     }
     surface
-        .set_metadata(PdfMetadata::Creator, "UniNote Academic Suite (v0.2.1)")
+        .set_metadata(
+            PdfMetadata::Creator,
+            concat!("UniNote Academic Suite (v", env!("CARGO_PKG_VERSION"), ")"),
+        )
         .map_err(|e| format!("Errore metadati creator: {:?}", e))?;
 
     // Cache locale per i documenti Poppler aperti durante l'esportazione

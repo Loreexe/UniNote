@@ -50,13 +50,17 @@ impl Default for CommandHistory {
 
 impl CommandHistory {
     pub fn new(max_depth: usize) -> Self {
+        Self::with_next_id(max_depth, 1)
+    }
+
+    pub fn with_next_id(max_depth: usize, next_id: u64) -> Self {
         Self {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             current_revision: 0,
             saved_revision: 0,
             max_depth,
-            next_item_id: 1,
+            next_item_id: next_id.max(1),
         }
     }
 

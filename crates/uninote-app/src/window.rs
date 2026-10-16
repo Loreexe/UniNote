@@ -24,6 +24,8 @@ pub struct UniNoteWindow {
     canvas: Rc<NoteCanvas>,
     notebook_dock_box: GtkBox,
     whiteboard_dock_box: GtkBox,
+    stack: gtk4::Stack,
+    dashboard: Rc<crate::dashboard::UniNoteDashboard>,
 }
 
 impl UniNoteWindow {
@@ -42,7 +44,7 @@ impl UniNoteWindow {
         // Finestra principale senza decorazioni rigide di sistema
         let window = ApplicationWindow::builder()
             .application(app)
-            .title("UniNote — Quaderno Universitario")
+            .title("UniNote — Hub Accademico")
             .default_width(1320)
             .default_height(860)
             .css_classes(["uninote-window"])
@@ -53,6 +55,12 @@ impl UniNoteWindow {
 
         let canvas = Rc::new(NoteCanvas::new(hud.clone()));
         let prefs = Rc::new(RefCell::new(AppPreferences::load()));
+
+        let dashboard = Rc::new(crate::dashboard::UniNoteDashboard::new());
+        let stack = gtk4::Stack::builder()
+            .transition_type(gtk4::StackTransitionType::Crossfade)
+            .transition_duration(150)
+            .build();
 
         // Applica preferenze persistite al canvas all'avvio
         let initial_stroke_w = prefs.borrow().stroke_width;
@@ -114,8 +122,9 @@ impl UniNoteWindow {
         badge_btn.set_child(Some(&badge_box));
 
         let win_nav = window.clone();
-        let app_nav = app.clone();
         let c_nav = canvas.clone();
+        let d_nav = dashboard.clone();
+        let s_nav = stack.clone();
         badge_btn.connect_clicked(move |_| {
             let doc_title = c_nav.document_title();
             let file_path = c_nav.file_path();
@@ -123,8 +132,9 @@ impl UniNoteWindow {
 
             if is_auto_named {
                 let win_for_dlg = win_nav.clone();
-                let app_for_dlg = app_nav.clone();
                 let c_for_dlg = c_nav.clone();
+                let d_for_dlg = d_nav.clone();
+                let s_for_dlg = s_nav.clone();
                 let path_to_remove = file_path.clone();
 
                 let dlg = gtk4::Window::builder()
@@ -187,37 +197,41 @@ impl UniNoteWindow {
                 dlg.set_child(Some(&box_content));
 
                 let dlg_d = dlg.clone();
-                let win_d = win_for_dlg.clone();
-                let app_d = app_for_dlg.clone();
                 let path_d = path_to_remove.clone();
+                let d_d = d_for_dlg.clone();
+                let s_d = s_for_dlg.clone();
+                let w_d = win_for_dlg.clone();
                 btn_discard.connect_clicked(move |_| {
                     if let Some(ref p) = path_d {
                         let _ = std::fs::remove_file(p);
-                        let mut store = crate::preferences::DashboardRecentStore::load();
-                        store.sanitize_existing_files();
-                        let _ = store.save();
+                        d_d.store().borrow_mut().sanitize_existing_files();
+                        let _ = d_d.store().borrow().save();
                     }
                     dlg_d.close();
-                    win_d.close();
-                    crate::main_open_dashboard(&app_d);
+                    d_d.refresh();
+                    w_d.set_title(Some("UniNote — Hub Accademico"));
+                    s_d.set_visible_child_name("dashboard");
                 });
 
                 let dlg_s = dlg.clone();
-                let win_s = win_for_dlg.clone();
-                let app_s = app_for_dlg.clone();
                 let c_s = c_for_dlg.clone();
+                let d_s = d_for_dlg.clone();
+                let s_s = s_for_dlg.clone();
+                let w_s = win_for_dlg.clone();
                 btn_save.connect_clicked(move |_| {
                     c_s.persist_changes();
                     dlg_s.close();
-                    win_s.close();
-                    crate::main_open_dashboard(&app_s);
+                    d_s.refresh();
+                    w_s.set_title(Some("UniNote — Hub Accademico"));
+                    s_s.set_visible_child_name("dashboard");
                 });
 
                 dlg.present();
             } else {
                 c_nav.persist_changes();
-                win_nav.close();
-                crate::main_open_dashboard(&app_nav);
+                d_nav.refresh();
+                win_nav.set_title(Some("UniNote — Hub Accademico"));
+                s_nav.set_visible_child_name("dashboard");
             }
         });
 
@@ -503,76 +517,58 @@ impl UniNoteWindow {
             .css_classes(["dms-action-btn"])
             .build();
 
-        let export_popover = Popover::builder().css_classes(["dms-popover"]).build();
+        let export_popover = Popover::builder()
+            .css_classes(["dms-popover", "dms-context-popover"])
+            .build();
         export_popover.set_parent(&btn_export);
 
         let export_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
-            .spacing(8)
-            .margin_start(10)
-            .margin_end(10)
-            .margin_top(8)
-            .margin_bottom(8)
+            .spacing(2)
+            .margin_start(4)
+            .margin_end(4)
+            .margin_top(4)
+            .margin_bottom(4)
             .build();
-
-        let lbl_export_title = Label::builder()
-            .label("Gestione Quaderno")
-            .xalign(0.0)
-            .css_classes(["brand-title"])
-            .build();
-        export_box.append(&lbl_export_title);
 
         let lbl_group1 = Label::builder()
-            .label("Quaderno")
+            .label("Documento")
             .xalign(0.0)
             .css_classes(["dms-popover-section-title"])
             .build();
         export_box.append(&lbl_group1);
 
+        let make_export_item = |icon_kind: IconKind, title: &str, badge_text: &str| -> Button {
+            let row = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(10)
+                .valign(Align::Center)
+                .build();
+
+            let icon = create_icon(icon_kind, 16, None);
+            let lbl = Label::builder()
+                .label(title)
+                .xalign(0.0)
+                .hexpand(true)
+                .build();
+            let badge = Label::builder()
+                .label(badge_text)
+                .valign(Align::Center)
+                .css_classes(["dms-shortcut-badge"])
+                .build();
+
+            row.append(&icon);
+            row.append(&lbl);
+            row.append(&badge);
+
+            Button::builder()
+                .child(&row)
+                .css_classes(["dms-menu-item-btn", "dms-action-card"])
+                .build()
+        };
+
         // Salva (.uninote)
-        let card_save = Button::builder()
-            .css_classes(["dms-action-card"])
-            .tooltip_text("Salva modifiche correnti (Ctrl+S)")
-            .build();
-        let save_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .valign(Align::Center)
-            .build();
-        let save_icon_box = GtkBox::builder()
-            .css_classes(["dms-card-icon-box"])
-            .halign(Align::Center)
-            .valign(Align::Center)
-            .build();
-        save_icon_box.append(&create_icon(IconKind::Export, 18, None));
-        save_box.append(&save_icon_box);
-
-        let save_text_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .hexpand(true)
-            .valign(Align::Center)
-            .build();
-        let save_title = Label::builder()
-            .label("Salva Quaderno")
-            .xalign(0.0)
-            .css_classes(["dms-card-title"])
-            .build();
-        let save_sub = Label::builder()
-            .label("Salva le modifiche nel file attivo (.uninote)")
-            .xalign(0.0)
-            .css_classes(["dms-card-subtitle"])
-            .build();
-        save_text_box.append(&save_title);
-        save_text_box.append(&save_sub);
-        save_box.append(&save_text_box);
-
-        let save_badge = Label::builder()
-            .label("Ctrl+S")
-            .valign(Align::Center)
-            .css_classes(["dms-shortcut-badge"])
-            .build();
-        save_box.append(&save_badge);
-        card_save.set_child(Some(&save_box));
-
+        let card_save = make_export_item(IconKind::Export, "Salva", "Ctrl+S");
         let c_save = canvas.clone();
         let win_save = window.clone();
         let exp_pop_ref = export_popover.clone();
@@ -604,49 +600,7 @@ impl UniNoteWindow {
         export_box.append(&card_save);
 
         // Nuovo Quaderno
-        let card_new = Button::builder()
-            .css_classes(["dms-action-card"])
-            .tooltip_text("Crea un nuovo quaderno vuoto (Ctrl+N)")
-            .build();
-        let new_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .valign(Align::Center)
-            .build();
-        let new_icon_box = GtkBox::builder()
-            .css_classes(["dms-card-icon-box"])
-            .halign(Align::Center)
-            .valign(Align::Center)
-            .build();
-        new_icon_box.append(&create_icon(IconKind::Add, 18, None));
-        new_box.append(&new_icon_box);
-
-        let new_text_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .hexpand(true)
-            .valign(Align::Center)
-            .build();
-        let new_title = Label::builder()
-            .label("Nuovo Quaderno")
-            .xalign(0.0)
-            .css_classes(["dms-card-title"])
-            .build();
-        let new_sub = Label::builder()
-            .label("Inizia da zero un nuovo documento")
-            .xalign(0.0)
-            .css_classes(["dms-card-subtitle"])
-            .build();
-        new_text_box.append(&new_title);
-        new_text_box.append(&new_sub);
-        new_box.append(&new_text_box);
-
-        let new_badge = Label::builder()
-            .label("Ctrl+N")
-            .valign(Align::Center)
-            .css_classes(["dms-shortcut-badge"])
-            .build();
-        new_box.append(&new_badge);
-        card_new.set_child(Some(&new_box));
-
+        let card_new = make_export_item(IconKind::Add, "Nuovo quaderno", "Ctrl+N");
         let c_new = canvas.clone();
         let exp_pop_ref2 = export_popover.clone();
         card_new.connect_clicked(move |_| {
@@ -656,12 +610,9 @@ impl UniNoteWindow {
         export_box.append(&card_new);
 
         // Separatore orizzontale
-        let exp_div = GtkBox::builder()
-            .css_classes(["dms-dock-divider"])
-            .margin_top(4)
-            .margin_bottom(4)
-            .build();
-        export_box.append(&exp_div);
+        let sep = gtk4::Separator::new(Orientation::Horizontal);
+        sep.add_css_class("dms-menu-separator");
+        export_box.append(&sep);
 
         // Group 2: Esporta
         let lbl_group2 = Label::builder()
@@ -671,115 +622,8 @@ impl UniNoteWindow {
             .build();
         export_box.append(&lbl_group2);
 
-        // Pacchetto Portabile (.uninote)
-        let card_portable = Button::builder()
-            .css_classes(["dms-action-card"])
-            .tooltip_text("Esporta pacchetto SQLite autonomo consolidato")
-            .build();
-        let port_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .valign(Align::Center)
-            .build();
-        let port_icon_box = GtkBox::builder()
-            .css_classes(["dms-card-icon-box"])
-            .halign(Align::Center)
-            .valign(Align::Center)
-            .build();
-        port_icon_box.append(&create_icon(IconKind::Page, 18, None));
-        port_box.append(&port_icon_box);
-
-        let port_text_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .hexpand(true)
-            .valign(Align::Center)
-            .build();
-        let port_title = Label::builder()
-            .label("Pacchetto Portabile (.uninote)")
-            .xalign(0.0)
-            .css_classes(["dms-card-title"])
-            .build();
-        let port_sub = Label::builder()
-            .label("Consolida transazioni WAL in file autonomo")
-            .xalign(0.0)
-            .css_classes(["dms-card-subtitle"])
-            .build();
-        port_text_box.append(&port_title);
-        port_text_box.append(&port_sub);
-        port_box.append(&port_text_box);
-
-        let port_badge = Label::builder()
-            .label(".uninote")
-            .valign(Align::Center)
-            .css_classes(["dms-shortcut-badge"])
-            .build();
-        port_box.append(&port_badge);
-        card_portable.set_child(Some(&port_box));
-
-        let c_port = canvas.clone();
-        let win_port = window.clone();
-        let exp_pop_ref3 = export_popover.clone();
-        card_portable.connect_clicked(move |_| {
-            exp_pop_ref3.popdown();
-            let dialog = FileDialog::builder()
-                .title("Esporta Pacchetto Portabile UniNote")
-                .initial_name("quaderno_portabile.uninote")
-                .modal(true)
-                .build();
-            let c_ref = c_port.clone();
-            dialog.save(Some(&win_port), gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        let _ = c_ref.export_portable_copy(path);
-                    }
-                }
-            });
-        });
-        export_box.append(&card_portable);
-
-        // Documento PDF (.pdf) - Attivo
-        let card_pdf = Button::builder()
-            .css_classes(["dms-action-card"])
-            .tooltip_text("Esporta intero quaderno in formato PDF vettoriale ad alta definizione")
-            .build();
-        let pdf_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .valign(Align::Center)
-            .build();
-        let pdf_icon_box = GtkBox::builder()
-            .css_classes(["dms-card-icon-box"])
-            .halign(Align::Center)
-            .valign(Align::Center)
-            .build();
-        pdf_icon_box.append(&create_icon(IconKind::Page, 18, None));
-        pdf_box.append(&pdf_icon_box);
-
-        let pdf_text_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .hexpand(true)
-            .valign(Align::Center)
-            .build();
-        let pdf_title = Label::builder()
-            .label("Documento PDF (.pdf)")
-            .xalign(0.0)
-            .css_classes(["dms-card-title"])
-            .build();
-        let pdf_sub = Label::builder()
-            .label("Esporta intero quaderno in vettoriale per stampa e condivisione")
-            .xalign(0.0)
-            .css_classes(["dms-card-subtitle"])
-            .build();
-        pdf_text_box.append(&pdf_title);
-        pdf_text_box.append(&pdf_sub);
-        pdf_box.append(&pdf_text_box);
-
-        let pdf_badge = Label::builder()
-            .label(".pdf")
-            .valign(Align::Center)
-            .css_classes(["dms-shortcut-badge"])
-            .build();
-        pdf_box.append(&pdf_badge);
-        card_pdf.set_child(Some(&pdf_box));
-
+        // Documento PDF (.pdf)
+        let card_pdf = make_export_item(IconKind::Page, "Esporta in PDF", ".pdf");
         let c_pdf = canvas.clone();
         let win_pdf = window.clone();
         let exp_pop_ref_pdf = export_popover.clone();
@@ -823,50 +667,28 @@ impl UniNoteWindow {
         });
         export_box.append(&card_pdf);
 
-        // Grafica Vettoriale SVG (.svg) - In arrivo
-        let card_svg = Button::builder()
-            .css_classes(["dms-action-card", "disabled"])
-            .tooltip_text("Esportatore SVG in fase di sviluppo")
-            .build();
-        let svg_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .valign(Align::Center)
-            .build();
-        let svg_icon_box = GtkBox::builder()
-            .css_classes(["dms-card-icon-box"])
-            .halign(Align::Center)
-            .valign(Align::Center)
-            .build();
-        svg_icon_box.append(&create_icon(IconKind::Shapes, 18, None));
-        svg_box.append(&svg_icon_box);
-
-        let svg_text_box = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .hexpand(true)
-            .valign(Align::Center)
-            .build();
-        let svg_title = Label::builder()
-            .label("Grafica Vettoriale SVG (.svg)")
-            .xalign(0.0)
-            .css_classes(["dms-card-title"])
-            .build();
-        let svg_sub = Label::builder()
-            .label("Esporta pagina corrente in vettoriale SVG")
-            .xalign(0.0)
-            .css_classes(["dms-card-subtitle"])
-            .build();
-        svg_text_box.append(&svg_title);
-        svg_text_box.append(&svg_sub);
-        svg_box.append(&svg_text_box);
-
-        let svg_badge = Label::builder()
-            .label("In arrivo")
-            .valign(Align::Center)
-            .css_classes(["dms-chip-coming-soon"])
-            .build();
-        svg_box.append(&svg_badge);
-        card_svg.set_child(Some(&svg_box));
-        export_box.append(&card_svg);
+        // Pacchetto Portabile (.uninote)
+        let card_portable = make_export_item(IconKind::Copy, "Copia portabile", ".uninote");
+        let c_port = canvas.clone();
+        let win_port = window.clone();
+        let exp_pop_ref3 = export_popover.clone();
+        card_portable.connect_clicked(move |_| {
+            exp_pop_ref3.popdown();
+            let dialog = FileDialog::builder()
+                .title("Esporta Pacchetto Portabile UniNote")
+                .initial_name("quaderno_portabile.uninote")
+                .modal(true)
+                .build();
+            let c_ref = c_port.clone();
+            dialog.save(Some(&win_port), gio::Cancellable::NONE, move |res| {
+                if let Ok(file) = res {
+                    if let Some(path) = file.path() {
+                        let _ = c_ref.export_portable_copy(path);
+                    }
+                }
+            });
+        });
+        export_box.append(&card_portable);
 
         export_popover.set_child(Some(&export_box));
         let exp_ref = export_popover.clone();
@@ -1005,8 +827,11 @@ impl UniNoteWindow {
         settings_box.append(&dropdown_mode);
 
         settings_popover.set_child(Some(&settings_box));
+        let win_settings_ed = window.clone();
         btn_settings.connect_clicked(move |_| {
             let settings_win = crate::settings::UniNoteSettingsWindow::new();
+            settings_win.set_transient_for(Some(&win_settings_ed));
+            settings_win.set_modal(true);
             settings_win.present();
         });
         right_actions_box.append(&btn_settings);
@@ -1747,6 +1572,13 @@ impl UniNoteWindow {
         });
         lbl_zoom.add_controller(click_gesture);
 
+        // Sincronizzazione fluida continua con GestureZoom / pinch touch
+        let lbl_zoom_live = lbl_zoom.clone();
+        canvas.connect_zoom_changed(move |zoom| {
+            let pct = (zoom * 100.0).round() as usize;
+            lbl_zoom_live.set_label(&format!("{}%", pct));
+        });
+
         zoom_segment.append(&btn_zoom_out);
         zoom_segment.append(&lbl_zoom);
         zoom_segment.append(&btn_zoom_in);
@@ -1902,13 +1734,132 @@ impl UniNoteWindow {
             }
         });
 
-        window.set_content(Some(&overlay));
+        // Connessione dei segnali della Dashboard
+        let c_open = canvas.clone();
+        let s_open = stack.clone();
+        let w_open = window.clone();
+        let nb_open = notebook_dock_box.clone();
+        let wb_open = whiteboard_dock_box.clone();
+        dashboard.connect_open_document(move |path| {
+            let is_pdf = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("pdf"))
+                .unwrap_or(false);
+
+            if is_pdf {
+                if let Err(e) = c_open.create_from_pdf(&path) {
+                    eprintln!(
+                        "Errore durante l'apertura del PDF {}: {}",
+                        path.display(),
+                        e
+                    );
+                    return;
+                }
+            } else {
+                let _ = c_open.open_file(path);
+            }
+            let is_wb = c_open.document_format() == DocumentFormat::Whiteboard;
+            nb_open.set_visible(!is_wb);
+            wb_open.set_visible(is_wb);
+            c_open.center_page_1();
+            let title = c_open.document_title();
+            w_open.set_title(Some(&format!("UniNote — {}", title)));
+            s_open.set_visible_child_name("editor");
+        });
+
+        let c_create = canvas.clone();
+        let s_create = stack.clone();
+        let w_create = window.clone();
+        let nb_create = notebook_dock_box.clone();
+        let wb_create = whiteboard_dock_box.clone();
+        let d_create = dashboard.clone();
+        dashboard.connect_create_document(move |title, format, bg| {
+            c_create.create_document(&title, format, bg);
+            let is_wb = c_create.document_format() == DocumentFormat::Whiteboard;
+            nb_create.set_visible(!is_wb);
+            wb_create.set_visible(is_wb);
+            c_create.center_page_1();
+
+            let store = d_create.store();
+            let _ = store.borrow().ensure_default_notes_dir();
+            let notes_dir = std::path::PathBuf::from(&store.borrow().default_notes_dir);
+            let note_path = notes_dir.join(format!("{}.uninote", title));
+
+            if let Err(e) = c_create.save_as(note_path.clone()) {
+                eprintln!("Attenzione: impossibile inizializzare autosave: {}", e);
+            } else {
+                let meta = crate::preferences::RecentDocumentMeta {
+                    file_path: note_path.to_string_lossy().to_string(),
+                    title: title.to_string(),
+                    format,
+                    last_modified_timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                    page_count: 1,
+                    thumbnail_path: None,
+                };
+                store.borrow_mut().add_recent(meta);
+                let _ = store.borrow().save();
+            }
+
+            w_create.set_title(Some(&format!("UniNote — {}", title)));
+            s_create.set_visible_child_name("editor");
+        });
+
+        let c_import = canvas.clone();
+        let s_import = stack.clone();
+        let w_import = window.clone();
+        let nb_import = notebook_dock_box.clone();
+        let wb_import = whiteboard_dock_box.clone();
+        dashboard.connect_import_pdf(move |path| match c_import.create_from_pdf(&path) {
+            Ok(_) => {
+                let is_wb = c_import.document_format() == DocumentFormat::Whiteboard;
+                nb_import.set_visible(!is_wb);
+                wb_import.set_visible(is_wb);
+                c_import.center_page_1();
+                let title = c_import.document_title();
+                w_import.set_title(Some(&format!("UniNote — {}", title)));
+                s_import.set_visible_child_name("editor");
+            }
+            Err(e) => {
+                eprintln!(
+                    "Errore durante l'importazione del PDF {}: {}",
+                    path.display(),
+                    e
+                );
+            }
+        });
+
+        let win_settings_dash = window.clone();
+        dashboard.connect_open_settings(move || {
+            let settings_win = crate::settings::UniNoteSettingsWindow::new();
+            settings_win.set_transient_for(Some(&win_settings_dash));
+            settings_win.set_modal(true);
+            settings_win.present();
+        });
+
+        stack.add_named(dashboard.widget(), Some("dashboard"));
+        stack.add_named(&overlay, Some("editor"));
+        stack.set_visible_child_name("dashboard");
+
+        window.set_content(Some(&stack));
+
+        // Salvataggio garantito prima della chiusura della finestra
+        let c_close = canvas.clone();
+        window.connect_close_request(move |_| {
+            c_close.persist_changes();
+            glib::Propagation::Proceed
+        });
 
         let win = Self {
             window,
             canvas,
             notebook_dock_box,
             whiteboard_dock_box,
+            stack,
+            dashboard,
         };
         win.sync_dock_mode();
         win
@@ -1926,6 +1877,28 @@ impl UniNoteWindow {
 
     pub fn window(&self) -> &ApplicationWindow {
         &self.window
+    }
+
+    pub fn stack(&self) -> &gtk4::Stack {
+        &self.stack
+    }
+
+    pub fn dashboard(&self) -> &Rc<crate::dashboard::UniNoteDashboard> {
+        &self.dashboard
+    }
+
+    pub fn show_dashboard(&self) {
+        self.canvas.persist_changes();
+        self.dashboard.refresh();
+        self.window.set_title(Some("UniNote — Hub Accademico"));
+        self.stack.set_visible_child_name("dashboard");
+    }
+
+    pub fn show_editor(&self) {
+        self.sync_dock_mode();
+        let title = self.canvas.document_title();
+        self.window.set_title(Some(&format!("UniNote — {}", title)));
+        self.stack.set_visible_child_name("editor");
     }
 
     pub fn open_file(app: &Application, path: &std::path::Path) -> Self {
@@ -1951,6 +1924,8 @@ impl UniNoteWindow {
             let win = Self::new(app);
             let _ = win.canvas.open_file(path.to_path_buf());
             win.sync_dock_mode();
+            win.canvas.center_page_1();
+            win.show_editor();
             win
         }
     }
@@ -1964,6 +1939,7 @@ impl UniNoteWindow {
         let win = Self::new(app);
         win.canvas.create_document(title, format, bg);
         win.sync_dock_mode();
+        win.canvas.center_page_1();
 
         // Autosave: assegna file fisico predefinito nella cartella note e avvia StorageWorker
         let store = crate::preferences::DashboardRecentStore::load();
@@ -1990,6 +1966,7 @@ impl UniNoteWindow {
             let _ = store_update.save();
         }
 
+        win.show_editor();
         win
     }
 
@@ -2000,6 +1977,8 @@ impl UniNoteWindow {
         let win = Self::new(app);
         win.canvas.create_from_pdf(pdf_path)?;
         win.sync_dock_mode();
+        win.canvas.center_page_1();
+        win.show_editor();
         Ok(win)
     }
 

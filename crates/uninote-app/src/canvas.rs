@@ -299,11 +299,14 @@ pub fn adapt_ink_color(color: (f64, f64, f64, f64), is_dark_sheet: bool) -> (f64
     }
 }
 
+pub type ZoomCallback = Box<dyn Fn(f64)>;
+
 pub struct NoteCanvas {
     area: DrawingArea,
     state: Rc<RefCell<CanvasState>>,
     hud: Rc<DiagnosticHud>,
     app_start: Instant,
+    zoom_callbacks: Rc<RefCell<Vec<ZoomCallback>>>,
 }
 
 impl NoteCanvas {
@@ -323,12 +326,14 @@ impl NoteCanvas {
 
         let state = Rc::new(RefCell::new(CanvasState::new()));
         let app_start = Instant::now();
+        let zoom_callbacks = Rc::new(RefCell::new(Vec::new()));
 
         let canvas = Self {
             area,
             state,
             hud,
             app_start,
+            zoom_callbacks,
         };
         canvas.setup_drawing();
         canvas.setup_capture_controller();
@@ -336,6 +341,16 @@ impl NoteCanvas {
         canvas.setup_mouse_controller();
         canvas.setup_scroll_and_zoom_controllers();
         canvas
+    }
+
+    pub fn connect_zoom_changed<F: Fn(f64) + 'static>(&self, f: F) {
+        self.zoom_callbacks.borrow_mut().push(Box::new(f));
+    }
+
+    fn notify_zoom_changed(&self, zoom: f64) {
+        for cb in self.zoom_callbacks.borrow().iter() {
+            cb(zoom);
+        }
     }
 
     pub fn widget(&self) -> &DrawingArea {
@@ -516,10 +531,12 @@ impl NoteCanvas {
         let w = self.area.width() as f64;
         let h = self.area.height() as f64;
         st.viewport.zoom_at((w / 2.0, h / 2.0), 1.25);
-        let pct = (st.viewport.zoom * 100.0).round() as usize;
+        let zoom = st.viewport.zoom;
+        let pct = (zoom * 100.0).round() as usize;
         drop(st);
         self.hud.update_metrics(|m| m.zoom_pct = pct);
         self.hud.update_view();
+        self.notify_zoom_changed(zoom);
         self.area.queue_draw();
     }
 
@@ -528,10 +545,12 @@ impl NoteCanvas {
         let w = self.area.width() as f64;
         let h = self.area.height() as f64;
         st.viewport.zoom_at((w / 2.0, h / 2.0), 0.8);
-        let pct = (st.viewport.zoom * 100.0).round() as usize;
+        let zoom = st.viewport.zoom;
+        let pct = (zoom * 100.0).round() as usize;
         drop(st);
         self.hud.update_metrics(|m| m.zoom_pct = pct);
         self.hud.update_view();
+        self.notify_zoom_changed(zoom);
         self.area.queue_draw();
     }
 
@@ -553,10 +572,12 @@ impl NoteCanvas {
         } else {
             st.viewport.reset_zoom_and_center(w);
         }
-        let pct = (st.viewport.zoom * 100.0).round() as usize;
+        let zoom = st.viewport.zoom;
+        let pct = (zoom * 100.0).round() as usize;
         drop(st);
         self.hud.update_metrics(|m| m.zoom_pct = pct);
         self.hud.update_view();
+        self.notify_zoom_changed(zoom);
         self.area.queue_draw();
     }
 
@@ -596,6 +617,24 @@ impl NoteCanvas {
             drop(st);
             self.area.queue_draw();
         }
+    }
+
+    /// Centra orizzontalmente e posiziona la prima pagina (A4) del quaderno nel viewport.
+    pub fn center_page_1(&self) {
+        let mut st = self.state.borrow_mut();
+        if st.document.format == DocumentFormat::Whiteboard {
+            return;
+        }
+        let w = (self.area.width() as f64).max(800.0);
+        st.viewport.reset_zoom_and_center(w);
+        st.viewport.offset_y = 40.0;
+        let zoom = st.viewport.zoom;
+        let pct = (zoom * 100.0).round() as usize;
+        drop(st);
+        self.hud.update_metrics(|m| m.zoom_pct = pct);
+        self.hud.update_view();
+        self.notify_zoom_changed(zoom);
+        self.area.queue_draw();
     }
 
     pub fn set_current_page_background(&self, bg: PageBackground) {
@@ -707,13 +746,17 @@ impl NoteCanvas {
     pub fn open_file(&self, path: PathBuf) -> Result<(), String> {
         let store = DocumentStore::open_or_create(&path).map_err(|e| e.to_string())?;
         let doc = store.load_document().map_err(|e| e.to_string())?;
+        let max_id = doc.max_item_id();
         let mut st = self.state.borrow_mut();
         st.document = doc;
-        st.history = CommandHistory::new(100);
+        st.history = CommandHistory::with_next_id(100, max_id + 1);
         st.file_path = Some(path.clone());
 
         // Inizializza worker di storage asincrono per questo file
-        if let Ok(worker) = StorageWorker::spawn(path, move |_status| {
+        if let Ok(worker) = StorageWorker::spawn(path, move |status| {
+            if let uninote_storage::SaveStatus::Error(ref err) = status {
+                eprintln!("[UniNote StorageWorker ERROR]: {}", err);
+            }
             glib::idle_add_once(move || {
                 // Notifica asincrona di cambio stato salvataggio
             });
@@ -737,7 +780,25 @@ impl NoteCanvas {
             .map_err(|e| e.to_string())?;
         st.file_path = Some(path.clone());
 
-        if let Ok(worker) = StorageWorker::spawn(path, move |_status| {
+        // Rigenera o aggiorna la miniatura copertina in cache
+        let meta = crate::preferences::RecentDocumentMeta {
+            file_path: path.to_string_lossy().to_string(),
+            title: st.document.title.clone(),
+            format: st.document.format,
+            last_modified_timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            page_count: st.document.pages.len().max(1),
+            thumbnail_path: None,
+        };
+        let thumb_path = crate::dashboard::get_or_create_thumbnail_path(&meta);
+        let _ = crate::dashboard::render_document_thumbnail(&st.document, &thumb_path);
+
+        if let Ok(worker) = StorageWorker::spawn(path, move |status| {
+            if let uninote_storage::SaveStatus::Error(ref err) = status {
+                eprintln!("[UniNote StorageWorker ERROR]: {}", err);
+            }
             glib::idle_add_once(move || {
                 // Notifica asincrona di cambio stato salvataggio
             });
@@ -778,9 +839,10 @@ impl NoteCanvas {
 
     /// Carica un nuovo documento sostituendo lo stato corrente e aggiornando l'HUD e la vista.
     pub fn load_document(&self, doc: uninote_core::Document) {
+        let max_id = doc.max_item_id();
         let mut st = self.state.borrow_mut();
         st.document = doc;
-        st.history = CommandHistory::new(100);
+        st.history = CommandHistory::with_next_id(100, max_id + 1);
         st.storage_worker = None;
         st.file_path = None;
         st.active_builder = None;
@@ -2045,6 +2107,7 @@ impl NoteCanvas {
         let state = self.state.clone();
         let area = self.area.clone();
         let hud = self.hud.clone();
+        let zoom_callbacks_scroll = self.zoom_callbacks.clone();
 
         scroll.connect_scroll(move |controller, dx, dy| {
             let mut st = state.borrow_mut();
@@ -2057,10 +2120,14 @@ impl NoteCanvas {
                 let h = area.height() as f64;
                 let factor = if dy < 0.0 { 1.15 } else { 0.87 };
                 st.viewport.zoom_at((w / 2.0, h / 2.0), factor);
-                let pct = (st.viewport.zoom * 100.0).round() as usize;
+                let zoom = st.viewport.zoom;
+                let pct = (zoom * 100.0).round() as usize;
                 drop(st);
                 hud.update_metrics(|m| m.zoom_pct = pct);
                 hud.update_view();
+                for cb in zoom_callbacks_scroll.borrow().iter() {
+                    cb(zoom);
+                }
             } else {
                 let (pan_x, pan_y) = match controller.unit() {
                     gdk::ScrollUnit::Surface => (-dx, -dy),
@@ -2080,6 +2147,7 @@ impl NoteCanvas {
         let state = self.state.clone();
         let area = self.area.clone();
         let hud = self.hud.clone();
+        let zoom_callbacks_pinch = self.zoom_callbacks.clone();
 
         let last_scale = Rc::new(std::cell::Cell::new(1.0));
         let last_center = Rc::new(std::cell::Cell::new(None));
@@ -2111,7 +2179,7 @@ impl NoteCanvas {
             }
         });
 
-        // Zoom scalare (pinch): scala il canvas centrato sul bounding_box_center
+        // Zoom scalare (pinch): scala il canvas centrato sul bounding_box_center in tempo reale
         let ls_scale = last_scale.clone();
         let state_scale = state.clone();
         let area_scale = area.clone();
@@ -2130,14 +2198,18 @@ impl NoteCanvas {
             let default_center = (w / 2.0, h / 2.0);
             let current_center = gesture.bounding_box_center().unwrap_or(default_center);
 
-            if (factor - 1.0).abs() > 0.001 && factor > 0.5 && factor < 2.0 {
+            if (factor - 1.0).abs() > 0.0001 && factor > 0.5 && factor < 2.0 {
                 let mut st = state_scale.borrow_mut();
                 st.viewport.zoom_at(current_center, factor);
-                let pct = (st.viewport.zoom * 100.0).round() as usize;
+                let zoom = st.viewport.zoom;
+                let pct = (zoom * 100.0).round() as usize;
                 drop(st);
 
                 hud_scale.update_metrics(|m| m.zoom_pct = pct);
                 hud_scale.update_view();
+                for cb in zoom_callbacks_pinch.borrow().iter() {
+                    cb(zoom);
+                }
                 area_scale.queue_draw();
             }
         });

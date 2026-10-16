@@ -233,20 +233,21 @@ button.dms-brand-badge:hover {
 }
 
 .dms-dock-handle-area {
-    min-height: 18px;
-    padding: 2px 0 6px 0;
+    min-height: 36px;
+    padding: 6px 4px;
 }
 
 .dms-dock-handle {
-    min-width: 24px;
-    min-height: 4px;
-    border-radius: 2px;
+    min-width: 32px;
+    min-height: 5px;
+    border-radius: 3px;
     background-color: @dms_outline_variant;
-    transition: background-color 150ms ease-in-out;
+    transition: background-color 150ms ease-in-out, transform 150ms ease-in-out;
 }
 
 .dms-dock-handle-area:hover .dms-dock-handle {
     background-color: @dms_primary;
+    transform: scaleX(1.1);
 }
 
 .dms-pen-slot {
@@ -402,16 +403,40 @@ button.dms-brand-badge:hover {
 
 /* Stili per Popover di Controllo & Settings */
 popover.dms-popover {
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+}
+
+popover.dms-popover > contents {
     background-color: @dms_surface_container;
     border: 1px solid @dms_outline;
-    border-radius: 18px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
-    padding: 14px;
+    border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+    padding: 8px;
     color: @dms_text_primary;
+}
+
+popover.dms-popover > arrow {
+    background-color: @dms_surface_container;
+    border-color: @dms_outline;
+}
+
+popover.dms-popover.dms-context-popover > contents {
+    padding: 4px;
+    border-radius: 12px;
 }
 
 popover.dms-popover label {
     color: @dms_text_primary;
+}
+
+.dms-popover-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: @dms_text_primary;
+    margin-bottom: 4px;
 }
 
 .dms-popover-section-title {
@@ -420,8 +445,16 @@ popover.dms-popover label {
     letter-spacing: 1.2px;
     text-transform: uppercase;
     color: @dms_text_secondary;
-    margin-top: 4px;
+    margin-top: 6px;
     margin-bottom: 2px;
+}
+
+popover.dms-popover dropdown > button {
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: @dms_text_primary;
 }
 
 /* Restyling Popover Calibro Tratto */
@@ -789,10 +822,35 @@ window.uninote-window.light-theme {
 popover.dms-popover.light-theme,
 .light-theme popover.dms-popover,
 .light-theme .dms-popover {
+    background-color: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    color: @dms_text_primary_light;
+}
+
+popover.dms-popover.light-theme > contents,
+.light-theme popover.dms-popover > contents,
+.light-theme .dms-popover > contents {
     background-color: @dms_surface_container_light;
     border: 1px solid @dms_outline_light;
     box-shadow: 0 10px 28px rgba(23, 33, 38, 0.16);
+    padding: 8px;
     color: @dms_text_primary_light;
+}
+
+popover.dms-popover.light-theme > arrow,
+.light-theme popover.dms-popover > arrow,
+.light-theme .dms-popover > arrow {
+    background-color: @dms_surface_container_light;
+    border-color: @dms_outline_light;
+}
+
+popover.dms-popover.dms-context-popover.light-theme > contents,
+.light-theme popover.dms-popover.dms-context-popover > contents,
+.light-theme .dms-context-popover > contents {
+    padding: 4px;
+    border-radius: 12px;
 }
 
 popover.dms-popover.light-theme label,
@@ -801,8 +859,18 @@ popover.dms-popover.light-theme label,
     color: @dms_text_primary_light;
 }
 
+.light-theme .dms-popover-title {
+    color: @dms_text_primary_light;
+}
+
 .light-theme .dms-popover-section-title {
     color: @dms_text_secondary_light;
+}
+
+.light-theme popover.dms-popover dropdown > button {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_primary_light;
 }
 
 .light-theme .dms-stroke-preview-area {
@@ -891,4 +959,109 @@ scale.dms-pill-scale trough {
     background-color: @dms_surface_container_light;
     border: 1px solid @dms_outline_light;
     color: @dms_text_secondary_light;
+}
+
+/* Dashboard Card Styling & 3-Dots Menu */
+.dms-dashboard-card {
+    border-radius: 16px;
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    transition: all 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dms-dashboard-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+    border-color: @dms_outline_variant;
+}
+
+.light-theme .dms-dashboard-card {
+    background-color: @dms_surface_container_light;
+    border: 1px solid @dms_outline_light;
+    box-shadow: 0 4px 14px rgba(23, 33, 38, 0.08);
+}
+
+.light-theme .dms-dashboard-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 22px rgba(23, 33, 38, 0.16);
+    border-color: @dms_outline_variant_light;
+}
+
+.dms-card-menu-btn {
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0;
+    border-radius: 14px;
+    background-color: transparent;
+    border: none;
+    color: @dms_text_secondary;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-card-menu-btn:hover {
+    background-color: @dms_surface_container_highest;
+    color: @dms_text_primary;
+}
+
+.light-theme .dms-card-menu-btn:hover {
+    background-color: @dms_surface_container_high_light;
+    color: @dms_text_primary_light;
+}
+
+.dms-menu-separator {
+    background-color: @dms_outline;
+    min-height: 1px;
+    margin: 4px 6px;
+    opacity: 0.5;
+}
+
+.light-theme .dms-menu-separator {
+    background-color: @dms_outline_light;
+    opacity: 0.6;
+}
+
+.dms-menu-item-btn {
+    min-width: 150px;
+    min-height: 36px;
+    border-radius: 8px;
+    background-color: transparent;
+    border: none;
+    font-weight: 500;
+    font-size: 13px;
+    color: @dms_text_primary;
+    padding: 6px 12px;
+    transition: background-color 120ms ease-in-out, color 120ms ease-in-out;
+}
+
+.dms-menu-item-btn:hover {
+    background-color: @dms_surface_container_highest;
+    color: @dms_text_primary;
+}
+
+.light-theme .dms-menu-item-btn {
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-menu-item-btn:hover {
+    background-color: @dms_surface_container_high_light;
+    color: @dms_text_primary_light;
+}
+
+.dms-menu-item-btn.destructive-action {
+    color: #FFB4AB;
+}
+
+.dms-menu-item-btn.destructive-action:hover {
+    background-color: rgba(255, 180, 171, 0.18);
+    color: #FFB4AB;
+}
+
+.light-theme .dms-menu-item-btn.destructive-action {
+    color: #BA1A1A;
+}
+
+.light-theme .dms-menu-item-btn.destructive-action:hover {
+    background-color: rgba(186, 26, 26, 0.12);
+    color: #BA1A1A;
 }

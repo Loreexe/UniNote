@@ -53,6 +53,19 @@ impl UniNoteSettingsWindow {
         window.add(&page_tools);
         window.add(&page_shortcuts);
 
+        if !libadwaita::StyleManager::default().is_dark() {
+            window.add_css_class("light-theme");
+        }
+
+        let win_theme_sync = window.clone();
+        libadwaita::StyleManager::default().connect_dark_notify(move |sm| {
+            if sm.is_dark() {
+                win_theme_sync.remove_css_class("light-theme");
+            } else {
+                win_theme_sync.add_css_class("light-theme");
+            }
+        });
+
         Self {
             window,
             settings,
@@ -930,6 +943,16 @@ impl UniNoteSettingsWindow {
     /// Restituisce il riferimento condiviso al modello di impostazioni.
     pub fn settings(&self) -> Rc<RefCell<FullAppSettingsModel>> {
         self.settings.clone()
+    }
+
+    /// Imposta la finestra genitore per il rendering modale/transiente.
+    pub fn set_transient_for<P: glib::object::IsA<gtk4::Window>>(&self, parent: Option<&P>) {
+        self.window.set_transient_for(parent);
+    }
+
+    /// Imposta se la finestra è modale.
+    pub fn set_modal(&self, modal: bool) {
+        self.window.set_modal(modal);
     }
 
     /// Connette un callback invocato ad ogni variazione dei parametri con persistenza atomica.

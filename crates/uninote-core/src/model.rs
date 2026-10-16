@@ -222,4 +222,14 @@ impl Document {
         self.pages.push(page);
         id
     }
+
+    /// Restituisce il valore massimo di ItemId presente in tutte le pagine del documento,
+    /// oppure 0 se il documento non contiene ancora elementi.
+    pub fn max_item_id(&self) -> u64 {
+        self.pages
+            .iter()
+            .flat_map(|p| p.items.iter().map(|item| item.id))
+            .max()
+            .unwrap_or(0)
+    }
 }

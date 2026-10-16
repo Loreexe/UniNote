@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag di rilascio (es. v0.3.0)'
+        required: true
+        default: 'v0.3.0'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-tarball:
+    name: Build Standalone Tarball (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libcairo2-dev \
+            libpoppler-glib-dev \
+            libsqlite3-dev
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release -p uninote-app
+
+      - name: Assemble standalone distribution tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [[ -z "$VERSION" || "$VERSION" == *"/"* ]] && VERSION="${{ github.event.inputs.tag_name || '0.3.0' }}"
+          VERSION="${VERSION#v}"
+          DIST_NAME="uninote-v${VERSION}-linux-x86_64"
+          mkdir -p "staging/${DIST_NAME}/bin" "staging/${DIST_NAME}/share"
+          
+          # Binario
+          cp target/release/uninote "staging/${DIST_NAME}/bin/"
+          
+          # Risorse XDG
+          cp -r data/icons "staging/${DIST_NAME}/share/"
+          mkdir -p "staging/${DIST_NAME}/share/applications" "staging/${DIST_NAME}/share/metainfo" "staging/${DIST_NAME}/share/mime/packages"
+          cp data/org.uninote.UniNote.desktop "staging/${DIST_NAME}/share/applications/"
+          cp data/org.uninote.UniNote.metainfo.xml "staging/${DIST_NAME}/share/metainfo/"
+          cp data/org.uninote.UniNote.xml "staging/${DIST_NAME}/share/mime/packages/"
+          cp LICENSE "staging/${DIST_NAME}/"
+          cp README.md "staging/${DIST_NAME}/"
+          
+          # Script di installazione automatica
+          cat << 'EOF' > "staging/${DIST_NAME}/install.sh"
+          #!/usr/bin/env bash
+          set -e
+          PREFIX="${PREFIX:-/usr/local}"
+          echo "Installazione di UniNote in ${PREFIX}..."
+          install -Dm755 bin/uninote "${PREFIX}/bin/uninote"
+          mkdir -p "${PREFIX}/share"
+          cp -r share/* "${PREFIX}/share/"
+          if command -v update-desktop-database >/dev/null 2>&1; then
+              update-desktop-database "${PREFIX}/share/applications" || true
+          fi
+          if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+              gtk-update-icon-cache -q -t -f "${PREFIX}/share/icons/hicolor" || true
+          fi
+          if command -v update-mime-database >/dev/null 2>&1; then
+              update-mime-database "${PREFIX}/share/mime" || true
+          fi
+          echo "UniNote installato con successo!"
+          EOF
+          chmod +x "staging/${DIST_NAME}/install.sh"
+          
+          tar -czf "${DIST_NAME}.tar.gz" -C staging "${DIST_NAME}"
+          sha256sum "${DIST_NAME}.tar.gz" > "${DIST_NAME}.tar.gz.sha256"
+
+      - name: Upload Standalone Tarball Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-tarball
+          path: uninote-v*.tar.gz*
+
+  build-flatpak:
+    name: Build Flatpak Bundle (.flatpak)
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:gnome-47
+      options: --privileged
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: org.uninote.UniNote.flatpak
+          manifest-path: packaging/flatpak/org.uninote.UniNote.yaml
+          cache-key: flatpak-builder-${{ github.sha }}
+
+      - name: Upload Flatpak Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: org.uninote.UniNote.flatpak
+
+  create-release:
+    name: Publish GitHub Release
+    needs: [build-tarball, build-flatpak]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets/
+
+      - name: Prepare Release Directory
+        run: |
+          mkdir -p dist
+          find release-assets/ -type f -exec cp -v {} dist/ \;
+          ls -la dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+          name: UniNote ${{ github.event.inputs.tag_name || github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/*

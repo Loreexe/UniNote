@@ -26,6 +26,10 @@ pub enum IconKind {
     Minus,
     PenLine,
     Select,
+    MoreVertical,
+    Edit,
+    Copy,
+    Trash,
 }
 
 /// Crea una `DrawingArea` GTK4 che disegna l'icona vettoriale indicata con Cairo.
@@ -87,6 +91,10 @@ pub fn create_icon(kind: IconKind, size: i32, custom_color: Option<gdk::RGBA>) -
             IconKind::Minus => draw_minus(cr),
             IconKind::PenLine => draw_pen_line(cr),
             IconKind::Select => draw_select(cr),
+            IconKind::MoreVertical => draw_more_vertical(cr),
+            IconKind::Edit => draw_edit(cr),
+            IconKind::Copy => draw_copy(cr),
+            IconKind::Trash => draw_trash(cr),
         }
 
         cr.restore().expect("cairo restore");
@@ -393,6 +401,81 @@ fn draw_select(cr: &cairo::Context) {
     // Coda della fune
     cr.move_to(12.0, 17.5);
     cr.curve_to(12.0, 20.0, 15.0, 21.0, 18.0, 20.5);
+    let _ = cr.stroke();
+}
+
+fn draw_more_vertical(cr: &cairo::Context) {
+    // 3 pallini verticali centrati su x = 12.0, y = 5.0, 12.0, 19.0
+    for &y in &[5.0, 12.0, 19.0] {
+        cr.arc(12.0, y, 1.8, 0.0, 2.0 * PI);
+        let _ = cr.fill();
+    }
+}
+
+fn draw_edit(cr: &cairo::Context) {
+    // Matita inclinata (stile Lucide Pencil)
+    cr.move_to(17.0, 3.0);
+    cr.line_to(21.0, 7.0);
+    cr.line_to(7.0, 21.0);
+    cr.line_to(3.0, 21.0);
+    cr.line_to(3.0, 17.0);
+    cr.close_path();
+    let _ = cr.stroke();
+
+    cr.move_to(14.0, 6.0);
+    cr.line_to(18.0, 10.0);
+    let _ = cr.stroke();
+}
+
+fn draw_copy(cr: &cairo::Context) {
+    // Foglio posteriore
+    cr.move_to(8.0, 4.0);
+    cr.line_to(18.0, 4.0);
+    cr.line_to(20.0, 6.0);
+    cr.line_to(20.0, 16.0);
+    let _ = cr.stroke();
+
+    // Foglio anteriore principale
+    let x = 4.0;
+    let y = 8.0;
+    let w = 12.0;
+    let h = 12.0;
+    let r = 2.0;
+    cr.arc(x + w - r, y + r, r, -PI / 2.0, 0.0);
+    cr.arc(x + w - r, y + h - r, r, 0.0, PI / 2.0);
+    cr.arc(x + r, y + h - r, r, PI / 2.0, PI);
+    cr.arc(x + r, y + r, r, PI, 3.0 * PI / 2.0);
+    cr.close_path();
+    let _ = cr.stroke();
+}
+
+fn draw_trash(cr: &cairo::Context) {
+    // Coperchio orizzontale
+    cr.move_to(3.0, 6.0);
+    cr.line_to(21.0, 6.0);
+    let _ = cr.stroke();
+
+    // Manico superiore
+    cr.move_to(8.0, 6.0);
+    cr.line_to(8.0, 4.0);
+    cr.line_to(16.0, 4.0);
+    cr.line_to(16.0, 6.0);
+    let _ = cr.stroke();
+
+    // Secchio
+    cr.move_to(5.0, 6.0);
+    cr.line_to(6.0, 19.0);
+    cr.arc(8.0, 19.0, 2.0, PI, PI / 2.0);
+    cr.line_to(16.0, 21.0);
+    cr.arc(16.0, 19.0, 2.0, PI / 2.0, 0.0);
+    cr.line_to(19.0, 6.0);
+    let _ = cr.stroke();
+
+    // Scanalature verticali
+    cr.move_to(10.0, 10.0);
+    cr.line_to(10.0, 17.0);
+    cr.move_to(14.0, 10.0);
+    cr.line_to(14.0, 17.0);
     let _ = cr.stroke();
 }
 

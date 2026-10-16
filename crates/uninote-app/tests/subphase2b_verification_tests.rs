@@ -259,10 +259,10 @@ fn test_t2_r6_f3_dock_drag_on_tiny_window_height() {
 
 #[test]
 fn test_t2_r7_semantic_version_format() {
-    let ver = "0.2.1";
+    let ver = env!("CARGO_PKG_VERSION");
     let parts: Vec<&str> = ver.split('.').collect();
     assert_eq!(parts.len(), 3);
     assert_eq!(parts[0], "0");
-    assert_eq!(parts[1], "2");
-    assert_eq!(parts[2], "1");
+    assert_eq!(parts[1], "3");
+    assert_eq!(parts[2], "0");
 }

@@ -1,0 +1,25 @@
+[Desktop Entry]
+Name=UniNote
+GenericName=Academic Note-Taking Suite
+GenericName[it]=Suite per Appunti Accademici
+Comment=Take handwritten notes with active stylus and annotate PDF slides
+Comment[it]=Prendi appunti a mano libera con stilo attivo e annota dispense PDF
+Exec=uninote %F
+Icon=org.uninote.UniNote
+Terminal=false
+Type=Application
+Categories=Education;Graphics;2DGraphics;VectorGraphics;
+MimeType=application/x-uninote;application/pdf;
+Keywords=notes;handwriting;stylus;mpp;wacom;pdf;annotation;canvas;appunti;lavagna;quaderno;
+StartupWMClass=org.uninote.UniNote
+Actions=NewNotebook;NewWhiteboard;
+
+[Desktop Action NewNotebook]
+Name=Nuovo Quaderno A4
+Name[en]=New A4 Notebook
+Exec=uninote --new-notebook
+
+[Desktop Action NewWhiteboard]
+Name=Nuova Lavagna Infinita
+Name[en]=New Infinite Whiteboard
+Exec=uninote --new-whiteboard

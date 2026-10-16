@@ -46,7 +46,24 @@ pub fn get_or_create_thumbnail_path(meta: &RecentDocumentMeta) -> PathBuf {
     let thumb_path = cache_dir.join(thumb_filename);
 
     if !thumb_path.exists() {
-        let _ = render_cairo_thumbnail(&meta.title, meta.format, &thumb_path);
+        let p = Path::new(&meta.file_path);
+        let rendered_real = if p.exists() {
+            if let Ok(store) = uninote_storage::DocumentStore::open_or_create(p) {
+                if let Ok(doc) = store.load_document() {
+                    render_document_thumbnail(&doc, &thumb_path).is_ok()
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if !rendered_real {
+            let _ = render_cairo_thumbnail(&meta.title, meta.format, &thumb_path);
+        }
     }
     thumb_path
 }
@@ -59,10 +76,9 @@ pub fn format_badge_label(format: DocumentFormat) -> &'static str {
     }
 }
 
-/// Genera una miniatura visiva 240x340 px in Cairo per una card del quaderno o della lavagna.
-pub fn render_cairo_thumbnail(
-    _title: &str,
-    format: DocumentFormat,
+/// Genera la miniatura per il documento renderizzando la prima pagina (o fallback a sfondo procedurale).
+pub fn render_document_thumbnail(
+    doc: &uninote_core::Document,
     output_png: &Path,
 ) -> Result<(), String> {
     let (w, h) = (240, 340);
@@ -70,34 +86,132 @@ pub fn render_cairo_thumbnail(
         .map_err(|e| format!("Thumbnail surface error: {:?}", e))?;
     let cr = Context::new(&surface).map_err(|e| format!("Thumbnail context error: {:?}", e))?;
 
-    // Sfondo principale Deep Slate (#172126)
-    cr.set_source_rgb(0.090, 0.129, 0.149);
+    // Sfondo principale Dark Deep Slate (#0A151A)
+    cr.set_source_rgb(0.039, 0.082, 0.102);
     cr.rectangle(0.0, 0.0, w as f64, h as f64);
     cr.fill().map_err(|e| format!("{:?}", e))?;
 
-    match format {
+    match doc.format {
         DocumentFormat::Notebook => {
-            // Rigature orizzontali tenui di anteprima foglio
-            cr.set_source_rgba(0.427, 0.824, 1.0, 0.06);
-            cr.set_line_width(0.8);
-            let mut y = 50.0;
-            while y < h as f64 - 20.0 {
-                cr.move_to(20.0, y);
-                cr.line_to(w as f64 - 20.0, y);
-                let _ = cr.stroke();
-                y += 18.0;
-            }
+            // Disegna il foglio A4 proporzionato
+            let pad = 12.0;
+            let paper_w = w as f64 - pad * 2.0;
+            let paper_h =
+                paper_w * (uninote_core::model::A4_HEIGHT_PT / uninote_core::model::A4_WIDTH_PT);
+            let paper_x = pad;
+            let paper_y = (h as f64 - paper_h) / 2.0;
 
-            // Margine verticale sinistro (rosso/corallo DMS tenue)
-            cr.set_source_rgba(1.0, 0.706, 0.670, 0.15);
-            cr.move_to(45.0, 40.0);
-            cr.line_to(45.0, h as f64 - 20.0);
+            // Ombra
+            cr.set_source_rgba(0.0, 0.0, 0.0, 0.45);
+            cr.rectangle(paper_x - 1.0, paper_y + 2.0, paper_w + 2.0, paper_h + 2.0);
+            let _ = cr.fill();
+
+            // Foglio bianco naturale
+            cr.set_source_rgb(0.985, 0.980, 0.965);
+            cr.rectangle(paper_x, paper_y, paper_w, paper_h);
+            let _ = cr.fill();
+
+            // Bordo foglio
+            cr.set_source_rgba(0.0, 0.0, 0.0, 0.12);
+            cr.set_line_width(0.8);
+            cr.rectangle(paper_x, paper_y, paper_w, paper_h);
             let _ = cr.stroke();
 
-            // Intestazione quaderno in ciano elettrico DMS
-            cr.set_source_rgba(0.427, 0.824, 1.0, 0.25);
-            cr.rectangle(20.0, 20.0, w as f64 - 40.0, 15.0);
-            cr.fill().map_err(|e| format!("{:?}", e))?;
+            // Clip all'interno del foglio
+            let _ = cr.save();
+            cr.rectangle(paper_x, paper_y, paper_w, paper_h);
+            cr.clip();
+
+            if let Some(first_page) = doc.pages.first() {
+                // Rigatura o quadretti tenui
+                match &first_page.background {
+                    PageBackground::Blank => {}
+                    PageBackground::Ruled {
+                        line_spacing,
+                        margin_left,
+                    } => {
+                        let scale = paper_w / uninote_core::model::A4_WIDTH_PT;
+                        let spacing_px = line_spacing * scale;
+                        let margin_px = margin_left * scale;
+
+                        cr.set_source_rgba(0.88, 0.35, 0.35, 0.30);
+                        cr.set_line_width(0.8);
+                        cr.move_to(paper_x + margin_px, paper_y);
+                        cr.line_to(paper_x + margin_px, paper_y + paper_h);
+                        let _ = cr.stroke();
+
+                        cr.set_source_rgba(0.35, 0.50, 0.70, 0.25);
+                        cr.set_line_width(0.6);
+                        let mut ly = paper_y + spacing_px * 2.0;
+                        while ly < paper_y + paper_h {
+                            cr.move_to(paper_x, ly);
+                            cr.line_to(paper_x + paper_w, ly);
+                            ly += spacing_px;
+                        }
+                        let _ = cr.stroke();
+                    }
+                    PageBackground::Grid { grid_size } => {
+                        let scale = paper_w / uninote_core::model::A4_WIDTH_PT;
+                        let grid_px = (grid_size * scale).max(3.0);
+                        cr.set_source_rgba(0.45, 0.60, 0.80, 0.22);
+                        cr.set_line_width(0.5);
+
+                        let mut gx = paper_x + grid_px;
+                        while gx < paper_x + paper_w {
+                            cr.move_to(gx, paper_y);
+                            cr.line_to(gx, paper_y + paper_h);
+                            gx += grid_px;
+                        }
+                        let mut gy = paper_y + grid_px;
+                        while gy < paper_y + paper_h {
+                            cr.move_to(paper_x, gy);
+                            cr.line_to(paper_x + paper_w, gy);
+                            gy += grid_px;
+                        }
+                        let _ = cr.stroke();
+                    }
+                    _ => {}
+                }
+
+                // Renderizza i tratti reali della pagina 1
+                let scale = paper_w / uninote_core::model::A4_WIDTH_PT;
+                let _ = cr.save();
+                cr.translate(paper_x, paper_y);
+                cr.scale(scale, scale);
+
+                for item in &first_page.items {
+                    let uninote_core::ItemKind::Stroke(stroke) = &item.kind;
+                    if stroke.points.is_empty() {
+                        continue;
+                    }
+                    let (r, g, b, a) = stroke.style.color;
+                    cr.set_source_rgba(r, g, b, a);
+                    cr.set_line_cap(gtk4::cairo::LineCap::Round);
+                    cr.set_line_join(gtk4::cairo::LineJoin::Round);
+
+                    if stroke.points.len() == 1 {
+                        let p = &stroke.points[0];
+                        cr.arc(
+                            p.x,
+                            p.y,
+                            (p.width / 2.0).max(1.0),
+                            0.0,
+                            2.0 * std::f64::consts::PI,
+                        );
+                        let _ = cr.fill();
+                    } else {
+                        for w in stroke.points.windows(2) {
+                            cr.set_line_width(w[0].width.max(1.2));
+                            cr.move_to(w[0].x, w[0].y);
+                            cr.line_to(w[1].x, w[1].y);
+                            let _ = cr.stroke();
+                        }
+                    }
+                }
+                let _ = cr.restore();
+            }
+
+            let _ = cr.restore();
         }
         DocumentFormat::Whiteboard => {
             // Matrice di punti per la lavagna procedurale
@@ -123,6 +237,32 @@ pub fn render_cairo_thumbnail(
                 2.0 * std::f64::consts::PI,
             );
             cr.fill().map_err(|e| format!("{:?}", e))?;
+
+            // Se ci sono tratti nella prima pagina della whiteboard, renderizzali al centro
+            if let Some(first_page) = doc.pages.first() {
+                if !first_page.items.is_empty() {
+                    let _ = cr.save();
+                    cr.translate(w as f64 / 2.0, h as f64 / 2.0);
+                    cr.scale(0.3, 0.3);
+                    for item in &first_page.items {
+                        let uninote_core::ItemKind::Stroke(stroke) = &item.kind;
+                        if stroke.points.is_empty() {
+                            continue;
+                        }
+                        let (r, g, b, a) = stroke.style.color;
+                        cr.set_source_rgba(r, g, b, a);
+                        cr.set_line_cap(gtk4::cairo::LineCap::Round);
+                        cr.set_line_join(gtk4::cairo::LineJoin::Round);
+                        for w in stroke.points.windows(2) {
+                            cr.set_line_width(w[0].width.max(1.5));
+                            cr.move_to(w[0].x, w[0].y);
+                            cr.line_to(w[1].x, w[1].y);
+                            let _ = cr.stroke();
+                        }
+                    }
+                    let _ = cr.restore();
+                }
+            }
         }
     }
 
@@ -138,6 +278,19 @@ pub fn render_cairo_thumbnail(
         .map_err(|e| format!("PNG write error: {:?}", e))?;
 
     Ok(())
+}
+
+/// Genera una miniatura visiva 240x340 px in Cairo per una card del quaderno o della lavagna (fallback rapido).
+pub fn render_cairo_thumbnail(
+    _title: &str,
+    format: DocumentFormat,
+    output_png: &Path,
+) -> Result<(), String> {
+    let doc = match format {
+        DocumentFormat::Notebook => uninote_core::Document::new_notebook("Quaderno"),
+        DocumentFormat::Whiteboard => uninote_core::Document::new_whiteboard(PageBackground::Blank),
+    };
+    render_document_thumbnail(&doc, output_png)
 }
 
 /// Dialogo modale per la scelta del formato alla creazione di un nuovo documento.
@@ -710,19 +863,6 @@ impl UniNoteDashboard {
         });
     }
 
-    /// Ricostruisce le card dei quaderni nella `GtkFlowBox` filtrando per la query corrente.
-    pub fn refresh(&self) {
-        self.store.borrow_mut().sanitize_existing_files();
-        let query = self.search_entry.text().to_string();
-        Self::populate_flowbox(
-            &self.flow_box,
-            &self.empty_box,
-            &self.store,
-            &query,
-            &self.on_open_document,
-        );
-    }
-
     fn populate_flowbox(
         flow_box: &FlowBox,
         empty_box: &GtkBox,
@@ -747,7 +887,7 @@ impl UniNoteDashboard {
         flow_box.set_visible(true);
 
         for meta in filtered {
-            let card = Self::create_card(&meta, open_cb);
+            let card = Self::create_card_full(&meta, open_cb, store, flow_box, empty_box);
             flow_box.append(&card);
         }
     }
@@ -762,6 +902,20 @@ impl UniNoteDashboard {
 
     /// Crea il widget grafico di una singola card quaderno conforme a DMS.
     pub fn create_card(meta: &RecentDocumentMeta, open_cb: &OpenDocCallback) -> FlowBoxChild {
+        let store = Rc::new(RefCell::new(DashboardRecentStore::new()));
+        let flow_box = FlowBox::new();
+        let empty_box = GtkBox::new(Orientation::Vertical, 0);
+        Self::create_card_full(meta, open_cb, &store, &flow_box, &empty_box)
+    }
+
+    /// Crea il widget grafico di una singola card quaderno conforme a DMS con supporto a store e re-rendering flowbox.
+    pub fn create_card_full(
+        meta: &RecentDocumentMeta,
+        open_cb: &OpenDocCallback,
+        store: &Rc<RefCell<DashboardRecentStore>>,
+        flow_box: &FlowBox,
+        empty_box: &GtkBox,
+    ) -> FlowBoxChild {
         let child = FlowBoxChild::new();
         child.add_css_class("dms-flowbox-child");
 
@@ -781,7 +935,7 @@ impl UniNoteDashboard {
         picture.add_css_class("dms-card-thumbnail");
         card_box.append(&picture);
 
-        // 2. Dettagli testuali
+        // 2. Dettagli testuali con riga titolo + menu 3 puntini
         let info_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(4)
@@ -790,13 +944,338 @@ impl UniNoteDashboard {
             .margin_bottom(10)
             .build();
 
+        let title_row = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(6)
+            .valign(Align::Center)
+            .build();
+
         let lbl_title = Label::builder()
             .label(&meta.title)
             .xalign(0.0)
+            .hexpand(true)
             .ellipsize(gtk4::pango::EllipsizeMode::End)
             .css_classes(["dms-card-title", "heading"])
             .build();
-        info_box.append(&lbl_title);
+        title_row.append(&lbl_title);
+
+        // Pulsante Menu 3 puntini
+        let btn_menu = Button::builder()
+            .child(&create_icon(IconKind::MoreVertical, 14, None))
+            .tooltip_text("Altre opzioni...")
+            .css_classes(["dms-card-menu-btn"])
+            .valign(Align::Center)
+            .halign(Align::End)
+            .build();
+
+        let popover = gtk4::Popover::builder()
+            .css_classes(["dms-popover", "dms-context-popover"])
+            .build();
+
+        let menu_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(2)
+            .margin_start(4)
+            .margin_end(4)
+            .margin_top(4)
+            .margin_bottom(4)
+            .build();
+
+        let make_menu_item =
+            |icon_kind: IconKind, label_text: &str, is_destructive: bool| -> Button {
+                let row = GtkBox::builder()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(10)
+                    .valign(Align::Center)
+                    .build();
+
+                let icon_color = if is_destructive {
+                    Some(gtk4::gdk::RGBA::new(1.0, 0.42, 0.42, 1.0))
+                } else {
+                    None
+                };
+                let icon = create_icon(icon_kind, 16, icon_color);
+                let lbl = Label::builder()
+                    .label(label_text)
+                    .xalign(0.0)
+                    .hexpand(true)
+                    .build();
+
+                row.append(&icon);
+                row.append(&lbl);
+
+                let mut classes = vec!["dms-menu-item-btn"];
+                if is_destructive {
+                    classes.push("destructive-action");
+                }
+
+                Button::builder().child(&row).css_classes(classes).build()
+            };
+
+        let btn_rename = make_menu_item(IconKind::Edit, "Rinomina", false);
+        let btn_duplicate = make_menu_item(IconKind::Copy, "Duplica", false);
+        let btn_delete = make_menu_item(IconKind::Trash, "Elimina", true);
+
+        menu_box.append(&btn_rename);
+        menu_box.append(&btn_duplicate);
+
+        let sep = gtk4::Separator::new(Orientation::Horizontal);
+        sep.add_css_class("dms-menu-separator");
+        menu_box.append(&sep);
+
+        menu_box.append(&btn_delete);
+        popover.set_child(Some(&menu_box));
+        popover.set_parent(&btn_menu);
+
+        let pop_ref = popover.clone();
+        btn_menu.connect_clicked(move |_| {
+            pop_ref.popup();
+        });
+
+        // Azione Rinomina
+        let pop_for_rename = popover.clone();
+        let meta_for_rename = meta.clone();
+        let store_for_rename = store.clone();
+        let flow_for_rename = flow_box.clone();
+        let empty_for_rename = empty_box.clone();
+        let open_for_rename = open_cb.clone();
+        btn_rename.connect_clicked(move |btn| {
+            pop_for_rename.popdown();
+            let parent_win = btn.root().and_then(|r| r.downcast::<Window>().ok());
+
+            let dlg = Window::builder()
+                .title("Rinomina Documento — UniNote")
+                .modal(true)
+                .default_width(420)
+                .default_height(180)
+                .css_classes(["uninote-dialog", "dms-dialog"])
+                .build();
+
+            if let Some(ref p) = parent_win {
+                dlg.set_transient_for(Some(p));
+            }
+
+            let dlg_box = GtkBox::builder()
+                .orientation(Orientation::Vertical)
+                .spacing(14)
+                .margin_start(20)
+                .margin_end(20)
+                .margin_top(20)
+                .margin_bottom(20)
+                .build();
+
+            let lbl = Label::builder()
+                .label("Nuovo nome del file:")
+                .xalign(0.0)
+                .css_classes(["heading"])
+                .build();
+            dlg_box.append(&lbl);
+
+            let entry = Entry::builder()
+                .text(&meta_for_rename.title)
+                .css_classes(["dms-entry"])
+                .build();
+            dlg_box.append(&entry);
+
+            let act_box = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(10)
+                .halign(Align::End)
+                .build();
+
+            let btn_cancel = Button::builder()
+                .label("Annulla")
+                .css_classes(["dms-action-btn"])
+                .build();
+
+            let btn_ok = Button::builder()
+                .label("Salva")
+                .css_classes(["suggested-action", "dms-btn-primary"])
+                .build();
+
+            act_box.append(&btn_cancel);
+            act_box.append(&btn_ok);
+            dlg_box.append(&act_box);
+            dlg.set_child(Some(&dlg_box));
+
+            let dlg_cancel = dlg.clone();
+            btn_cancel.connect_clicked(move |_| {
+                dlg_cancel.close();
+            });
+
+            let dlg_ok = dlg.clone();
+            let m_ren = meta_for_rename.clone();
+            let st_ren = store_for_rename.clone();
+            let fl_ren = flow_for_rename.clone();
+            let em_ren = empty_for_rename.clone();
+            let od_ren = open_for_rename.clone();
+            btn_ok.connect_clicked(move |_| {
+                let new_title = entry.text().trim().to_string();
+                if !new_title.is_empty() && new_title != m_ren.title {
+                    let old_path = PathBuf::from(&m_ren.file_path);
+                    if let Some(parent) = old_path.parent() {
+                        let ext = old_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("uninote");
+                        let new_path = parent.join(format!("{}.{}", new_title, ext));
+                        if std::fs::rename(&old_path, &new_path).is_ok() {
+                            st_ren.borrow_mut().rename_recent(
+                                &m_ren.file_path,
+                                &new_path.to_string_lossy(),
+                                &new_title,
+                            );
+                            let _ = st_ren.borrow().save();
+                            Self::populate_flowbox(&fl_ren, &em_ren, &st_ren, "", &od_ren);
+                        }
+                    }
+                }
+                dlg_ok.close();
+            });
+
+            dlg.present();
+        });
+
+        // Azione Duplica
+        let pop_for_dup = popover.clone();
+        let meta_for_dup = meta.clone();
+        let store_for_dup = store.clone();
+        let flow_for_dup = flow_box.clone();
+        let empty_for_dup = empty_box.clone();
+        let open_for_dup = open_cb.clone();
+        btn_duplicate.connect_clicked(move |_| {
+            pop_for_dup.popdown();
+            let old_path = PathBuf::from(&meta_for_dup.file_path);
+            if old_path.exists() {
+                if let Some(parent) = old_path.parent() {
+                    let ext = old_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("uninote");
+                    let mut copy_idx = 1;
+                    let mut new_title = format!("{} (Copia)", meta_for_dup.title);
+                    let mut new_path = parent.join(format!("{}.{}", new_title, ext));
+                    while new_path.exists() {
+                        copy_idx += 1;
+                        new_title = format!("{} (Copia {})", meta_for_dup.title, copy_idx);
+                        new_path = parent.join(format!("{}.{}", new_title, ext));
+                    }
+
+                    if std::fs::copy(&old_path, &new_path).is_ok() {
+                        let new_meta = RecentDocumentMeta {
+                            file_path: new_path.to_string_lossy().to_string(),
+                            title: new_title,
+                            format: meta_for_dup.format,
+                            last_modified_timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                            page_count: meta_for_dup.page_count,
+                            thumbnail_path: None,
+                        };
+                        store_for_dup.borrow_mut().add_recent(new_meta);
+                        let _ = store_for_dup.borrow().save();
+                        Self::populate_flowbox(
+                            &flow_for_dup,
+                            &empty_for_dup,
+                            &store_for_dup,
+                            "",
+                            &open_for_dup,
+                        );
+                    }
+                }
+            }
+        });
+
+        // Azione Elimina
+        let pop_for_del = popover.clone();
+        let meta_for_del = meta.clone();
+        let store_for_del = store.clone();
+        let flow_for_del = flow_box.clone();
+        let empty_for_del = empty_box.clone();
+        let open_for_del = open_cb.clone();
+        btn_delete.connect_clicked(move |btn| {
+            pop_for_del.popdown();
+            let parent_win = btn.root().and_then(|r| r.downcast::<Window>().ok());
+
+            let dlg = Window::builder()
+                .title("Elimina Documento — UniNote")
+                .modal(true)
+                .default_width(400)
+                .default_height(160)
+                .css_classes(["uninote-dialog", "dms-dialog"])
+                .build();
+
+            if let Some(ref p) = parent_win {
+                dlg.set_transient_for(Some(p));
+            }
+
+            let dlg_box = GtkBox::builder()
+                .orientation(Orientation::Vertical)
+                .spacing(14)
+                .margin_start(20)
+                .margin_end(20)
+                .margin_top(20)
+                .margin_bottom(20)
+                .build();
+
+            let lbl_msg = Label::builder()
+                .label(format!(
+                    "Vuoi davvero eliminare definitivamente \"{}\"?",
+                    meta_for_del.title
+                ))
+                .wrap(true)
+                .xalign(0.0)
+                .css_classes(["dim-label"])
+                .build();
+            dlg_box.append(&lbl_msg);
+
+            let act_box = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(10)
+                .halign(Align::End)
+                .build();
+
+            let btn_cancel = Button::builder()
+                .label("Annulla")
+                .css_classes(["dms-action-btn"])
+                .build();
+
+            let btn_confirm = Button::builder()
+                .label("Elimina")
+                .css_classes(["destructive-action", "dms-btn-primary"])
+                .build();
+
+            act_box.append(&btn_cancel);
+            act_box.append(&btn_confirm);
+            dlg_box.append(&act_box);
+            dlg.set_child(Some(&dlg_box));
+
+            let dlg_cancel = dlg.clone();
+            btn_cancel.connect_clicked(move |_| {
+                dlg_cancel.close();
+            });
+
+            let dlg_conf = dlg.clone();
+            let m_del = meta_for_del.clone();
+            let st_del = store_for_del.clone();
+            let fl_del = flow_for_del.clone();
+            let em_del = empty_for_del.clone();
+            let od_del = open_for_del.clone();
+            btn_confirm.connect_clicked(move |_| {
+                let p = PathBuf::from(&m_del.file_path);
+                let _ = std::fs::remove_file(&p);
+                st_del.borrow_mut().remove_recent(&m_del.file_path);
+                let _ = st_del.borrow().save();
+                Self::populate_flowbox(&fl_del, &em_del, &st_del, "", &od_del);
+                dlg_conf.close();
+            });
+
+            dlg.present();
+        });
+
+        title_row.append(&btn_menu);
+        info_box.append(&title_row);
 
         let meta_row = GtkBox::builder()
             .orientation(Orientation::Horizontal)
@@ -831,7 +1310,7 @@ impl UniNoteDashboard {
         info_box.append(&meta_row);
         card_box.append(&info_box);
 
-        // Interattività al click per aprire il documento
+        // Interattività al click per aprire il documento (sulla Picture e sull'info box, evitando btn_menu)
         let gesture = GestureClick::new();
         let target_path = PathBuf::from(&meta.file_path);
         let cb_clone = open_cb.clone();
@@ -840,7 +1319,7 @@ impl UniNoteDashboard {
                 cb(target_path.clone());
             }
         });
-        card_box.add_controller(gesture);
+        picture.add_controller(gesture);
 
         child.set_child(Some(&card_box));
         child
@@ -886,5 +1365,18 @@ impl UniNoteDashboard {
     /// Restituisce il riferimento condiviso allo store dei documenti recenti.
     pub fn store(&self) -> Rc<RefCell<DashboardRecentStore>> {
         self.store.clone()
+    }
+
+    /// Ricostruisce le card dei quaderni nella `GtkFlowBox` filtrando per la query corrente.
+    pub fn refresh(&self) {
+        self.store.borrow_mut().sanitize_existing_files();
+        let query = self.search_entry.text().to_string();
+        Self::populate_flowbox(
+            &self.flow_box,
+            &self.empty_box,
+            &self.store,
+            &query,
+            &self.on_open_document,
+        );
     }
 }

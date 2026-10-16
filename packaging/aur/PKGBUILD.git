@@ -1,0 +1,94 @@
+# Maintainer: UniNote Developers <uninote@uninote.org>
+pkgname=uninote-git
+pkgver=0.3.0.r0.g0000000
+pkgrel=1
+pkgdesc="Suite accademica Linux nativa per prendere appunti a mano libera con stilo (MPP, Wacom) - Development VCS branch"
+arch=('x86_64')
+url="https://github.com/UniNote/UniNote"
+license=('GPL-3.0-only')
+depends=(
+    'gtk4'
+    'libadwaita'
+    'poppler-glib'
+    'cairo'
+    'hicolor-icon-theme'
+    'shared-mime-info'
+)
+makedepends=(
+    'cargo'
+    'git'
+)
+provides=('uninote')
+conflicts=('uninote')
+options=('!lto')
+source=("uninote::git+$url.git#branch=main")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd uninote
+    git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' || \
+        printf "0.3.0.r%s.g%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+    cd uninote
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd uninote
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo build --frozen --release -p uninote-app
+}
+
+check() {
+    cd uninote
+    if command -v xvfb-run >/dev/null 2>&1; then
+        xvfb-run --auto-servernum cargo test --frozen --workspace
+    fi
+}
+
+package() {
+    cd uninote
+
+    # Binario eseguibile principale
+    install -Dm755 "target/release/uninote" "$pkgdir/usr/bin/uninote"
+
+    # File Desktop FreeDesktop
+    install -Dm644 "data/org.uninote.UniNote.desktop" "$pkgdir/usr/share/applications/org.uninote.UniNote.desktop"
+
+    # Metadati AppStream 1.0
+    install -Dm644 "data/org.uninote.UniNote.metainfo.xml" "$pkgdir/usr/share/metainfo/org.uninote.UniNote.metainfo.xml"
+
+    # Definizione MIME Type per file .uninote
+    install -Dm644 "data/org.uninote.UniNote.xml" "$pkgdir/usr/share/mime/packages/org.uninote.UniNote.xml"
+
+    # Icone SVG vettoriali
+    install -Dm644 "data/icons/hicolor/scalable/apps/org.uninote.UniNote.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/org.uninote.UniNote.svg"
+    install -Dm644 "data/icons/hicolor/symbolic/apps/org.uninote.UniNote-symbolic.svg" \
+        "$pkgdir/usr/share/icons/hicolor/symbolic/apps/org.uninote.UniNote-symbolic.svg"
+    install -Dm644 "data/icons/hicolor/scalable/mimetypes/application-x-uninote.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/mimetypes/application-x-uninote.svg"
+
+    # Icone raster PNG hicolor
+    for res in 16 32 48 64 128 256 512; do
+        if [ -f "data/icons/hicolor/${res}x${res}/apps/org.uninote.UniNote.png" ]; then
+            install -Dm644 "data/icons/hicolor/${res}x${res}/apps/org.uninote.UniNote.png" \
+                "$pkgdir/usr/share/icons/hicolor/${res}x${res}/apps/org.uninote.UniNote.png"
+        fi
+    done
+
+    # Icone MIME raster
+    for res in 48 128; do
+        if [ -f "data/icons/hicolor/${res}x${res}/mimetypes/application-x-uninote.png" ]; then
+            install -Dm644 "data/icons/hicolor/${res}x${res}/mimetypes/application-x-uninote.png" \
+                "$pkgdir/usr/share/icons/hicolor/${res}x${res}/mimetypes/application-x-uninote.png"
+        fi
+    done
+
+    # Testo della licenza GPL-3.0
+    install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

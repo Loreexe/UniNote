@@ -271,6 +271,27 @@ impl DashboardRecentStore {
             idx += 1;
         }
     }
+
+    /// Rimuove un file specifico dall'elenco dei recenti.
+    pub fn remove_recent(&mut self, file_path: &str) {
+        self.recent_files.retain(|r| r.file_path != file_path);
+    }
+
+    /// Rinomina un documento recente sia nel percorso che nel titolo.
+    pub fn rename_recent(&mut self, old_path: &str, new_path: &str, new_title: &str) {
+        if let Some(doc) = self
+            .recent_files
+            .iter_mut()
+            .find(|r| r.file_path == old_path)
+        {
+            doc.file_path = new_path.to_string();
+            doc.title = new_title.to_string();
+            doc.last_modified_timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+        }
+    }
 }
 
 // ============================================================================

@@ -4,6 +4,9 @@
 
 # --- Rust & Cargo Build Outputs ---
 /target/
+/build/
+/dist/
+/.flatpak-builder/
 Cargo.lock.bak
 **/*.rs.bk
 

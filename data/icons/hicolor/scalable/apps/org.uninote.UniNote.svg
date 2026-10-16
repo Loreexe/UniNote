@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="512" height="512" viewBox="0 0 512 512">
+<defs>
+<linearGradient id="linear-pattern-0" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="512" y2="512">
+<stop offset="0" stop-color="rgb(0%, 30.2%, 39.6%)" stop-opacity="1"/>
+<stop offset="1" stop-color="rgb(0%, 13.3%, 18%)" stop-opacity="1"/>
+</linearGradient>
+</defs>
+<path fill-rule="nonzero" fill="url(#linear-pattern-0)" stroke-width="14.222222" stroke-linecap="butt" stroke-linejoin="miter" stroke="rgb(42.7%, 82.4%, 100%)" stroke-opacity="0.22" stroke-miterlimit="10" d="M 391.109375 0 C 457.875 0 512 54.125 512 120.890625 L 512 391.109375 C 512 457.875 457.875 512 391.109375 512 L 120.890625 512 C 54.125 512 0 457.875 0 391.109375 L 0 120.890625 C 0 54.125 54.125 0 120.890625 0 Z M 391.109375 0 "/>
+<path fill="none" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" stroke="rgb(92.5%, 93.7%, 95.7%)" stroke-opacity="1" stroke-miterlimit="10" d="M 10.499908 9.499878 L 10.499908 20.000061 C 10.499908 25.500092 14.500031 28.499908 18 28.499908 " transform="matrix(14.222222, 0, 0, 14.222222, 0, 0)"/>
+<path fill-rule="nonzero" fill="rgb(42.7%, 82.4%, 100%)" fill-opacity="0.25" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="rgb(42.7%, 82.4%, 100%)" stroke-opacity="1" stroke-miterlimit="10" d="M 23.500031 9.499878 L 27.499878 9.499878 L 28.000031 17.500122 L 18 28.499908 L 20.499939 19.499908 Z M 23.500031 9.499878 " transform="matrix(14.222222, 0, 0, 14.222222, 0, 0)"/>
+<path fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" stroke="rgb(42.7%, 82.4%, 100%)" stroke-opacity="1" stroke-miterlimit="10" d="M 18 28.499908 L 22.999878 19.000031 " transform="matrix(14.222222, 0, 0, 14.222222, 0, 0)"/>
+<path fill-rule="nonzero" fill="rgb(92.5%, 93.7%, 95.7%)" fill-opacity="1" d="M 344.179688 270.222656 C 344.179688 279.648438 336.535156 287.289062 327.109375 287.289062 C 317.683594 287.289062 310.042969 279.648438 310.042969 270.222656 C 310.042969 260.796875 317.683594 253.15625 327.109375 253.15625 C 336.535156 253.15625 344.179688 260.796875 344.179688 270.222656 "/>
+<path fill-rule="nonzero" fill="rgb(47.5%, 85.1%, 64.7%)" fill-opacity="1" d="M 264.535156 423.820312 C 264.535156 434.820312 255.617188 443.734375 244.621094 443.734375 C 233.625 443.734375 224.710938 434.820312 224.710938 423.820312 C 224.710938 412.824219 233.625 403.910156 244.621094 403.910156 C 255.617188 403.910156 264.535156 412.824219 264.535156 423.820312 "/>
+</svg>
