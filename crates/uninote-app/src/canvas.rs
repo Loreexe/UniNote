@@ -623,6 +623,22 @@ impl NoteCanvas {
         self.area.queue_draw();
     }
 
+    pub fn document_format(&self) -> DocumentFormat {
+        self.state.borrow().document.format
+    }
+
+    pub fn document_title(&self) -> String {
+        self.state.borrow().document.title.clone()
+    }
+
+    pub fn file_path(&self) -> Option<PathBuf> {
+        self.state.borrow().file_path.clone()
+    }
+
+    pub fn persist_changes(&self) {
+        self.state.borrow_mut().persist_changes();
+    }
+
     pub fn new_document(&self) {
         let mut st = self.state.borrow_mut();
         st.document = Document::new_empty("Nuovo Quaderno");
@@ -1131,7 +1147,13 @@ impl NoteCanvas {
         }
 
         let adapted = adapt_ink_color(stroke.style.color, is_dark);
-        cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
+        let is_semi_transparent = adapted.3 < 0.999;
+        if is_semi_transparent {
+            cr.push_group_with_content(gtk4::cairo::Content::ColorAlpha);
+            cr.set_source_rgb(adapted.0, adapted.1, adapted.2);
+        } else {
+            cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
+        }
         cr.set_line_cap(gtk4::cairo::LineCap::Round);
         cr.set_line_join(gtk4::cairo::LineJoin::Round);
 
@@ -1140,6 +1162,10 @@ impl NoteCanvas {
             let radius = (p.width / 2.0).max(1.5);
             cr.arc(p.x, p.y, radius, 0.0, 2.0 * std::f64::consts::PI);
             let _ = cr.fill();
+            if is_semi_transparent {
+                let _ = cr.pop_group_to_source();
+                let _ = cr.paint_with_alpha(adapted.3);
+            }
             return;
         }
 
@@ -1187,6 +1213,11 @@ impl NoteCanvas {
                     }
                 }
             }
+        }
+
+        if is_semi_transparent {
+            let _ = cr.pop_group_to_source();
+            let _ = cr.paint_with_alpha(adapted.3);
         }
     }
 
@@ -2223,18 +2254,11 @@ impl NoteCanvas {
         let end_row = (doc_bottom / spec.step_pt).ceil() as i64;
 
         match bg {
-            PageBackground::Blank | PageBackground::PdfPage { .. } => {
-                // Matrice di punti procedurali discreti con fading allo zoom
-                cr.set_source_rgba(grid_r, grid_g, grid_b, spec.alpha * 0.7);
-                let dot_radius = if is_dark { 1.1 } else { 1.2 };
-                for col in start_col..=end_col {
-                    let sx = (col as f64 * spec.step_pt) * vp.zoom + vp.offset_x;
-                    for row in start_row..=end_row {
-                        let sy = (row as f64 * spec.step_pt) * vp.zoom + vp.offset_y;
-                        cr.arc(sx, sy, dot_radius, 0.0, 2.0 * std::f64::consts::PI);
-                    }
-                }
-                let _ = cr.fill();
+            PageBackground::Blank => {
+                // Sfondo vuoto pulito senza artefatti o griglia
+            }
+            PageBackground::PdfPage { .. } => {
+                // Sfondo per PDF
             }
             PageBackground::Grid { .. } => {
                 // Linee di griglia minori

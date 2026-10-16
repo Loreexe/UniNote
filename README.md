@@ -7,11 +7,12 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2021_Edition_(MSRV_1.80+)-orange.svg?logo=rust)](https://www.rust-lang.org/)
 [![GUI](https://img.shields.io/badge/GUI-GTK4_%26_Libadwaita-4a90e2.svg?logo=gnome)](https://gtk.org/)
-[![Version](https://img.shields.io/badge/Version-0.2.0-teal.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/Version-0.2.1-teal.svg)](Cargo.toml)
 [![CI](https://github.com/UniNote/UniNote/actions/workflows/ci.yml/badge.svg)](https://github.com/UniNote/UniNote/actions/workflows/ci.yml)
 [![Wayland](https://img.shields.io/badge/Display-Wayland_Native-purple.svg)]()
 [![Architecture](https://img.shields.io/badge/Architecture-4_Decoupled_Crates-success.svg)]()
 
+[Screenshots](#-screenshots--interface-showcase) •
 [Features](#-key-features) •
 [Architecture](#-system-architecture) •
 [Installation](#-installation--prerequisites) •
@@ -39,13 +40,40 @@ Unlike conventional note-taking suites that rely on heavy Electron/Chromium runt
 
 ---
 
+## 📸 Screenshots & Interface Showcase
+
+<div align="center">
+
+### 1. Hub Accademico & Dashboard Documenti
+*Visualizzazione a schede con miniature Cairo vettoriali, ricerca istantanea e azioni rapide di creazione.*
+<br/>
+<img src="docs/screenshots/01_dashboard.png" alt="UniNote Dashboard" width="90%" />
+
+<br/><br/>
+
+### 2. Quaderno A4 Standard
+*Inchiostrazione fluida a 120Hz con spline Catmull-Rom, evidenziatore uniforme a passata singola e isola strumenti Dank Material Shell.*
+<br/>
+<img src="docs/screenshots/02_quaderno.png" alt="UniNote Quaderno A4" width="90%" />
+
+<br/><br/>
+
+### 3. Lavagna Infinita
+*Spazio cartesiano continuo $(-\infty, +\infty)$, griglia procedurale dinamica e pulsante di ricentratura rapida all'origine.*
+<br/>
+<img src="docs/screenshots/03_lavagna_infinita.png" alt="UniNote Lavagna Infinita" width="90%" />
+
+</div>
+
+---
+
 ## 🏗️ System Architecture
 
 UniNote is organized as a Cargo virtual workspace consisting of **four decoupled crates** with clean interface boundaries:
 
 ```
 UniNote/
-├── Cargo.toml                      # Workspace manifest (Rust 2021, GPL-3.0, Version 0.2.0)
+├── Cargo.toml                      # Workspace manifest (Rust 2021, GPL-3.0, Version 0.2.1)
 ├── LICENSE                         # Verbatim GNU General Public License v3.0
 ├── design/                         # Dank Material Shell (DMS) UI/UX prototyping (FigCraft)
 │   ├── uninote.figcraft            # Native vector UI design document

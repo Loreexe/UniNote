@@ -192,8 +192,8 @@ impl CreateDocumentDialog {
         main_box.append(&lbl_name);
 
         let entry_name = Entry::builder()
-            .text("Nuovo Quaderno")
-            .placeholder_text("es. Analisi Matematica II")
+            .text("")
+            .placeholder_text("Nuova nota (lascia vuoto per nome automatico)")
             .css_classes(["dms-entry"])
             .build();
         main_box.append(&entry_name);
@@ -296,7 +296,9 @@ impl CreateDocumentDialog {
         btn_create.connect_clicked(move |_| {
             let title = entry_name.text().to_string();
             let final_title = if title.trim().is_empty() {
-                "Senza Titolo".to_string()
+                let store = DashboardRecentStore::load();
+                let (auto_name, _) = store.next_available_note_path();
+                auto_name
             } else {
                 title.trim().to_string()
             };

@@ -257,6 +257,20 @@ impl DashboardRecentStore {
         }
         Ok(())
     }
+
+    /// Trova il prossimo nome e percorso disponibile per "Nuova nota n.uninote".
+    pub fn next_available_note_path(&self) -> (String, PathBuf) {
+        let dir = PathBuf::from(&self.default_notes_dir);
+        let mut idx = 1;
+        loop {
+            let title = format!("Nuova nota {}", idx);
+            let candidate = dir.join(format!("{}.uninote", title));
+            if !candidate.exists() {
+                return (title, candidate);
+            }
+            idx += 1;
+        }
+    }
 }
 
 // ============================================================================

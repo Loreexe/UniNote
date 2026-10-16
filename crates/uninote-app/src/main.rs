@@ -1,10 +1,7 @@
 use gtk4::gio;
 use libadwaita::prelude::*;
-use libadwaita::{Application, ApplicationWindow};
-use std::path::PathBuf;
-use uninote_app::dashboard::UniNoteDashboard;
+use libadwaita::Application;
 use uninote_app::preferences::{DashboardRecentStore, RecentDocumentMeta};
-use uninote_app::settings::UniNoteSettingsWindow;
 use uninote_app::UniNoteWindow;
 use uninote_core::model::DocumentFormat;
 
@@ -22,7 +19,24 @@ fn main() -> glib::ExitCode {
         .build();
 
     app.connect_activate(|app| {
-        let dash_win = ApplicationWindow::builder()
+        uninote_app::init_application_style();
+
+        // Applica modalità tema salvata
+        let settings = uninote_app::preferences::FullAppSettingsModel::load();
+        let sm = libadwaita::StyleManager::default();
+        match settings.theme_mode {
+            uninote_app::preferences::ThemeMode::System => {
+                sm.set_color_scheme(libadwaita::ColorScheme::Default)
+            }
+            uninote_app::preferences::ThemeMode::ForceLight => {
+                sm.set_color_scheme(libadwaita::ColorScheme::ForceLight)
+            }
+            uninote_app::preferences::ThemeMode::ForceDarkOled => {
+                sm.set_color_scheme(libadwaita::ColorScheme::ForceDark)
+            }
+        }
+
+        let dash_win = libadwaita::ApplicationWindow::builder()
             .application(app)
             .title("UniNote — Hub Accademico")
             .default_width(1180)
@@ -30,12 +44,12 @@ fn main() -> glib::ExitCode {
             .css_classes(["uninote-window", "uninote-dashboard-window"])
             .build();
 
-        let dashboard = UniNoteDashboard::new();
+        let dashboard = uninote_app::dashboard::UniNoteDashboard::new();
         dash_win.set_content(Some(dashboard.widget()));
 
         let dash_win_open = dash_win.clone();
         let app_open = app.clone();
-        dashboard.connect_open_document(move |path: PathBuf| {
+        dashboard.connect_open_document(move |path: std::path::PathBuf| {
             let win = UniNoteWindow::open_file(&app_open, &path);
             win.present();
             dash_win_open.close();
@@ -51,7 +65,7 @@ fn main() -> glib::ExitCode {
 
         let dash_win_import = dash_win.clone();
         let app_import = app.clone();
-        dashboard.connect_import_pdf(move |path: PathBuf| {
+        dashboard.connect_import_pdf(move |path: std::path::PathBuf| {
             match UniNoteWindow::create_from_pdf(&app_import, &path) {
                 Ok(win) => {
                     win.present();
@@ -68,7 +82,7 @@ fn main() -> glib::ExitCode {
         });
 
         dashboard.connect_open_settings(move || {
-            let settings_win = UniNoteSettingsWindow::new();
+            let settings_win = uninote_app::settings::UniNoteSettingsWindow::new();
             settings_win.present();
         });
 

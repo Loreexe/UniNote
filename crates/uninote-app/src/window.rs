@@ -22,6 +22,8 @@ use uninote_stroke::{PipelineMode, TouchMode};
 pub struct UniNoteWindow {
     window: ApplicationWindow,
     canvas: Rc<NoteCanvas>,
+    notebook_dock_box: GtkBox,
+    whiteboard_dock_box: GtkBox,
 }
 
 impl UniNoteWindow {
@@ -70,15 +72,19 @@ impl UniNoteWindow {
         // =========================================================================
         // 1. BRAND BADGE IN ALTO A SINISTRA (x: 22, y: 16)
         // =========================================================================
-        let badge_box = GtkBox::builder()
-            .orientation(Orientation::Horizontal)
-            .spacing(8)
+        let badge_btn = Button::builder()
             .valign(Align::Start)
             .halign(Align::Start)
             .margin_start(22)
             .margin_top(16)
-            .can_target(false)
+            .tooltip_text("Torna alla Dashboard")
             .css_classes(["dms-brand-badge"])
+            .build();
+
+        let badge_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(8)
+            .valign(Align::Center)
             .build();
 
         let app_logo = create_icon(IconKind::AppLogo, 35, None);
@@ -105,7 +111,117 @@ impl UniNoteWindow {
             .build();
         badge_box.append(&ver_label);
 
-        overlay.add_overlay(&badge_box);
+        badge_btn.set_child(Some(&badge_box));
+
+        let win_nav = window.clone();
+        let app_nav = app.clone();
+        let c_nav = canvas.clone();
+        badge_btn.connect_clicked(move |_| {
+            let doc_title = c_nav.document_title();
+            let file_path = c_nav.file_path();
+            let is_auto_named = doc_title.starts_with("Nuova nota");
+
+            if is_auto_named {
+                let win_for_dlg = win_nav.clone();
+                let app_for_dlg = app_nav.clone();
+                let c_for_dlg = c_nav.clone();
+                let path_to_remove = file_path.clone();
+
+                let dlg = gtk4::Window::builder()
+                    .title("Salvare il documento? — UniNote")
+                    .transient_for(&win_for_dlg)
+                    .modal(true)
+                    .default_width(440)
+                    .default_height(220)
+                    .css_classes(["uninote-dialog", "dms-dialog"])
+                    .build();
+
+                let box_content = GtkBox::builder()
+                    .orientation(Orientation::Vertical)
+                    .spacing(16)
+                    .margin_start(24)
+                    .margin_end(24)
+                    .margin_top(20)
+                    .margin_bottom(20)
+                    .build();
+
+                let lbl_head = Label::builder()
+                    .label("Salvare il documento?")
+                    .xalign(0.0)
+                    .css_classes(["title-2", "brand-title"])
+                    .build();
+
+                let lbl_body = Label::builder()
+                    .label(format!(
+                        "Il documento \"{}\" non ha un nome personalizzato.\nVuoi conservarlo nella cartella delle note?",
+                        doc_title
+                    ))
+                    .xalign(0.0)
+                    .wrap(true)
+                    .css_classes(["dim-label"])
+                    .build();
+
+                let act_box = GtkBox::builder()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(12)
+                    .halign(Align::End)
+                    .margin_top(12)
+                    .build();
+
+                let btn_discard = Button::builder()
+                    .label("Elimina")
+                    .css_classes(["destructive-action", "dms-action-btn"])
+                    .build();
+
+                let btn_save = Button::builder()
+                    .label("Conserva")
+                    .css_classes(["suggested-action", "dms-btn-primary"])
+                    .build();
+
+                act_box.append(&btn_discard);
+                act_box.append(&btn_save);
+
+                box_content.append(&lbl_head);
+                box_content.append(&lbl_body);
+                box_content.append(&act_box);
+                dlg.set_child(Some(&box_content));
+
+                let dlg_d = dlg.clone();
+                let win_d = win_for_dlg.clone();
+                let app_d = app_for_dlg.clone();
+                let path_d = path_to_remove.clone();
+                btn_discard.connect_clicked(move |_| {
+                    if let Some(ref p) = path_d {
+                        let _ = std::fs::remove_file(p);
+                        let mut store = crate::preferences::DashboardRecentStore::load();
+                        store.sanitize_existing_files();
+                        let _ = store.save();
+                    }
+                    dlg_d.close();
+                    win_d.close();
+                    crate::main_open_dashboard(&app_d);
+                });
+
+                let dlg_s = dlg.clone();
+                let win_s = win_for_dlg.clone();
+                let app_s = app_for_dlg.clone();
+                let c_s = c_for_dlg.clone();
+                btn_save.connect_clicked(move |_| {
+                    c_s.persist_changes();
+                    dlg_s.close();
+                    win_s.close();
+                    crate::main_open_dashboard(&app_s);
+                });
+
+                dlg.present();
+            } else {
+                c_nav.persist_changes();
+                win_nav.close();
+                crate::main_open_dashboard(&app_nav);
+            }
+        });
+
+        overlay.add_overlay(&badge_btn);
 
         // =========================================================================
         // 2. ISOLA CENTRALE STRUMENTI (Top-Center, y: 18, larghezza 447px)
@@ -1320,14 +1436,18 @@ impl UniNoteWindow {
             }
         });
 
-        bottom_dock.append(&btn_prev_page);
-        bottom_dock.append(&page_icon);
-        bottom_dock.append(&lbl_page);
-        bottom_dock.append(&btn_next_page);
+        let notebook_dock_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(4)
+            .build();
+        notebook_dock_box.append(&btn_prev_page);
+        notebook_dock_box.append(&page_icon);
+        notebook_dock_box.append(&lbl_page);
+        notebook_dock_box.append(&btn_next_page);
 
         // Separatore 1
         let div_dock1 = GtkBox::builder().css_classes(["dms-dock-divider"]).build();
-        bottom_dock.append(&div_dock1);
+        notebook_dock_box.append(&div_dock1);
 
         // Tasto [+ Pagina] (Aggiunge una nuova pagina A4)
         let btn_add_page = Button::builder()
@@ -1341,11 +1461,32 @@ impl UniNoteWindow {
             c_add.add_page(PageBackground::Grid { grid_size: 14.17 });
             upd_add();
         });
-        bottom_dock.append(&btn_add_page);
+        notebook_dock_box.append(&btn_add_page);
 
         // Separatore 2
         let div_dock2 = GtkBox::builder().css_classes(["dms-dock-divider"]).build();
-        bottom_dock.append(&div_dock2);
+        notebook_dock_box.append(&div_dock2);
+        bottom_dock.append(&notebook_dock_box);
+
+        // In modalità Lavagna Infinita: Tasto "Torna al centro"
+        let whiteboard_dock_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(4)
+            .build();
+        let btn_recenter = Button::builder()
+            .label("Torna al centro")
+            .tooltip_text("Ripristina la vista all'origine della lavagna")
+            .css_classes(["dms-btn-recenter"])
+            .build();
+        let c_recenter = canvas.clone();
+        btn_recenter.connect_clicked(move |_| {
+            c_recenter.reset_zoom();
+        });
+        whiteboard_dock_box.append(&btn_recenter);
+
+        let div_dock_wb = GtkBox::builder().css_classes(["dms-dock-divider"]).build();
+        whiteboard_dock_box.append(&div_dock_wb);
+        bottom_dock.append(&whiteboard_dock_box);
 
         // Selettore Sfondo: Quadretti ▾
         let btn_grid_select = Button::builder()
@@ -1763,7 +1904,20 @@ impl UniNoteWindow {
 
         window.set_content(Some(&overlay));
 
-        Self { window, canvas }
+        let win = Self {
+            window,
+            canvas,
+            notebook_dock_box,
+            whiteboard_dock_box,
+        };
+        win.sync_dock_mode();
+        win
+    }
+
+    pub fn sync_dock_mode(&self) {
+        let is_wb = self.canvas.document_format() == DocumentFormat::Whiteboard;
+        self.notebook_dock_box.set_visible(!is_wb);
+        self.whiteboard_dock_box.set_visible(is_wb);
     }
 
     pub fn canvas(&self) -> &Rc<NoteCanvas> {
@@ -1796,6 +1950,7 @@ impl UniNoteWindow {
         } else {
             let win = Self::new(app);
             let _ = win.canvas.open_file(path.to_path_buf());
+            win.sync_dock_mode();
             win
         }
     }
@@ -1808,6 +1963,33 @@ impl UniNoteWindow {
     ) -> Self {
         let win = Self::new(app);
         win.canvas.create_document(title, format, bg);
+        win.sync_dock_mode();
+
+        // Autosave: assegna file fisico predefinito nella cartella note e avvia StorageWorker
+        let store = crate::preferences::DashboardRecentStore::load();
+        let _ = store.ensure_default_notes_dir();
+        let notes_dir = std::path::PathBuf::from(&store.default_notes_dir);
+        let note_path = notes_dir.join(format!("{}.uninote", title));
+
+        if let Err(e) = win.canvas.save_as(note_path.clone()) {
+            eprintln!("Attenzione: impossibile inizializzare autosave: {}", e);
+        } else {
+            let mut store_update = crate::preferences::DashboardRecentStore::load();
+            let meta = crate::preferences::RecentDocumentMeta {
+                file_path: note_path.to_string_lossy().to_string(),
+                title: title.to_string(),
+                format,
+                last_modified_timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                page_count: 1,
+                thumbnail_path: None,
+            };
+            store_update.add_recent(meta);
+            let _ = store_update.save();
+        }
+
         win
     }
 
@@ -1817,6 +1999,7 @@ impl UniNoteWindow {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let win = Self::new(app);
         win.canvas.create_from_pdf(pdf_path)?;
+        win.sync_dock_mode();
         Ok(win)
     }
 

@@ -31,10 +31,29 @@
 @define-color dms_text_primary_light #172126;
 @define-color dms_text_secondary_light #526068;
 
-/* Finestra principale a tutto schermo con canvas scuro */
-window.uninote-window {
+/* Finestra principale a tutto schermo e finestre applicative con sfondo opaco */
+window,
+window.uninote-window,
+window.uninote-dashboard-window,
+window.uninote-settings-window {
     background-color: @dms_surface;
     color: @dms_text_primary;
+}
+
+window.light-theme,
+window.uninote-window.light-theme,
+window.uninote-dashboard-window.light-theme,
+window.uninote-settings-window.light-theme {
+    background-color: @dms_surface_light;
+    color: @dms_text_primary_light;
+}
+
+.dms-dashboard {
+    background-color: @dms_surface;
+}
+
+.light-theme .dms-dashboard {
+    background-color: @dms_surface_light;
 }
 
 /* Pillole flottanti (Floating Islands & Docks) */
@@ -54,37 +73,65 @@ window.uninote-window {
     padding: 6px 10px;
 }
 
-/* Badge di brand borderless in alto a sinistra */
-.dms-brand-badge {
+/* Badge di brand borderless in alto a sinistra (interattivo per tornare all'Hub) */
+button.dms-brand-badge {
     background-color: transparent;
-    border: none;
-    border-radius: 0;
+    border: 1px solid transparent;
+    border-radius: 20px;
     box-shadow: none;
-    padding: 0;
+    padding: 4px 8px;
+    transition: all 180ms cubic-bezier(0.2, 0, 0, 1);
+    color: @dms_text_primary;
+}
+
+button.dms-brand-badge:hover {
+    background-color: @dms_surface_container;
+    border-color: @dms_outline;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.light-theme button.dms-brand-badge:hover {
+    background-color: @dms_surface_container_light;
+    border-color: @dms_outline_light;
+    box-shadow: 0 4px 14px rgba(23, 33, 38, 0.12);
 }
 
 .brand-title {
     font-weight: 700;
-    font-size: 14px;
+    font-size: 15px;
     letter-spacing: 0.3px;
-    color: @dms_text_primary;
+    color: #F1F5F9;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+.light-theme .brand-title {
+    color: #0F172A;
+    text-shadow: none;
 }
 
 .brand-dot {
     font-weight: 700;
     font-size: 11px;
-    color: @dms_text_secondary;
-    opacity: 0.55;
+    color: #94A3B8;
+    opacity: 0.8;
+}
+
+.light-theme .brand-dot {
+    color: #64748B;
 }
 
 .brand-ver {
     font-weight: 500;
     font-size: 11px;
     letter-spacing: 0.2px;
-    color: @dms_text_secondary;
-    opacity: 0.75;
+    color: #94A3B8;
+    opacity: 0.9;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.light-theme .brand-ver {
+    color: #64748B;
+    text-shadow: none;
 }
 
 /* Pulsanti rotondi di azione rapida (Export, Settings) */
@@ -268,6 +315,35 @@ window.uninote-window {
     box-shadow: 0 0 8px rgba(109, 210, 255, 0.3);
 }
 
+.dms-btn-recenter {
+    min-width: 110px;
+    min-height: 34px;
+    border-radius: 17px;
+    background-color: @dms_primary_container;
+    border: 1px solid @dms_primary;
+    color: @dms_on_primary_container;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 0 12px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-btn-recenter:hover {
+    background-color: #00607d;
+    box-shadow: 0 0 8px rgba(109, 210, 255, 0.3);
+}
+
+.light-theme .dms-btn-recenter {
+    background-color: @dms_primary_container_light;
+    border: 1px solid @dms_primary_light;
+    color: @dms_on_primary_container_light;
+}
+
+.light-theme .dms-btn-recenter:hover {
+    background-color: #B2DAFC;
+    box-shadow: 0 0 8px rgba(0, 102, 139, 0.25);
+}
+
 .dms-btn-grid-select {
     min-width: 104px;
     min-height: 34px;
@@ -376,6 +452,55 @@ scale.dms-pill-scale slider {
     border-radius: 9px;
     background-color: @dms_text_primary;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.dms-theme-slider {
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    border-radius: 20px;
+    padding: 3px;
+}
+
+.dms-theme-btn {
+    min-width: 36px;
+    min-height: 32px;
+    border-radius: 16px;
+    background-color: transparent;
+    border: none;
+    color: @dms_text_secondary;
+    padding: 4px 10px;
+    transition: all 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dms-theme-btn:hover {
+    color: @dms_text_primary;
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.dms-theme-btn.active {
+    background-color: @dms_primary;
+    color: @dms_on_primary;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.light-theme .dms-theme-slider {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+}
+
+.light-theme .dms-theme-btn {
+    color: @dms_text_secondary_light;
+}
+
+.light-theme .dms-theme-btn:hover {
+    color: @dms_text_primary_light;
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+.light-theme .dms-theme-btn.active {
+    background-color: @dms_primary_light;
+    color: @dms_on_primary_light;
+    box-shadow: 0 2px 8px rgba(0, 102, 139, 0.25);
 }
 
 .dms-preset-chip {

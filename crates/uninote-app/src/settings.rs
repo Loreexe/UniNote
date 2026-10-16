@@ -438,38 +438,101 @@ impl UniNoteSettingsWindow {
             )
             .build();
 
-        let theme_strings = [
-            "Sincronizza con Desktop Wayland/Niri",
-            "Forza Tema Scuro OLED (#0A151A)",
-            "Forza Tema Chiaro Naturale",
-        ];
-        let row_theme = ComboRow::builder()
+        let row_theme = ActionRow::builder()
             .title("Modalità Tema")
-            .subtitle("Seleziona il tema dell'interfaccia e dei fogli accademici.")
-            .model(&gtk4::StringList::new(&theme_strings))
+            .subtitle("Seleziona il tema dell'interfaccia: Sistema, Chiaro o Scuro.")
             .build();
 
-        let initial_theme_idx = match settings.borrow().theme_mode {
-            ThemeMode::System => 0,
-            ThemeMode::ForceDarkOled => 1,
-            ThemeMode::ForceLight => 2,
-        };
-        row_theme.set_selected(initial_theme_idx);
+        let slider_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(4)
+            .valign(Align::Center)
+            .css_classes(["dms-theme-slider"])
+            .build();
 
-        let s_theme = settings.clone();
-        let cb_theme = on_changed.clone();
-        row_theme.connect_selected_notify(move |combo| {
-            let mode = match combo.selected() {
-                1 => ThemeMode::ForceDarkOled,
-                2 => ThemeMode::ForceLight,
-                _ => ThemeMode::System,
-            };
-            s_theme.borrow_mut().theme_mode = mode;
-            let _ = s_theme.borrow().save();
-            if let Some(ref cb) = *cb_theme.borrow() {
-                cb(&s_theme.borrow());
+        let btn_system = Button::builder()
+            .icon_name("display-symbolic")
+            .tooltip_text("Sincronizza con Sistema (Computer)")
+            .css_classes(["dms-theme-btn"])
+            .build();
+
+        let btn_light = Button::builder()
+            .icon_name("weather-clear-symbolic")
+            .tooltip_text("Forza Tema Chiaro Naturale (Sole)")
+            .css_classes(["dms-theme-btn"])
+            .build();
+
+        let btn_dark = Button::builder()
+            .icon_name("weather-clear-night-symbolic")
+            .tooltip_text("Forza Tema Scuro OLED (Luna)")
+            .css_classes(["dms-theme-btn"])
+            .build();
+
+        let update_pill_classes = {
+            let b_sys = btn_system.clone();
+            let b_light = btn_light.clone();
+            let b_dark = btn_dark.clone();
+            move |mode: ThemeMode| {
+                b_sys.remove_css_class("active");
+                b_light.remove_css_class("active");
+                b_dark.remove_css_class("active");
+                match mode {
+                    ThemeMode::System => b_sys.add_css_class("active"),
+                    ThemeMode::ForceLight => b_light.add_css_class("active"),
+                    ThemeMode::ForceDarkOled => b_dark.add_css_class("active"),
+                }
             }
+        };
+
+        let initial_mode = settings.borrow().theme_mode;
+        update_pill_classes(initial_mode);
+
+        let apply_theme = {
+            let s = settings.clone();
+            let cb = on_changed.clone();
+            let upd = update_pill_classes.clone();
+            move |mode: ThemeMode| {
+                s.borrow_mut().theme_mode = mode;
+                let _ = s.borrow().save();
+                upd(mode);
+
+                let sm = libadwaita::StyleManager::default();
+                match mode {
+                    ThemeMode::System => sm.set_color_scheme(libadwaita::ColorScheme::Default),
+                    ThemeMode::ForceLight => {
+                        sm.set_color_scheme(libadwaita::ColorScheme::ForceLight)
+                    }
+                    ThemeMode::ForceDarkOled => {
+                        sm.set_color_scheme(libadwaita::ColorScheme::ForceDark)
+                    }
+                }
+
+                if let Some(ref callback) = *cb.borrow() {
+                    callback(&s.borrow());
+                }
+            }
+        };
+
+        let apply_sys = apply_theme.clone();
+        btn_system.connect_clicked(move |_| {
+            apply_sys(ThemeMode::System);
         });
+
+        let apply_lt = apply_theme.clone();
+        btn_light.connect_clicked(move |_| {
+            apply_lt(ThemeMode::ForceLight);
+        });
+
+        let apply_dk = apply_theme.clone();
+        btn_dark.connect_clicked(move |_| {
+            apply_dk(ThemeMode::ForceDarkOled);
+        });
+
+        slider_box.append(&btn_system);
+        slider_box.append(&btn_light);
+        slider_box.append(&btn_dark);
+
+        row_theme.add_suffix(&slider_box);
         grp_theme.add(&row_theme);
 
         // Adattamento Inchiostri Rec. 709
