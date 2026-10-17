@@ -19,23 +19,23 @@
     </ul>
   </description>
   <launchable type="desktop-id">org.uninote.UniNote.desktop</launchable>
-  <url type="homepage">https://github.com/UniNote/UniNote</url>
-  <url type="bugtracker">https://github.com/UniNote/UniNote/issues</url>
-  <url type="vcs-browser">https://github.com/UniNote/UniNote</url>
+  <url type="homepage">https://github.com/Loreexe/UniNote</url>
+  <url type="bugtracker">https://github.com/Loreexe/UniNote/issues</url>
+  <url type="vcs-browser">https://github.com/Loreexe/UniNote</url>
   <developer id="org.uninote">
     <name>UniNote Developers</name>
   </developer>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/UniNote/UniNote/main/docs/screenshots/01_dashboard.png</image>
+      <image>https://raw.githubusercontent.com/Loreexe/UniNote/main/docs/screenshots/01_dashboard.png</image>
       <caption>Academic Dashboard and recent notes hub</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/UniNote/UniNote/main/docs/screenshots/02_quaderno.png</image>
+      <image>https://raw.githubusercontent.com/Loreexe/UniNote/main/docs/screenshots/02_quaderno.png</image>
       <caption>A4 notebook view with inking island and vector stroke rendering</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/UniNote/UniNote/main/docs/screenshots/03_lavagna_infinita.png</image>
+      <image>https://raw.githubusercontent.com/Loreexe/UniNote/main/docs/screenshots/03_lavagna_infinita.png</image>
       <caption>Infinite whiteboard canvas with dynamic grid and lasso selection</caption>
     </screenshot>
   </screenshots>

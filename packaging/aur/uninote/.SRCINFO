@@ -1,0 +1,22 @@
+pkgbase = uninote
+	pkgdesc = Suite accademica Linux nativa per prendere appunti a mano libera con stilo (MPP, Wacom)
+	pkgver = 0.3.0
+	pkgrel = 1
+	url = https://github.com/Loreexe/UniNote
+	arch = x86_64
+	license = GPL-3.0-only
+	makedepends = cargo
+	makedepends = git
+	depends = gtk4
+	depends = libadwaita
+	depends = poppler-glib
+	depends = cairo
+	depends = hicolor-icon-theme
+	depends = shared-mime-info
+	provides = uninote
+	conflicts = uninote-git
+	options = !lto
+	source = uninote-0.3.0.tar.gz::https://github.com/Loreexe/UniNote/archive/refs/tags/v0.3.0.tar.gz
+	sha256sums = 72f8200f245b8ec9c368f68dc1280d34e691ce4a0e525db6c0d705d7d7ef6481
+
+pkgname = uninote

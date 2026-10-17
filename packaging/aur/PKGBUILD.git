@@ -4,7 +4,7 @@ pkgver=0.3.0.r0.g0000000
 pkgrel=1
 pkgdesc="Suite accademica Linux nativa per prendere appunti a mano libera con stilo (MPP, Wacom) - Development VCS branch"
 arch=('x86_64')
-url="https://github.com/UniNote/UniNote"
+url="https://github.com/Loreexe/UniNote"
 license=('GPL-3.0-only')
 depends=(
     'gtk4'
@@ -40,14 +40,14 @@ build() {
     cd uninote
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
+    # Disabilita LDFLAGS aggressivi di makepkg che interferiscono con l'archivio statico di sqlite3 bundled
+    unset LDFLAGS
     cargo build --frozen --release -p uninote-app
 }
 
 check() {
     cd uninote
-    if command -v xvfb-run >/dev/null 2>&1; then
-        xvfb-run --auto-servernum cargo test --frozen --workspace
-    fi
+    cargo test --frozen --workspace
 }
 
 package() {

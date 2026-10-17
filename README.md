@@ -12,9 +12,9 @@
 [![Rust](https://img.shields.io/badge/Rust-2021_Edition_(MSRV_1.80+)-orange.svg?logo=rust)](https://www.rust-lang.org/)
 [![GUI](https://img.shields.io/badge/GUI-GTK4_%26_Libadwaita-4a90e2.svg?logo=gnome)](https://gtk.org/)
 [![Version](https://img.shields.io/badge/Version-0.3.0-teal.svg)](Cargo.toml)
-[![AUR](https://img.shields.io/badge/AUR-uninote-blue.svg?logo=archlinux)](packaging/aur/PKGBUILD)
+[![Arch Linux](https://img.shields.io/badge/Arch_Linux-uninote-blue.svg?logo=archlinux)](packaging/aur/uninote/PKGBUILD)
 [![Flatpak](https://img.shields.io/badge/Flatpak-org.uninote.UniNote-2b7bb9.svg?logo=flatpak)](packaging/flatpak/org.uninote.UniNote.yaml)
-[![CI](https://github.com/UniNote/UniNote/actions/workflows/ci.yml/badge.svg)](https://github.com/UniNote/UniNote/actions/workflows/ci.yml)
+[![CI](https://github.com/Loreexe/UniNote/actions/workflows/ci.yml/badge.svg)](https://github.com/Loreexe/UniNote/actions/workflows/ci.yml)
 [![Wayland](https://img.shields.io/badge/Display-Wayland_Native-purple.svg)]()
 [![Architecture](https://img.shields.io/badge/Architecture-4_Decoupled_Crates-success.svg)]()
 
@@ -209,27 +209,25 @@ UniNote/
 
 ## 📦 Packaging & Quick Install
 
-### 1. Arch Linux / CachyOS (AUR)
+### 1. Arch Linux / CachyOS
 
-Install via your preferred AUR helper:
-```bash
-# Versione stabile:
-yay -S uninote
-# o con paru:
-paru -S uninote
-
-# Versione development VCS:
-yay -S uninote-git
-```
-
-Oppure installa direttamente il pacchetto binario `.pkg.tar.zst` precompilato scaricato dalle [Releases](https://github.com/UniNote/UniNote/releases):
+Installa direttamente il pacchetto binario `.pkg.tar.zst` precompilato scaricato dalle [Releases](https://github.com/Loreexe/UniNote/releases):
 ```bash
 sudo pacman -U uninote-0.3.0-1-x86_64.pkg.tar.zst
 ```
 
+Oppure compila e installa in locale dal repository tramite `makepkg`:
+```bash
+# Versione stabile (v0.3.0):
+cd packaging/aur/uninote && makepkg -si
+
+# Oppure versione di sviluppo (branch main):
+cd packaging/aur/uninote-git && makepkg -si
+```
+
 ### 2. Universal Flatpak (.flatpak bundle)
 
-Scarica il bundle standalone `org.uninote.UniNote.flatpak` dalle [Releases](https://github.com/UniNote/UniNote/releases) e installalo su qualsiasi distribuzione Linux:
+Scarica il bundle standalone `org.uninote.UniNote.flatpak` dalle [Releases](https://github.com/Loreexe/UniNote/releases) e installalo su qualsiasi distribuzione Linux:
 ```bash
 flatpak install --user org.uninote.UniNote.flatpak
 ```
@@ -424,9 +422,9 @@ If you use UniNote in your university coursework, academic research, or software
 @software{uninote2026,
   author       = {{UniNote Developers}},
   title        = {{UniNote: An Academic Freehand Note-Taking and Vector PDF Annotation Suite for Linux}},
-  version      = {0.2.0},
+  version      = {0.3.0},
   year         = {2026},
-  url          = {https://github.com/UniNote/UniNote},
+  url          = {https://github.com/Loreexe/UniNote},
   license      = {GPL-3.0}
 }
 ```
