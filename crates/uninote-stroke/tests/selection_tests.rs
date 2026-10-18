@@ -40,14 +40,18 @@ fn make_stroke(id: u64, coords: &[(f64, f64)]) -> Stroke {
         })
         .collect();
 
-    Stroke {
+    let mut stroke = Stroke {
         id,
         points,
         raw_samples,
         style: StrokeStyle::default(),
         is_dot: false,
         mode: PipelineMode::Baseline,
-    }
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
+    };
+    stroke.recompute_cache();
+    stroke
 }
 
 // =========================================================================

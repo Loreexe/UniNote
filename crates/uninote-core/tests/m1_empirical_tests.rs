@@ -227,6 +227,8 @@ fn test_move_items_1000_undo_redo_cycles_drift() {
             raw_samples: vec![sample],
             is_dot: false,
             mode: PipelineMode::Baseline,
+            cached_bbox: None,
+            cached_bezier: Vec::new(),
         };
 
         history.execute(DocCommand::AddStroke { page_id, stroke }, &mut doc);
@@ -353,6 +355,8 @@ fn test_move_items_edge_cases() {
         raw_samples: vec![],
         is_dot: true,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     let s2 = Stroke {
         id: 2,
@@ -376,6 +380,8 @@ fn test_move_items_edge_cases() {
         raw_samples: vec![],
         is_dot: false,
         mode: PipelineMode::CatmullRomSpline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     history.execute(
@@ -453,6 +459,8 @@ fn test_move_items_nan_delta_corrupts_coordinates() {
         raw_samples: vec![],
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     history.execute(DocCommand::AddStroke { page_id, stroke }, &mut doc);
     let item_id = doc.pages[0].items[0].id;

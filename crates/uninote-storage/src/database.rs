@@ -1,6 +1,7 @@
 use crate::schema;
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, Result, TransactionBehavior};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::path::Path;
 use uninote_core::{Document, DocumentFormat, Item, ItemKind, Page, PageBackground};
 use uninote_stroke::Stroke;
@@ -47,33 +48,41 @@ impl DocumentStore {
     }
 
     pub fn save_document(&mut self, doc: &Document) -> Result<()> {
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         // Metadata
-        tx.execute(
-            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('doc_id', ?1)",
-            params![doc.id.to_string()],
-        )?;
-        tx.execute(
-            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('title', ?1)",
-            params![doc.title],
-        )?;
-        tx.execute(
-            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('version', ?1)",
-            params![doc.version.to_string()],
-        )?;
-        let format_str = match doc.format {
-            DocumentFormat::Notebook => "notebook",
-            DocumentFormat::Whiteboard => "whiteboard",
-        };
-        tx.execute(
-            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('document_format', ?1)",
-            params![format_str],
-        )?;
+        {
+            let mut meta_stmt =
+                tx.prepare_cached("INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)")?;
+            meta_stmt.execute(params!["doc_id", doc.id.to_string()])?;
+            meta_stmt.execute(params!["title", &doc.title])?;
+            meta_stmt.execute(params!["version", doc.version.to_string()])?;
+            let format_str = match doc.format {
+                DocumentFormat::Notebook => "notebook",
+                DocumentFormat::Whiteboard => "whiteboard",
+            };
+            meta_stmt.execute(params!["document_format", format_str])?;
+        }
 
         // Pagine ed elementi
         tx.execute("DELETE FROM pages", [])?;
         tx.execute("DELETE FROM items", [])?;
+
+        let mut page_stmt = tx.prepare_cached(
+            "INSERT INTO pages (id, page_index, width, height, background_type, background_spacing, background_extra)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+
+        let mut item_stmt = tx.prepare_cached(
+            "INSERT INTO items (id, page_id, z_index, item_type, bounding_box, data_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+
+        let mut page_id_buf = String::with_capacity(36);
+        let mut json_buf = Vec::with_capacity(4096);
+        let mut bbox_buf = Vec::with_capacity(128);
 
         for page in &doc.pages {
             let (bg_type, bg_spacing, bg_extra) = match &page.background {
@@ -99,44 +108,47 @@ impl DocumentStore {
                 }
             };
 
-            tx.execute(
-                "INSERT INTO pages (id, page_index, width, height, background_type, background_spacing, background_extra)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    page.id.to_string(),
-                    page.index as i64,
-                    page.width,
-                    page.height,
-                    bg_type,
-                    bg_spacing,
-                    bg_extra,
-                ],
-            )?;
+            page_id_buf.clear();
+            let _ = write!(&mut page_id_buf, "{}", page.id);
+
+            page_stmt.execute(params![
+                &page_id_buf,
+                page.index as i64,
+                page.width,
+                page.height,
+                bg_type,
+                bg_spacing,
+                bg_extra,
+            ])?;
 
             for item in &page.items {
-                let (item_type, bbox_str, data_json) = match &item.kind {
+                let (item_type, bbox_str, stroke_json) = match &item.kind {
                     ItemKind::Stroke(stroke) => {
-                        let bbox = stroke.bounding_box();
-                        let bbox_json = serde_json::to_string(&bbox).unwrap_or_default();
-                        let stroke_json = serde_json::to_string(&stroke).unwrap_or_default();
-                        ("stroke", bbox_json, stroke_json)
+                        bbox_buf.clear();
+                        let _ = serde_json::to_writer(&mut bbox_buf, &stroke.bounding_box());
+                        let b_str = std::str::from_utf8(&bbox_buf).unwrap_or("{}");
+
+                        json_buf.clear();
+                        let _ = serde_json::to_writer(&mut json_buf, stroke);
+                        let s_str = std::str::from_utf8(&json_buf).unwrap_or("{}");
+
+                        ("stroke", b_str, s_str)
                     }
                 };
 
-                tx.execute(
-                    "INSERT INTO items (id, page_id, z_index, item_type, bounding_box, data_json)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![
-                        item.id as i64,
-                        page.id.to_string(),
-                        item.z_index as i64,
-                        item_type,
-                        bbox_str,
-                        data_json,
-                    ],
-                )?;
+                item_stmt.execute(params![
+                    item.id as i64,
+                    &page_id_buf,
+                    item.z_index as i64,
+                    item_type,
+                    bbox_str,
+                    stroke_json,
+                ])?;
             }
         }
+
+        drop(page_stmt);
+        drop(item_stmt);
 
         tx.commit()?;
         Ok(())
@@ -185,7 +197,7 @@ impl DocumentStore {
             })
             .unwrap_or(DocumentFormat::Notebook);
 
-        let mut page_stmt = self.conn.prepare(
+        let mut page_stmt = self.conn.prepare_cached(
             "SELECT id, page_index, width, height, background_type, background_spacing, background_extra
              FROM pages ORDER BY page_index ASC",
         )?;
@@ -209,9 +221,20 @@ impl DocumentStore {
             ))
         })?;
 
-        let mut pages = Vec::new();
-        for p in page_rows {
-            let (id_str, index, width, height, bg_type, bg_spacing, bg_extra) = p?;
+        let raw_pages: Vec<_> = page_rows.collect::<Result<Vec<_>, _>>()?;
+        drop(page_stmt);
+
+        let mut count_stmt = self
+            .conn
+            .prepare_cached("SELECT COUNT(*) FROM items WHERE page_id = ?1")?;
+
+        let mut item_stmt = self.conn.prepare_cached(
+            "SELECT id, z_index, item_type, data_json FROM items
+             WHERE page_id = ?1 ORDER BY z_index ASC",
+        )?;
+
+        let mut pages = Vec::with_capacity(raw_pages.len());
+        for (id_str, index, width, height, bg_type, bg_spacing, bg_extra) in raw_pages {
             let page_id = Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4());
             let background = match bg_type.as_str() {
                 "ruled" => PageBackground::Ruled {
@@ -255,41 +278,40 @@ impl DocumentStore {
                 }
             };
 
-            let mut item_stmt = self.conn.prepare(
-                "SELECT id, z_index, item_type, data_json FROM items
-                 WHERE page_id = ?1 ORDER BY z_index ASC",
-            )?;
+            let item_count: usize = count_stmt
+                .query_row(params![&id_str], |row| row.get(0))
+                .unwrap_or(0);
 
-            let item_rows = item_stmt.query_map(params![id_str], |row| {
+            let mut items = Vec::with_capacity(item_count);
+            let mut item_rows = item_stmt.query(params![&id_str])?;
+            while let Some(row) = item_rows.next()? {
                 let id: i64 = row.get(0)?;
                 let z_index: i64 = row.get(1)?;
-                let item_type: String = row.get(2)?;
-                let data_json: String = row.get(3)?;
-                Ok((id as u64, z_index as u64, item_type, data_json))
-            })?;
-
-            let mut items = Vec::new();
-            for it in item_rows {
-                let (id, z_index, item_type, data_json) = it?;
+                let item_type = row.get_ref(2)?.as_str()?;
                 if item_type == "stroke" {
-                    if let Ok(stroke) = serde_json::from_str::<Stroke>(&data_json) {
+                    let data_json = row.get_ref(3)?.as_str()?;
+                    if let Ok(mut stroke) = serde_json::from_str::<Stroke>(data_json) {
+                        stroke.ensure_cache();
                         items.push(Item {
-                            id,
-                            z_index,
+                            id: id as u64,
+                            z_index: z_index as u64,
                             kind: ItemKind::Stroke(stroke),
                         });
                     }
                 }
             }
 
-            pages.push(Page {
+            let mut page = Page {
                 id: page_id,
                 index,
                 width,
                 height,
                 background,
                 items,
-            });
+                ..Default::default()
+            };
+            page.rebuild_spatial_index();
+            pages.push(page);
         }
 
         if pages.is_empty() {

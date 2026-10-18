@@ -1,4 +1,5 @@
 use crate::coordinates::Rect2D;
+use crate::spatial::PageSpatialIndex;
 use serde::{Deserialize, Serialize};
 use uninote_stroke::Stroke;
 use uuid::Uuid;
@@ -51,9 +52,21 @@ pub struct Page {
     pub height: f64,
     pub background: PageBackground,
     pub items: Vec<Item>,
+    #[serde(skip, default)]
+    pub spatial_index: PageSpatialIndex,
+}
+
+impl Default for Page {
+    fn default() -> Self {
+        Self::new_a4(0, PageBackground::default())
+    }
 }
 
 impl Page {
+    pub fn new(index: usize, background: PageBackground) -> Self {
+        Self::new_a4(index, background)
+    }
+
     pub fn new_a4(index: usize, background: PageBackground) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -62,6 +75,7 @@ impl Page {
             height: A4_HEIGHT_PT,
             background,
             items: Vec::new(),
+            spatial_index: PageSpatialIndex::empty(),
         }
     }
 
@@ -73,6 +87,7 @@ impl Page {
             height: f64::INFINITY,
             background,
             items: Vec::new(),
+            spatial_index: PageSpatialIndex::empty(),
         }
     }
 
@@ -97,7 +112,13 @@ impl Page {
                 original_height: height,
             },
             items: Vec::new(),
+            spatial_index: PageSpatialIndex::empty(),
         }
+    }
+
+    /// Ricostruisce l'indice spaziale 2D R-Tree a partire da tutti gli elementi della pagina.
+    pub fn rebuild_spatial_index(&mut self) {
+        self.spatial_index = PageSpatialIndex::bulk_load(&self.items);
     }
 }
 
@@ -231,5 +252,12 @@ impl Document {
             .flat_map(|p| p.items.iter().map(|item| item.id))
             .max()
             .unwrap_or(0)
+    }
+
+    /// Ricostruisce gli indici spaziali 2D R-Tree per tutte le pagine del documento.
+    pub fn rebuild_spatial_indices(&mut self) {
+        for page in &mut self.pages {
+            page.rebuild_spatial_index();
+        }
     }
 }

@@ -1610,7 +1610,12 @@ impl UniNoteWindow {
 
             if keyval == gdk::Key::F12 {
                 let vis = hud_keys.widget().is_visible();
-                hud_keys.widget().set_visible(!vis);
+                let new_vis = !vis;
+                hud_keys.widget().set_visible(new_vis);
+                if new_vis {
+                    hud_keys.update_view();
+                    c_keys.widget().queue_draw();
+                }
                 return glib::Propagation::Stop;
             }
 

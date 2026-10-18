@@ -90,6 +90,8 @@ fn generate_linear_stroke(
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     }
 }
 
@@ -132,6 +134,8 @@ fn generate_rectangle_stroke(top_left: (f64, f64), width: f64, height: f64) -> S
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     }
 }
 
@@ -161,6 +165,8 @@ fn generate_circle_stroke(center: (f64, f64), radius: f64, num_points: usize) ->
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     }
 }
 
@@ -197,6 +203,8 @@ fn generate_triangle_stroke(v0: (f64, f64), v1: (f64, f64), v2: (f64, f64)) -> S
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     }
 }
 
@@ -1237,6 +1245,8 @@ fn test_t2_r2_degenerate_single_point_stroke() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     assert!(oracle_snap_line_orthogonal(&stroke).is_none());
     assert!(oracle_classify_shape(&stroke).is_none());
@@ -1267,6 +1277,8 @@ fn test_t2_r2_self_intersecting_figure_eight() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     // Figure eight should not match simple circle or triangle
     let classified = oracle_classify_shape(&stroke);
@@ -1305,6 +1317,8 @@ fn test_t2_r2_rectangle_with_skewed_corners() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     assert_ne!(oracle_classify_shape(&stroke), Some("rectangle"));
 }
@@ -1338,6 +1352,8 @@ fn test_t2_r2_original_stroke_style_preserved() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     let snapped = oracle_snap_line_orthogonal(&orig).unwrap();
     assert_eq!(snapped.style.color, orig.style.color);

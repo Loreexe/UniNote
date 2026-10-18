@@ -24,6 +24,8 @@ fn create_sample_stroke(id: u64, x: f64, y: f64, num_points: usize) -> Stroke {
         raw_samples: Vec::new(),
         is_dot: num_points == 1,
         mode: PipelineMode::CatmullRomSpline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::geometry::CubicBezierSegment;
 use serde::{Deserialize, Serialize};
 
 /// Identifica la tipologia di dispositivo che ha generato il campione di input.
@@ -207,7 +208,7 @@ pub enum PipelineMode {
 }
 
 /// Rappresentazione di un tratto vettoriale completato o in corso.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stroke {
     pub id: u64,
     pub style: StrokeStyle,
@@ -215,6 +216,31 @@ pub struct Stroke {
     pub raw_samples: Vec<InputSample>,
     pub is_dot: bool,
     pub mode: PipelineMode,
+    /// Bounding box AABB 2D in-memory pre-calcolato.
+    /// Escluso dalla serializzazione JSON/database: zero alterazioni di schema SQLite.
+    #[serde(skip, default)]
+    pub cached_bbox: Option<Rect>,
+    /// Segmenti di Bézier cubici continui C1 pre-calcolati per rendering zero-allocation.
+    /// Esclusi dalla serializzazione JSON/database: zero alterazioni di schema SQLite.
+    #[serde(skip, default)]
+    pub cached_bezier: Vec<CubicBezierSegment>,
+}
+
+impl PartialEq for Stroke {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.style == other.style
+            && self.points == other.points
+            && self.raw_samples == other.raw_samples
+            && self.is_dot == other.is_dot
+            && self.mode == other.mode
+    }
+}
+
+impl Default for Stroke {
+    fn default() -> Self {
+        Self::new(0, StrokeStyle::default(), PipelineMode::default())
+    }
 }
 
 impl Stroke {
@@ -226,10 +252,80 @@ impl Stroke {
             raw_samples: Vec::new(),
             is_dot: false,
             mode,
+            cached_bbox: None,
+            cached_bezier: Vec::new(),
         }
     }
 
-    pub fn bounding_box(&self) -> Option<Rect> {
+    /// Costruttore di convenienza con punti noti che pre-popola immediatamente la cache geometrica.
+    pub fn with_points(id: u64, style: StrokeStyle, points: Vec<StrokePoint>) -> Self {
+        let mut stroke = Self {
+            id,
+            style,
+            points,
+            raw_samples: Vec::new(),
+            is_dot: false,
+            mode: PipelineMode::default(),
+            cached_bbox: None,
+            cached_bezier: Vec::new(),
+        };
+        stroke.recompute_cache();
+        stroke
+    }
+
+    /// Costruttore con punti e modalità specifica che pre-popola immediatamente la cache geometrica.
+    pub fn with_points_and_mode(
+        id: u64,
+        style: StrokeStyle,
+        mode: PipelineMode,
+        points: Vec<StrokePoint>,
+    ) -> Self {
+        let mut stroke = Self {
+            id,
+            style,
+            points,
+            raw_samples: Vec::new(),
+            is_dot: false,
+            mode,
+            cached_bbox: None,
+            cached_bezier: Vec::new(),
+        };
+        stroke.recompute_cache();
+        stroke
+    }
+
+    /// Ricalcola integralmente in-memory sia il bounding box che i segmenti di Bézier.
+    pub fn recompute_cache(&mut self) {
+        self.cached_bbox = self.compute_bounding_box();
+        self.cached_bezier = if self.is_dot || self.points.len() < 2 {
+            Vec::new()
+        } else {
+            match self.mode {
+                PipelineMode::CatmullRomSpline | PipelineMode::OneEuroFiltered => {
+                    crate::geometry::catmull_rom_to_bezier(&self.points)
+                }
+                PipelineMode::Baseline => Vec::new(),
+            }
+        };
+    }
+
+    /// Garantisce la presenza dei dati in cache ricalcolandoli se non ancora popolati.
+    pub fn ensure_cache(&mut self) {
+        if self.cached_bbox.is_none()
+            || (self.cached_bezier.is_empty()
+                && !self.is_dot
+                && self.points.len() >= 2
+                && matches!(
+                    self.mode,
+                    PipelineMode::CatmullRomSpline | PipelineMode::OneEuroFiltered
+                ))
+        {
+            self.recompute_cache();
+        }
+    }
+
+    /// Calcola il bounding box grezzo iterando sui punti (fallback di sicurezza O(N)).
+    pub fn compute_bounding_box(&self) -> Option<Rect> {
         if self.points.is_empty() {
             return None;
         }
@@ -243,6 +339,22 @@ impl Stroke {
         }
 
         Some(r)
+    }
+
+    /// Restituisce il bounding box precalcolato O(1). Se assente, esegue il fallback on-demand.
+    #[inline]
+    pub fn bounding_box(&self) -> Option<Rect> {
+        if let Some(bbox) = self.cached_bbox {
+            Some(bbox)
+        } else {
+            self.compute_bounding_box()
+        }
+    }
+
+    /// Restituisce il riferimento ai segmenti di Bézier memorizzati nella cache.
+    #[inline]
+    pub fn bezier_segments(&self) -> &[CubicBezierSegment] {
+        &self.cached_bezier
     }
 
     pub fn total_length(&self) -> f64 {
@@ -306,7 +418,7 @@ impl Stroke {
         false
     }
 
-    /// Trasla tutti i punti e campioni grezzi del tratto del delta specificato (dx, dy).
+    /// Trasla tutti i punti, campioni grezzi, bounding box e curve Bézier in-place con zero allocazioni.
     pub fn translate(&mut self, dx: f64, dy: f64) {
         for p in &mut self.points {
             p.x += dx;
@@ -315,6 +427,12 @@ impl Stroke {
         for s in &mut self.raw_samples {
             s.position.0 += dx;
             s.position.1 += dy;
+        }
+        if let Some(ref mut bbox) = self.cached_bbox {
+            *bbox = bbox.translate(dx, dy);
+        }
+        for seg in &mut self.cached_bezier {
+            seg.translate(dx, dy);
         }
     }
 }

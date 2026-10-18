@@ -107,19 +107,7 @@ pub fn import_from_pdf(pdf_path: &Path) -> Result<Document, Box<dyn std::error::
         let width = if w > 0.0 { w } else { A4_WIDTH_PT };
         let height = if h > 0.0 { h } else { A4_HEIGHT_PT };
 
-        pages.push(Page {
-            id: uuid::Uuid::new_v4(),
-            index: i,
-            width,
-            height,
-            background: PageBackground::PdfPage {
-                source_path: path_str.to_string(),
-                page_index: i,
-                original_width: width,
-                original_height: height,
-            },
-            items: Vec::new(),
-        });
+        pages.push(Page::new_pdf_page(i, path_str, i, width, height));
     }
 
     Ok(Document {
@@ -157,19 +145,13 @@ pub fn append_pdf_pages(
         let width = if w > 0.0 { w } else { A4_WIDTH_PT };
         let height = if h > 0.0 { h } else { A4_HEIGHT_PT };
 
-        document.pages.push(Page {
-            id: uuid::Uuid::new_v4(),
-            index: start_idx + i,
+        document.pages.push(Page::new_pdf_page(
+            start_idx + i,
+            path_str,
+            i,
             width,
             height,
-            background: PageBackground::PdfPage {
-                source_path: path_str.to_string(),
-                page_index: i,
-                original_width: width,
-                original_height: height,
-            },
-            items: Vec::new(),
-        });
+        ));
     }
 
     Ok(n_pages)

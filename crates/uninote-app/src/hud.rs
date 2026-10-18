@@ -24,6 +24,9 @@ pub struct DiagnosticMetrics {
     pub current_tool: String,
     pub page_count: usize,
     pub zoom_pct: usize,
+    pub visible_strokes: usize,
+    pub total_strokes: usize,
+    pub culled_pct: f64,
 }
 
 impl Default for DiagnosticMetrics {
@@ -45,6 +48,9 @@ impl Default for DiagnosticMetrics {
             current_tool: "Penna".to_string(),
             page_count: 1,
             zoom_pct: 100,
+            visible_strokes: 0,
+            total_strokes: 0,
+            culled_pct: 0.0,
         }
     }
 }
@@ -55,6 +61,7 @@ pub struct DiagnosticHud {
     label_status: Label,
     label_perf: Label,
     label_stats: Label,
+    label_strokes: Label,
     metrics: Rc<RefCell<DiagnosticMetrics>>,
     last_frame_instant: RefCell<Instant>,
 }
@@ -102,16 +109,22 @@ impl DiagnosticHud {
             .xalign(0.0)
             .label("Campioni: 0 rec / 0 drop")
             .build();
+        let label_strokes = Label::builder()
+            .xalign(0.0)
+            .label("Tratti: 0/0 visibili (0.0% culled) | Render: 0 µs")
+            .build();
 
         container.append(&label_status);
         container.append(&label_perf);
         container.append(&label_stats);
+        container.append(&label_strokes);
 
         Self {
             container,
             label_status,
             label_perf,
             label_stats,
+            label_strokes,
             metrics: Rc::new(RefCell::new(DiagnosticMetrics::default())),
             last_frame_instant: RefCell::new(Instant::now()),
         }
@@ -119,6 +132,10 @@ impl DiagnosticHud {
 
     pub fn widget(&self) -> &Box {
         &self.container
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.container.is_visible()
     }
 
     pub fn update_metrics<F, R>(&self, f: F) -> R
@@ -130,6 +147,10 @@ impl DiagnosticHud {
     }
 
     pub fn update_view(&self) {
+        if !self.container.is_visible() {
+            return;
+        }
+
         let m = self.metrics.borrow();
 
         let pressure_str = match m.live_pressure {
@@ -175,6 +196,11 @@ impl DiagnosticHud {
         self.label_stats.set_label(&format!(
             "Campioni: {} ric / {} scartati | Palmo soppressi: {}",
             m.samples_received, m.samples_dropped, m.touch_suppressed
+        ));
+
+        self.label_strokes.set_label(&format!(
+            "Tratti: {}/{} visibili ({:.1}% culled) | Render: {} µs",
+            m.visible_strokes, m.total_strokes, m.culled_pct, m.render_time_us
         ));
     }
 

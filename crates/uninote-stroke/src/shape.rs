@@ -241,6 +241,7 @@ pub fn snap_line_orthogonal(stroke: &Stroke) -> Option<Stroke> {
     let mut new_stroke = Stroke::new(stroke.id, stroke.style.clone(), PipelineMode::Baseline);
     new_stroke.is_dot = false;
     new_stroke.points = vec![start_pt, end_pt];
+    new_stroke.recompute_cache();
     Some(new_stroke)
 }
 
@@ -558,6 +559,7 @@ fn create_stroke_from_points(
             timestamp_ns: 0,
         })
         .collect();
+    new_stroke.recompute_cache();
     new_stroke
 }
 

@@ -92,6 +92,8 @@ fn test_command_history_undo_redo_monotonic_revisions() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::CatmullRomSpline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     history.execute(
@@ -277,6 +279,8 @@ fn test_doc_command_move_items_undo_redo() {
         raw_samples: vec![sample_1, sample_2],
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     history.execute(DocCommand::AddStroke { page_id, stroke }, &mut doc);

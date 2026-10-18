@@ -11,7 +11,7 @@ use uninote_core::{
     Viewport,
 };
 use uninote_storage::{DocumentStore, SaveStatus, StorageWorker};
-use uninote_stroke::selection::{SelectionEngine, SelectionMode};
+use uninote_stroke::selection::SelectionMode;
 use uninote_stroke::{
     DeviceKind, InputDisposition, InputPhase, InputSample, PalmRejectionEngine, PipelineMode,
     RecordedSession, Rect, Stroke, StrokeBuilder, StrokeStyle, TouchMode,
@@ -839,6 +839,8 @@ impl NoteCanvas {
 
     /// Carica un nuovo documento sostituendo lo stato corrente e aggiornando l'HUD e la vista.
     pub fn load_document(&self, doc: uninote_core::Document) {
+        let mut doc = doc;
+        doc.rebuild_spatial_indices();
         let max_id = doc.max_item_id();
         let mut st = self.state.borrow_mut();
         st.document = doc;
@@ -905,6 +907,7 @@ impl NoteCanvas {
             let vp = st.viewport;
             let current_mode = st.pipeline_mode;
             let is_dark = libadwaita::StyleManager::default().is_dark();
+            let mut visible_strokes = 0usize;
 
             match st.document.format {
                 DocumentFormat::Notebook => {
@@ -1082,25 +1085,105 @@ impl NoteCanvas {
                             }
                         }
 
-                        // Tratti della pagina
+                        // Tratti della pagina con Culling Spaziale R-Tree
                         let _ = cr.save();
                         cr.translate(vp.offset_x, vp.offset_y);
                         cr.scale(vp.zoom, vp.zoom);
 
-                        for item in &page.items {
-                            let ItemKind::Stroke(stroke) = &item.kind;
-                            let is_selected_drag = st.selection.is_dragging
-                                && st.selection.selected_ids.contains(&item.id);
-                            if is_selected_drag {
-                                let _ = cr.save();
-                                cr.translate(
-                                    st.selection.drag_offset.0,
-                                    st.selection.drag_offset.1,
-                                );
-                                Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                let _ = cr.restore();
-                            } else {
-                                Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                        let doc_left = -vp.offset_x / vp.zoom;
+                        let doc_top = -vp.offset_y / vp.zoom;
+                        let doc_right = (width as f64 - vp.offset_x) / vp.zoom;
+                        let doc_bottom = (height as f64 - vp.offset_y) / vp.zoom;
+
+                        let vis_min_x = doc_left.max(doc_rect.x);
+                        let vis_min_y = doc_top.max(doc_rect.y);
+                        let vis_max_x = doc_right.min(doc_rect.x + doc_rect.width);
+                        let vis_max_y = doc_bottom.min(doc_rect.y + doc_rect.height);
+
+                        if !page.spatial_index.is_empty() {
+                            if vis_min_x <= vis_max_x && vis_min_y <= vis_max_y {
+                                let visible_items = page
+                                    .spatial_index
+                                    .locate_in_envelope(vis_min_x, vis_min_y, vis_max_x, vis_max_y);
+                                visible_strokes += visible_items.len();
+                                for spatial_item in &visible_items {
+                                    let item_opt = page
+                                        .items
+                                        .binary_search_by_key(
+                                            &(spatial_item.z_index, spatial_item.item_id),
+                                            |it| (it.z_index, it.id),
+                                        )
+                                        .ok()
+                                        .map(|idx| &page.items[idx])
+                                        .or_else(|| {
+                                            page.items
+                                                .iter()
+                                                .find(|it| it.id == spatial_item.item_id)
+                                        });
+
+                                    if let Some(item) = item_opt {
+                                        let ItemKind::Stroke(stroke) = &item.kind;
+                                        let is_selected_drag = st.selection.is_dragging
+                                            && st.selection.selected_ids.contains(&item.id);
+                                        if is_selected_drag {
+                                            let _ = cr.save();
+                                            cr.translate(
+                                                st.selection.drag_offset.0,
+                                                st.selection.drag_offset.1,
+                                            );
+                                            Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                            let _ = cr.restore();
+                                        } else {
+                                            Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                        }
+                                    }
+                                }
+
+                                if st.selection.is_dragging
+                                    && st.selection.page_index == Some(page.index)
+                                {
+                                    for &sel_id in &st.selection.selected_ids {
+                                        if !visible_items.iter().any(|si| si.item_id == sel_id) {
+                                            if let Some(item) =
+                                                page.items.iter().find(|it| it.id == sel_id)
+                                            {
+                                                visible_strokes += 1;
+                                                let ItemKind::Stroke(stroke) = &item.kind;
+                                                let _ = cr.save();
+                                                cr.translate(
+                                                    st.selection.drag_offset.0,
+                                                    st.selection.drag_offset.1,
+                                                );
+                                                Self::draw_stroke(
+                                                    cr,
+                                                    stroke,
+                                                    current_mode,
+                                                    is_dark,
+                                                );
+                                                let _ = cr.restore();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Fallback sicuro su scansione lineare se l'indice non è ancora popolato
+                            visible_strokes += page.items.len();
+                            for item in &page.items {
+                                let ItemKind::Stroke(stroke) = &item.kind;
+                                let is_selected_drag = st.selection.is_dragging
+                                    && st.selection.selected_ids.contains(&item.id);
+                                if is_selected_drag {
+                                    let _ = cr.save();
+                                    cr.translate(
+                                        st.selection.drag_offset.0,
+                                        st.selection.drag_offset.1,
+                                    );
+                                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                    let _ = cr.restore();
+                                } else {
+                                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                }
                             }
                         }
                         let _ = cr.restore();
@@ -1136,44 +1219,107 @@ impl NoteCanvas {
                         is_dark,
                     );
 
-                    // Rendering vettoriale dei tratti su tutta la superficie senza clipping
+                    // Rendering vettoriale dei tratti con Culling Spaziale R-Tree
                     let _ = cr.save();
                     cr.translate(vp.offset_x, vp.offset_y);
                     cr.scale(vp.zoom, vp.zoom);
 
-                    let vis_rect = uninote_core::coordinates::Rect2D::new(
-                        -vp.offset_x / vp.zoom,
-                        -vp.offset_y / vp.zoom,
-                        width as f64 / vp.zoom,
-                        height as f64 / vp.zoom,
-                    );
+                    let doc_left = -vp.offset_x / vp.zoom;
+                    let doc_top = -vp.offset_y / vp.zoom;
+                    let doc_right = (width as f64 - vp.offset_x) / vp.zoom;
+                    let doc_bottom = (height as f64 - vp.offset_y) / vp.zoom;
 
                     for page in &st.document.pages {
-                        for item in &page.items {
-                            let ItemKind::Stroke(stroke) = &item.kind;
-                            if let Some(bbox) = stroke.bounding_box() {
-                                let stroke_rect = uninote_core::coordinates::Rect2D::new(
-                                    bbox.min_x,
-                                    bbox.min_y,
-                                    bbox.max_x - bbox.min_x,
-                                    bbox.max_y - bbox.min_y,
-                                );
-                                if !vis_rect.intersects(&stroke_rect) {
-                                    continue;
+                        if !page.spatial_index.is_empty() {
+                            let visible_items = page
+                                .spatial_index
+                                .locate_in_envelope(doc_left, doc_top, doc_right, doc_bottom);
+                            visible_strokes += visible_items.len();
+                            for spatial_item in &visible_items {
+                                let item_opt = page
+                                    .items
+                                    .binary_search_by_key(
+                                        &(spatial_item.z_index, spatial_item.item_id),
+                                        |it| (it.z_index, it.id),
+                                    )
+                                    .ok()
+                                    .map(|idx| &page.items[idx])
+                                    .or_else(|| {
+                                        page.items.iter().find(|it| it.id == spatial_item.item_id)
+                                    });
+
+                                if let Some(item) = item_opt {
+                                    let ItemKind::Stroke(stroke) = &item.kind;
+                                    let is_selected_drag = st.selection.is_dragging
+                                        && st.selection.selected_ids.contains(&item.id);
+                                    if is_selected_drag {
+                                        let _ = cr.save();
+                                        cr.translate(
+                                            st.selection.drag_offset.0,
+                                            st.selection.drag_offset.1,
+                                        );
+                                        Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                        let _ = cr.restore();
+                                    } else {
+                                        Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                    }
                                 }
                             }
-                            let is_selected_drag = st.selection.is_dragging
-                                && st.selection.selected_ids.contains(&item.id);
-                            if is_selected_drag {
-                                let _ = cr.save();
-                                cr.translate(
-                                    st.selection.drag_offset.0,
-                                    st.selection.drag_offset.1,
-                                );
-                                Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                let _ = cr.restore();
-                            } else {
-                                Self::draw_stroke(cr, stroke, current_mode, is_dark);
+
+                            if st.selection.is_dragging {
+                                for &sel_id in &st.selection.selected_ids {
+                                    if !visible_items.iter().any(|si| si.item_id == sel_id) {
+                                        if let Some(item) =
+                                            page.items.iter().find(|it| it.id == sel_id)
+                                        {
+                                            visible_strokes += 1;
+                                            let ItemKind::Stroke(stroke) = &item.kind;
+                                            let _ = cr.save();
+                                            cr.translate(
+                                                st.selection.drag_offset.0,
+                                                st.selection.drag_offset.1,
+                                            );
+                                            Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                            let _ = cr.restore();
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Fallback sicuro su scansione lineare se l'indice è vuoto
+                            for item in &page.items {
+                                let ItemKind::Stroke(stroke) = &item.kind;
+                                if let Some(bbox) = stroke.bounding_box() {
+                                    let stroke_rect = uninote_core::coordinates::Rect2D::new(
+                                        bbox.min_x,
+                                        bbox.min_y,
+                                        bbox.max_x - bbox.min_x,
+                                        bbox.max_y - bbox.min_y,
+                                    );
+                                    let vis_rect = uninote_core::coordinates::Rect2D::new(
+                                        doc_left,
+                                        doc_top,
+                                        doc_right - doc_left,
+                                        doc_bottom - doc_top,
+                                    );
+                                    if !vis_rect.intersects(&stroke_rect) {
+                                        continue;
+                                    }
+                                }
+                                visible_strokes += 1;
+                                let is_selected_drag = st.selection.is_dragging
+                                    && st.selection.selected_ids.contains(&item.id);
+                                if is_selected_drag {
+                                    let _ = cr.save();
+                                    cr.translate(
+                                        st.selection.drag_offset.0,
+                                        st.selection.drag_offset.1,
+                                    );
+                                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                    let _ = cr.restore();
+                                } else {
+                                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
+                                }
                             }
                         }
                     }
@@ -1193,17 +1339,35 @@ impl NoteCanvas {
             // 4. Disegno overlay di selezione (Lasso trail, rubber band, bbox tratteggiato #6DD2FF con maniglia)
             Self::draw_selection_overlay(cr, &st.selection, &vp, is_dark);
 
-            // 4. Aggiornamento metriche di rendering HUD
-            let render_duration = start_render.elapsed().as_micros() as u64;
-            hud_clone.record_frame_tick();
-            hud_clone.update_metrics(|m| {
-                m.render_time_us = render_duration;
-            });
-            hud_clone.update_view();
+            // 4. Aggiornamento metriche di rendering HUD (zero-overhead quando nascosto)
+            if hud_clone.is_visible() {
+                let render_duration = start_render.elapsed().as_micros() as u64;
+                let total_strokes: usize = st.document.pages.iter().map(|p| p.items.len()).sum();
+                let culled_pct = if total_strokes > 0 {
+                    let culled_count = total_strokes.saturating_sub(visible_strokes);
+                    (culled_count as f64 / total_strokes as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                hud_clone.record_frame_tick();
+                hud_clone.update_metrics(|m| {
+                    m.visible_strokes = visible_strokes;
+                    m.total_strokes = total_strokes;
+                    m.culled_pct = culled_pct;
+                    m.render_time_us = render_duration;
+                });
+                hud_clone.update_view();
+            }
         });
     }
 
-    fn draw_stroke(cr: &gtk4::cairo::Context, stroke: &Stroke, mode: PipelineMode, is_dark: bool) {
+    pub fn draw_stroke(
+        cr: &gtk4::cairo::Context,
+        stroke: &Stroke,
+        mode: PipelineMode,
+        is_dark: bool,
+    ) {
         if stroke.points.is_empty() {
             return;
         }
@@ -1244,8 +1408,17 @@ impl NoteCanvas {
                 }
             }
             PipelineMode::CatmullRomSpline | PipelineMode::OneEuroFiltered => {
-                let segments = uninote_stroke::geometry::catmull_rom_to_bezier(&stroke.points);
-                for seg in &segments {
+                let cached = stroke.bezier_segments();
+                let fallback: Vec<uninote_stroke::geometry::CubicBezierSegment>;
+                let segments: &[uninote_stroke::geometry::CubicBezierSegment] =
+                    if !cached.is_empty() {
+                        cached
+                    } else {
+                        fallback = uninote_stroke::geometry::catmull_rom_to_bezier(&stroke.points);
+                        &fallback
+                    };
+
+                for seg in segments {
                     let len = seg.approximate_length();
                     let width_diff = (seg.width1 - seg.width0).abs();
 
@@ -2223,8 +2396,12 @@ impl NoteCanvas {
         self.area.add_controller(zoom);
     }
 
-    /// Cancella i tratti che intersecano la coordinata del documento indicata.
-    fn erase_strokes_at(st: &mut CanvasState, doc_pt: (f64, f64), radius: f64) {
+    /// Cancella i tratti che intersecano la coordinata del documento indicata,
+    /// accelerato tramite R*-Tree PageSpatialIndex per latenza < 0.5 ms su 10.000 tratti.
+    pub fn erase_strokes_at(st: &mut CanvasState, doc_pt: (f64, f64), radius: f64) {
+        if !radius.is_finite() || radius <= 0.0 || !doc_pt.0.is_finite() || !doc_pt.1.is_finite() {
+            return;
+        }
         if st.document.pages.is_empty() {
             return;
         }
@@ -2235,16 +2412,50 @@ impl NoteCanvas {
             Viewport::find_page_index_at_y(doc_pt.1, st.document.pages.len())
         };
         if let Some(page) = st.document.pages.get_mut(page_idx) {
+            // Auto-reidratazione difensiva se l'indice spaziale è vuoto ma ci sono elementi
+            if page.spatial_index.is_empty() && !page.items.is_empty() {
+                page.rebuild_spatial_index();
+            }
+
+            // 1. Pre-filtraggio R*-Tree dell'inviluppo della gomma in O(log N + K)
+            let min_x = doc_pt.0 - radius;
+            let min_y = doc_pt.1 - radius;
+            let max_x = doc_pt.0 + radius;
+            let max_y = doc_pt.1 + radius;
+
+            let candidates = page
+                .spatial_index
+                .locate_in_envelope(min_x, min_y, max_x, max_y);
+            if candidates.is_empty() {
+                return;
+            }
+
+            // 2. Controllo geometrico puntuale dettagliato ESCLUSIVAMENTE sui candidati (K << N)
             let page_id = page.id;
             let mut erased = Vec::new();
 
-            for item in &page.items {
-                let ItemKind::Stroke(ref s) = item.kind;
-                if s.intersects_point(doc_pt, radius) {
-                    erased.push(item.clone());
+            if candidates.len() == 1 {
+                let target_id = candidates[0].item_id;
+                if let Some(item) = page.items.iter().find(|it| it.id == target_id) {
+                    let ItemKind::Stroke(ref s) = item.kind;
+                    if s.intersects_point(doc_pt, radius) {
+                        erased.push(item.clone());
+                    }
+                }
+            } else {
+                let candidate_ids: std::collections::HashSet<u64> =
+                    candidates.iter().map(|c| c.item_id).collect();
+                for item in &page.items {
+                    if candidate_ids.contains(&item.id) {
+                        let ItemKind::Stroke(ref s) = item.kind;
+                        if s.intersects_point(doc_pt, radius) {
+                            erased.push(item.clone());
+                        }
+                    }
                 }
             }
 
+            // 3. Esecuzione comando atomico EraseItems (aggiorna history, document e spatial_index)
             if !erased.is_empty() {
                 st.history.execute(
                     DocCommand::EraseItems {
@@ -2461,33 +2672,11 @@ impl NoteCanvas {
                 };
                 let page = &st.document.pages[page_idx];
 
-                let strokes: Vec<&Stroke> = page
-                    .items
-                    .iter()
-                    .map(|it| match &it.kind {
-                        ItemKind::Stroke(s) => s,
-                    })
-                    .collect();
-
-                let selected_stroke_ids =
-                    SelectionEngine::select_lasso(strokes.iter().copied(), &poly);
-                let stroke_id_set: std::collections::HashSet<u64> =
-                    selected_stroke_ids.into_iter().collect();
-
-                let mut selected_item_ids = Vec::new();
-                let mut selected_strokes = Vec::new();
-                for it in &page.items {
-                    let ItemKind::Stroke(ref s) = it.kind;
-                    if stroke_id_set.contains(&s.id) {
-                        selected_item_ids.push(it.id);
-                        selected_strokes.push(s);
-                    }
-                }
-
-                if !selected_item_ids.is_empty() {
-                    let bbox = SelectionEngine::compute_selection_bounding_box(selected_strokes);
+                let (selected_ids, bbox) =
+                    crate::selection::AppSelectionEngine::select_lasso(page, &poly);
+                if !selected_ids.is_empty() {
                     st.selection.page_index = Some(page_idx);
-                    st.selection.selected_ids = selected_item_ids;
+                    st.selection.selected_ids = selected_ids;
                     st.selection.bbox = bbox;
                 } else {
                     st.selection.clear();
@@ -2518,33 +2707,11 @@ impl NoteCanvas {
                 };
                 let page = &st.document.pages[page_idx];
 
-                let strokes: Vec<&Stroke> = page
-                    .items
-                    .iter()
-                    .map(|it| match &it.kind {
-                        ItemKind::Stroke(s) => s,
-                    })
-                    .collect();
-
-                let selected_stroke_ids =
-                    SelectionEngine::select_rect(strokes.iter().copied(), rect);
-                let stroke_id_set: std::collections::HashSet<u64> =
-                    selected_stroke_ids.into_iter().collect();
-
-                let mut selected_item_ids = Vec::new();
-                let mut selected_strokes = Vec::new();
-                for it in &page.items {
-                    let ItemKind::Stroke(ref s) = it.kind;
-                    if stroke_id_set.contains(&s.id) {
-                        selected_item_ids.push(it.id);
-                        selected_strokes.push(s);
-                    }
-                }
-
-                if !selected_item_ids.is_empty() {
-                    let bbox = SelectionEngine::compute_selection_bounding_box(selected_strokes);
+                let (selected_ids, bbox) =
+                    crate::selection::AppSelectionEngine::select_rect(page, &rect);
+                if !selected_ids.is_empty() {
                     st.selection.page_index = Some(page_idx);
-                    st.selection.selected_ids = selected_item_ids;
+                    st.selection.selected_ids = selected_ids;
                     st.selection.bbox = bbox;
                 } else {
                     st.selection.clear();

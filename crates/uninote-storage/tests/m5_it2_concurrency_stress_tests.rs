@@ -46,6 +46,8 @@ fn make_test_stroke(id: u64, x: f64, y: f64) -> Stroke {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::CatmullRomSpline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     }
 }
 

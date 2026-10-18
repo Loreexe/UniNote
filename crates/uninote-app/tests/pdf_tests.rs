@@ -304,6 +304,8 @@ fn test_t1_r5_vector_strokes_rendered_into_pdf() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(uninote_core::model::Item {
@@ -351,6 +353,8 @@ fn test_t1_r5_highlighter_transparency_in_pdf_export() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(uninote_core::model::Item {
@@ -441,6 +445,8 @@ fn test_t2_r5_stroke_outside_page_boundaries_clipping() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(uninote_core::model::Item {
@@ -513,6 +519,8 @@ fn test_t3_pdf_export_with_mixed_inking_tools() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     // Highlighter stroke over it
@@ -543,6 +551,8 @@ fn test_t3_pdf_export_with_mixed_inking_tools() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(uninote_core::model::Item {
@@ -606,6 +616,8 @@ fn test_t4_scenario_lecture_slide_annotation_and_print_export() {
             raw_samples: Vec::new(),
             is_dot: false,
             mode: PipelineMode::Baseline,
+            cached_bbox: None,
+            cached_bezier: Vec::new(),
         };
         page.items.push(uninote_core::model::Item {
             id: 100 + idx as u64,
@@ -671,6 +683,8 @@ fn test_production_export_to_pdf_single_and_multi_page() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     doc.pages[0].items.push(uninote_core::model::Item {
         id: 1,
@@ -706,6 +720,8 @@ fn test_production_export_to_pdf_single_and_multi_page() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     doc.pages[1].items.push(uninote_core::model::Item {
         id: 2,
@@ -792,6 +808,8 @@ fn test_production_import_from_pdf_and_reexport() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     annotated_doc.pages[0]
         .items
@@ -868,6 +886,8 @@ fn test_production_export_bezier_smoothing() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(uninote_core::model::Item {
@@ -911,6 +931,8 @@ fn test_production_whiteboard_export_auto_bounding_box() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     doc.pages[0].items.push(uninote_core::model::Item {
         id: 50,

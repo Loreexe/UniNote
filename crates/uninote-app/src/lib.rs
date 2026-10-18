@@ -7,6 +7,7 @@ pub mod icons;
 pub mod pdf_cache;
 pub mod pdf_export;
 pub mod preferences;
+pub mod selection;
 pub mod settings;
 pub mod window;
 
@@ -20,6 +21,7 @@ pub use preferences::{
     AppPreferences, BarrelButtonAction, DashboardRecentStore, FullAppSettingsModel, PenSlotConfig,
     PressureCurve, RecentDocumentMeta, ThemeMode,
 };
+pub use selection::AppSelectionEngine;
 pub use settings::UniNoteSettingsWindow;
 pub use window::UniNoteWindow;
 

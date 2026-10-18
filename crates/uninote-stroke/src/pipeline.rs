@@ -1,7 +1,7 @@
 use crate::filter::{OneEuroConfig, OneEuroPointFilter, OneEuroScalar};
 use crate::geometry::{compute_width, is_discrete_dot};
 pub use crate::types::PipelineMode;
-use crate::types::{DeviceKind, InputPhase, InputSample, Stroke, StrokePoint, StrokeStyle};
+use crate::types::{DeviceKind, InputPhase, InputSample, Rect, Stroke, StrokePoint, StrokeStyle};
 
 /// Costruttore di un singolo tratto a partire dal flusso di campioni di input.
 pub struct StrokeBuilder {
@@ -77,6 +77,11 @@ impl StrokeBuilder {
                     timestamp_ns: sample.timestamp_ns,
                 };
 
+                let pt_box = Rect::from_point(pt.x, pt.y, pt.width / 2.0);
+                self.stroke.cached_bbox = Some(match self.stroke.cached_bbox {
+                    Some(existing) => existing.union(&pt_box),
+                    None => pt_box,
+                });
                 self.stroke.points.push(pt.clone());
                 Some(pt)
             }
@@ -148,6 +153,11 @@ impl StrokeBuilder {
                     timestamp_ns: sample.timestamp_ns,
                 };
 
+                let pt_box = Rect::from_point(pt.x, pt.y, pt.width / 2.0);
+                self.stroke.cached_bbox = Some(match self.stroke.cached_bbox {
+                    Some(existing) => existing.union(&pt_box),
+                    None => pt_box,
+                });
                 self.stroke.points.push(pt.clone());
                 Some(pt)
             }
@@ -180,6 +190,7 @@ impl StrokeBuilder {
         }
 
         self.stroke.is_dot = is_discrete_dot(&self.stroke.points, 2.5);
+        self.stroke.recompute_cache();
         self.stroke
     }
 

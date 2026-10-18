@@ -45,6 +45,8 @@ fn make_linear_stroke(start: (f64, f64), end: (f64, f64), count: usize, jitter_y
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     }
 }
 
@@ -69,6 +71,8 @@ fn make_circle_sketch(center: (f64, f64), radius: f64, count: usize, radial_nois
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     }
 }
 
@@ -237,6 +241,8 @@ fn test_t2_r6_f1_degenerate_sub_pixel_shape_returns_none() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     assert!(recognize_shape(&tiny_stroke).is_none());
@@ -263,6 +269,6 @@ fn test_t2_r7_semantic_version_format() {
     let parts: Vec<&str> = ver.split('.').collect();
     assert_eq!(parts.len(), 3);
     assert_eq!(parts[0], "0");
-    assert_eq!(parts[1], "3");
+    assert_eq!(parts[1], "4");
     assert_eq!(parts[2], "0");
 }

@@ -61,14 +61,18 @@ fn make_test_stroke(id: u64, points: &[(f64, f64)]) -> Stroke {
         })
         .collect();
 
-    Stroke {
+    let mut stroke = Stroke {
         id,
         points: stroke_points,
         style: StrokeStyle::default(),
         raw_samples,
         is_dot: false,
         mode: PipelineMode::Baseline,
-    }
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
+    };
+    stroke.recompute_cache();
+    stroke
 }
 
 // ============================================================================
@@ -185,6 +189,8 @@ fn test_selection_degenerate_strokes_and_polygons() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
     assert!(!is_stroke_selected_by_lasso(&empty_stroke, &poly));
     assert!(!is_stroke_selected_by_rect(

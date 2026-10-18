@@ -70,6 +70,7 @@ fn test_m5_heterogeneous_page_sizes_exported_and_verified_by_poppler() {
         height: A4_HEIGHT_PT,
         background: PageBackground::Blank,
         items: Vec::new(),
+        ..Default::default()
     };
 
     // Page 1: 16:9 Modern Widescreen Slide (960.0 x 540.0)
@@ -83,6 +84,7 @@ fn test_m5_heterogeneous_page_sizes_exported_and_verified_by_poppler() {
             margin_left: 50.0,
         },
         items: Vec::new(),
+        ..Default::default()
     };
 
     // Page 2: 4:3 Classical Projector Slide (720.0 x 540.0)
@@ -93,6 +95,7 @@ fn test_m5_heterogeneous_page_sizes_exported_and_verified_by_poppler() {
         height: 540.0,
         background: PageBackground::Grid { grid_size: 15.0 },
         items: Vec::new(),
+        ..Default::default()
     };
 
     // Page 3: US Letter (612.0 x 792.0)
@@ -103,6 +106,7 @@ fn test_m5_heterogeneous_page_sizes_exported_and_verified_by_poppler() {
         height: 792.0,
         background: PageBackground::Blank,
         items: Vec::new(),
+        ..Default::default()
     };
 
     doc.pages.push(p0);
@@ -244,6 +248,8 @@ fn test_m5_highlighter_alpha_038_pixel_blending_verification() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     // Overlapping highlighter stroke: Yellow with alpha = 0.38
@@ -274,6 +280,8 @@ fn test_m5_highlighter_alpha_038_pixel_blending_verification() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(Item {
@@ -370,6 +378,8 @@ fn test_m5_catmull_rom_bezier_curves_and_points_fidelity() {
         raw_samples: Vec::new(),
         is_dot: true,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     // 2-point direct line
@@ -395,6 +405,8 @@ fn test_m5_catmull_rom_bezier_curves_and_points_fidelity() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     // Complex multi-point curve
@@ -421,6 +433,8 @@ fn test_m5_catmull_rom_bezier_curves_and_points_fidelity() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::CatmullRomSpline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(Item {
@@ -515,6 +529,8 @@ fn test_m5_whiteboard_negative_coordinates_shift_and_containment() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(Item {
@@ -574,6 +590,8 @@ fn test_m5_whiteboard_extreme_coordinates_cross_quadrant() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(Item {
@@ -623,6 +641,8 @@ fn test_m5_whiteboard_positive_far_offset_coordinates() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     doc.pages[0].items.push(Item {

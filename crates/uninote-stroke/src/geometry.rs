@@ -55,6 +55,19 @@ pub struct CubicBezierSegment {
 }
 
 impl CubicBezierSegment {
+    /// Trasla il segmento di Bézier di un offset (dx, dy) in-place a zero ri-calcoli spline.
+    #[inline]
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        self.p0.0 += dx;
+        self.p0.1 += dy;
+        self.cp1.0 += dx;
+        self.cp1.1 += dy;
+        self.cp2.0 += dx;
+        self.cp2.1 += dy;
+        self.p1.0 += dx;
+        self.p1.1 += dy;
+    }
+
     /// Valuta la coordinata 2D (x, y) lungo la curva per il parametro t in [0.0, 1.0].
     pub fn evaluate(&self, t: f64) -> (f64, f64) {
         let t = t.clamp(0.0, 1.0);

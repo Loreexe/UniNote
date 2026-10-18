@@ -123,11 +123,13 @@ impl CommandHistory {
                     let item_id = self.next_item_id;
                     self.next_item_id += 1;
                     let z_index = page.items.len() as u64 + 1;
-                    page.items.push(Item {
+                    let item = Item {
                         id: item_id,
                         z_index,
                         kind: ItemKind::Stroke(stroke.clone()),
-                    });
+                    };
+                    page.spatial_index.insert(&item);
+                    page.items.push(item);
                 }
             }
             DocCommand::EraseItems {
@@ -137,6 +139,12 @@ impl CommandHistory {
                 if let Some(page) = doc.get_page_mut(*page_id) {
                     let ids_to_remove: std::collections::HashSet<u64> =
                         erased_items.iter().map(|it| it.id).collect();
+                    for it in erased_items {
+                        let ItemKind::Stroke(s) = &it.kind;
+                        if let Some(bbox) = s.bounding_box() {
+                            page.spatial_index.remove(it.id, &bbox);
+                        }
+                    }
                     page.items.retain(|it| !ids_to_remove.contains(&it.id));
                 }
             }
@@ -161,19 +169,24 @@ impl CommandHistory {
                 }
                 if let Some(page) = doc.get_page_mut(*page_id) {
                     let id_set: HashSet<ItemId> = item_ids.iter().copied().collect();
-                    for item in &mut page.items {
-                        if id_set.contains(&item.id) {
-                            match &mut item.kind {
-                                ItemKind::Stroke(stroke) => {
-                                    for p in &mut stroke.points {
-                                        p.x += delta_x;
-                                        p.y += delta_y;
-                                    }
-                                    for s in &mut stroke.raw_samples {
-                                        s.position.0 += delta_x;
-                                        s.position.1 += delta_y;
-                                    }
+                    const REBUILD_THRESHOLD: usize = 250;
+                    if item_ids.len() > REBUILD_THRESHOLD {
+                        for item in &mut page.items {
+                            if id_set.contains(&item.id) {
+                                let ItemKind::Stroke(stroke) = &mut item.kind;
+                                stroke.translate(*delta_x, *delta_y);
+                            }
+                        }
+                        page.rebuild_spatial_index();
+                    } else {
+                        for item in &mut page.items {
+                            if id_set.contains(&item.id) {
+                                let ItemKind::Stroke(stroke) = &mut item.kind;
+                                if let Some(old_bbox) = stroke.bounding_box() {
+                                    page.spatial_index.remove(item.id, &old_bbox);
                                 }
+                                stroke.translate(*delta_x, *delta_y);
+                                page.spatial_index.insert(item);
                             }
                         }
                     }
@@ -190,7 +203,11 @@ impl CommandHistory {
                     if let Some(pos) = page.items.iter().rposition(|it| match &it.kind {
                         ItemKind::Stroke(s) => s.id == stroke.id,
                     }) {
-                        page.items.remove(pos);
+                        let item = page.items.remove(pos);
+                        let ItemKind::Stroke(s) = &item.kind;
+                        if let Some(bbox) = s.bounding_box() {
+                            page.spatial_index.remove(item.id, &bbox);
+                        }
                     }
                 }
             }
@@ -200,6 +217,7 @@ impl CommandHistory {
             } => {
                 if let Some(page) = doc.get_page_mut(*page_id) {
                     for item in erased_items {
+                        page.spatial_index.insert(item);
                         page.items.push(item.clone());
                     }
                     // Ripristina l'ordine corretto tramite z_index
@@ -227,19 +245,24 @@ impl CommandHistory {
                 }
                 if let Some(page) = doc.get_page_mut(*page_id) {
                     let id_set: HashSet<ItemId> = item_ids.iter().copied().collect();
-                    for item in &mut page.items {
-                        if id_set.contains(&item.id) {
-                            match &mut item.kind {
-                                ItemKind::Stroke(stroke) => {
-                                    for p in &mut stroke.points {
-                                        p.x -= delta_x;
-                                        p.y -= delta_y;
-                                    }
-                                    for s in &mut stroke.raw_samples {
-                                        s.position.0 -= delta_x;
-                                        s.position.1 -= delta_y;
-                                    }
+                    const REBUILD_THRESHOLD: usize = 250;
+                    if item_ids.len() > REBUILD_THRESHOLD {
+                        for item in &mut page.items {
+                            if id_set.contains(&item.id) {
+                                let ItemKind::Stroke(stroke) = &mut item.kind;
+                                stroke.translate(-*delta_x, -*delta_y);
+                            }
+                        }
+                        page.rebuild_spatial_index();
+                    } else {
+                        for item in &mut page.items {
+                            if id_set.contains(&item.id) {
+                                let ItemKind::Stroke(stroke) = &mut item.kind;
+                                if let Some(cur_bbox) = stroke.bounding_box() {
+                                    page.spatial_index.remove(item.id, &cur_bbox);
                                 }
+                                stroke.translate(-*delta_x, -*delta_y);
+                                page.spatial_index.insert(item);
                             }
                         }
                     }

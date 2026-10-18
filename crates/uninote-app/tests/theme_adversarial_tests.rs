@@ -94,7 +94,7 @@ fn create_sample_stroke(id: u64, color: (f64, f64, f64, f64), width: f64) -> Str
         });
     }
 
-    Stroke {
+    let mut stroke = Stroke {
         id,
         style: StrokeStyle {
             color,
@@ -106,7 +106,11 @@ fn create_sample_stroke(id: u64, color: (f64, f64, f64, f64), width: f64) -> Str
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::CatmullRomSpline,
-    }
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
+    };
+    stroke.recompute_cache();
+    stroke
 }
 
 // ============================================================================

@@ -64,6 +64,8 @@ fn test_save_and_reload_document_fidelity() {
         raw_samples: Vec::new(),
         is_dot: false,
         mode: uninote_stroke::PipelineMode::CatmullRomSpline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
     };
 
     let mut history = uninote_core::CommandHistory::default();

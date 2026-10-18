@@ -168,14 +168,18 @@ fn make_stroke(id: u64, coords: &[(f64, f64)]) -> Stroke {
         })
         .collect();
 
-    Stroke {
+    let mut stroke = Stroke {
         id,
         points,
         style: StrokeStyle::default(),
         raw_samples: Vec::new(),
         is_dot: false,
         mode: PipelineMode::Baseline,
-    }
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
+    };
+    stroke.recompute_cache();
+    stroke
 }
 
 // ============================================================================
@@ -553,4 +557,83 @@ fn test_t4_scenario_academic_formula_reorganization() {
     });
 
     assert_eq!(doc.pages[0].items.len(), 3);
+}
+
+/// Verification of AppSelectionEngine with R-Tree spatial index pre-filtering (Rect).
+#[test]
+fn test_app_selection_engine_spatial_rect_acceleration() {
+    let mut page = Page::new_a4(0, PageBackground::Blank);
+    for i in 1..=100 {
+        let x = (i as f64) * 5.0;
+        let s = make_stroke(i, &[(x, 100.0), (x + 3.0, 100.0)]);
+        page.items.push(Item {
+            id: i,
+            z_index: i,
+            kind: ItemKind::Stroke(s),
+        });
+    }
+
+    // Populate spatial index
+    page.rebuild_spatial_index();
+    assert_eq!(page.spatial_index.len(), 100);
+
+    // Select items between x = 45.0 and x = 65.0
+    let query_rect = Rect::new(45.0, 90.0, 65.0, 110.0);
+    let (selected_ids, bbox) =
+        uninote_app::selection::AppSelectionEngine::select_rect(&page, &query_rect);
+
+    assert!(!selected_ids.is_empty());
+    for id in &selected_ids {
+        let x = (*id as f64) * 5.0;
+        assert!((45.0..=65.0).contains(&x));
+    }
+    assert!(bbox.is_some());
+}
+
+/// Verification of AppSelectionEngine with R-Tree spatial index pre-filtering (Lasso).
+#[test]
+fn test_app_selection_engine_spatial_lasso_acceleration() {
+    let mut page = Page::new_a4(0, PageBackground::Blank);
+    for i in 1..=50 {
+        let y = (i as f64) * 10.0;
+        let s = make_stroke(i, &[(100.0, y), (120.0, y)]);
+        page.items.push(Item {
+            id: i,
+            z_index: i,
+            kind: ItemKind::Stroke(s),
+        });
+    }
+
+    page.rebuild_spatial_index();
+
+    // Lasso polygon surrounding strokes i = 10..=15 (y from 95 to 155)
+    let poly = vec![(80.0, 95.0), (140.0, 95.0), (140.0, 155.0), (80.0, 155.0)];
+    let (selected_ids, bbox) =
+        uninote_app::selection::AppSelectionEngine::select_lasso(&page, &poly);
+
+    assert_eq!(selected_ids.len(), 6);
+    assert_eq!(selected_ids, vec![10, 11, 12, 13, 14, 15]);
+    assert!(bbox.is_some());
+}
+
+/// Verification of AppSelectionEngine fallback when spatial index is empty.
+#[test]
+fn test_app_selection_engine_fallback_on_empty_spatial_index() {
+    let mut page = Page::new_a4(0, PageBackground::Blank);
+    let s = make_stroke(1, &[(50.0, 50.0), (60.0, 50.0)]);
+    page.items.push(Item {
+        id: 1,
+        z_index: 1,
+        kind: ItemKind::Stroke(s),
+    });
+
+    // Spatial index deliberately empty
+    assert!(page.spatial_index.is_empty());
+
+    let query_rect = Rect::new(40.0, 40.0, 70.0, 60.0);
+    let (selected_ids, bbox) =
+        uninote_app::selection::AppSelectionEngine::select_rect(&page, &query_rect);
+
+    assert_eq!(selected_ids, vec![1]);
+    assert!(bbox.is_some());
 }
