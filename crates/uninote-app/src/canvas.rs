@@ -195,6 +195,14 @@ impl CanvasState {
         }
     }
 
+    /// Alloca un nuovo ItemId strettamente univoco sincronizzando next_stroke_id e history.
+    pub fn alloc_item_id(&mut self) -> u64 {
+        let id = self.next_stroke_id.max(self.history.next_item_id());
+        self.next_stroke_id = id + 1;
+        self.history.set_next_item_id(id + 1);
+        id
+    }
+
     pub fn undo(&mut self) -> bool {
         let res = self.history.undo(&mut self.document);
         if res {
@@ -407,6 +415,235 @@ impl NoteCanvas {
             self.area.queue_draw();
         }
         deleted
+    }
+
+    /// Copia gli elementi selezionati negli appunti (in-memory e GdkClipboard di sistema).
+    pub fn copy_selected(&self) -> bool {
+        let mut st = self.state.borrow_mut();
+        if !st.selection.has_selection() {
+            return false;
+        }
+
+        let page_idx = match st.selection.page_index {
+            Some(idx) => idx,
+            None => return false,
+        };
+
+        let bbox = match st.selection.bbox {
+            Some(b) => b,
+            None => return false,
+        };
+
+        let id_set: std::collections::HashSet<ItemId> =
+            st.selection.selected_ids.iter().copied().collect();
+        let doc_id = st.document.id;
+        let doc_format = st.document.format;
+        let vp_offset = (st.viewport.offset_x, st.viewport.offset_y);
+
+        let page = match st.document.pages.get_mut(page_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let page_size = (page.width, page.height);
+        let mut copied_items: Vec<uninote_core::Item> = Vec::new();
+
+        for item in &mut page.items {
+            if id_set.contains(&item.id) {
+                let mut it_clone = item.clone();
+                let ItemKind::Stroke(ref mut s) = it_clone.kind;
+                s.ensure_cache();
+                copied_items.push(it_clone);
+            }
+        }
+
+        if copied_items.is_empty() {
+            return false;
+        }
+
+        let center = (
+            (bbox.min_x + bbox.max_x) / 2.0,
+            (bbox.min_y + bbox.max_y) / 2.0,
+        );
+
+        let data = crate::clipboard::ClipboardData {
+            source_format: doc_format,
+            source_doc_id: Some(doc_id),
+            source_page_index: Some(page_idx),
+            source_page_size: Some(page_size),
+            original_bbox: bbox,
+            original_center: center,
+            items: copied_items,
+            paste_count: 0,
+            source_viewport_offset: Some(vp_offset),
+        };
+
+        crate::clipboard::set_clipboard_data(data);
+        true
+    }
+
+    /// Taglia gli elementi selezionati (copia negli appunti + cancellazione atomica via DocCommand::EraseItems).
+    pub fn cut_selected(&self) -> bool {
+        if !self.copy_selected() {
+            return false;
+        }
+        let mut st = self.state.borrow_mut();
+        let deleted = Self::delete_selected_items(&mut st);
+        drop(st);
+        if deleted {
+            self.area.queue_draw();
+        }
+        deleted
+    }
+
+    /// Incolla gli elementi dagli appunti con posizionamento intelligente e auto-attivazione della selezione.
+    pub fn paste_from_clipboard(&self) -> bool {
+        let clipboard_opt = crate::clipboard::get_clipboard_data();
+        let clipboard = match clipboard_opt {
+            Some(cb) if !cb.items.is_empty() => cb,
+            _ => return false,
+        };
+
+        let st = self.state.borrow();
+        if st.document.pages.is_empty() {
+            return false;
+        }
+
+        let area_w = (self.area.width() as f64).max(800.0);
+        let area_h = (self.area.height() as f64).max(600.0);
+        let screen_center = (area_w / 2.0, area_h / 2.0);
+        let (vp_center_x, vp_center_y) = st.viewport.screen_to_document(screen_center);
+
+        // NaN / Finite guard per prevenire corruzione dello stato o crash Cairo
+        if !clipboard.original_center.0.is_finite()
+            || !clipboard.original_center.1.is_finite()
+            || !vp_center_x.is_finite()
+            || !vp_center_y.is_finite()
+        {
+            return false;
+        }
+
+        let is_same_doc = clipboard.source_doc_id == Some(st.document.id);
+        let pan_moved = if let Some(src_offset) = clipboard.source_viewport_offset {
+            (st.viewport.offset_x - src_offset.0).abs() > 1.0
+                || (st.viewport.offset_y - src_offset.1).abs() > 1.0
+        } else {
+            false
+        };
+
+        // 1. Risoluzione della pagina di destinazione
+        let page_at_vp_center =
+            Viewport::find_page_index_at_y(vp_center_y, st.document.pages.len());
+
+        let target_page_idx = if st.document.format == DocumentFormat::Whiteboard {
+            0
+        } else if is_same_doc && !pan_moved {
+            if let Some(sel_idx) = st.selection.page_index {
+                let sel_rect = Viewport::page_rect(sel_idx);
+                let vp_in_sel_page = vp_center_y >= sel_rect.y
+                    && vp_center_y <= sel_rect.y + sel_rect.height + uninote_core::PAGE_GAP_PT;
+                if vp_in_sel_page {
+                    sel_idx.min(st.document.pages.len().saturating_sub(1))
+                } else {
+                    page_at_vp_center
+                }
+            } else {
+                page_at_vp_center
+            }
+        } else {
+            page_at_vp_center
+        };
+
+        let target_page_id = match st.document.pages.get(target_page_idx) {
+            Some(p) => p.id,
+            None => return false,
+        };
+
+        // 2. Calcolo dello spostamento (Smart Positioning)
+        let is_same_format = st.document.format == clipboard.source_format;
+        let is_same_page = clipboard.source_page_index == Some(target_page_idx);
+
+        let count = clipboard.paste_count;
+        let (dx, dy) = if is_same_doc && is_same_format && is_same_page && !pan_moved {
+            // Stessa vista/pagina/documento: offset a cascata (+25.0 pt, +50.0 pt, +75.0 pt)
+            let offset = ((count + 1) as f64) * 25.0;
+            (offset, offset)
+        } else {
+            // Spostamento di pan, cambio pagina o cambio documento: centra nella viewport visibile corrente
+            let base_dx = vp_center_x - clipboard.original_center.0;
+            let base_dy = vp_center_y - clipboard.original_center.1;
+            let cascade = (count as f64) * 25.0;
+            (base_dx + cascade, base_dy + cascade)
+        };
+
+        if !dx.is_finite() || !dy.is_finite() {
+            return false;
+        }
+
+        // Aggiorna il contatore di incolla
+        drop(st);
+        crate::clipboard::advance_paste_count();
+        let mut st_guard = self.state.borrow_mut();
+        let st = &mut *st_guard;
+
+        // 3. Allocazione nuovi ItemId univoci, nuovo z_index e traslazione in-place
+        let target_page = match st.document.pages.get(target_page_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+        let max_z = target_page
+            .items
+            .iter()
+            .map(|it| it.z_index)
+            .max()
+            .unwrap_or(0);
+
+        let mut new_items: Vec<uninote_core::Item> = Vec::with_capacity(clipboard.items.len());
+        let mut new_ids: Vec<ItemId> = Vec::with_capacity(clipboard.items.len());
+        let mut union_bbox: Option<Rect> = None;
+
+        for (idx, item) in clipboard.items.iter().enumerate() {
+            let new_id = st.alloc_item_id();
+            let mut item_clone = item.clone();
+            item_clone.id = new_id;
+            item_clone.z_index = max_z + (idx as u64) + 1;
+
+            let ItemKind::Stroke(ref mut stroke) = item_clone.kind;
+            stroke.id = new_id;
+            stroke.translate(dx, dy);
+            if let Some(b) = stroke.bounding_box() {
+                union_bbox = Some(match union_bbox {
+                    Some(existing) => existing.union(&b),
+                    None => b,
+                });
+            }
+
+            new_ids.push(new_id);
+            new_items.push(item_clone);
+        }
+
+        // 4. Esecuzione comando atomico DocCommand::PasteItems
+        let cmd = DocCommand::PasteItems {
+            page_id: target_page_id,
+            items: new_items,
+        };
+        st.history.execute(cmd, &mut st.document);
+        st.persist_changes();
+
+        // 5. MANDATORY: Auto-attivazione della selezione sui tratti appena incollati!
+        st.selection.page_index = Some(target_page_idx);
+        st.selection.selected_ids = new_ids;
+        st.selection.bbox = union_bbox;
+        st.selection.is_dragging = false;
+        st.selection.drag_offset = (0.0, 0.0);
+        st.active_tool = ActiveTool::Select;
+
+        drop(st_guard);
+        self.hud
+            .update_metrics(|m| m.current_tool = "Selezione (Lazo / Rettangolo)".into());
+        self.hud.update_view();
+        self.area.queue_draw();
+        true
     }
 
     pub fn set_pen_color(&self, color: (f64, f64, f64, f64)) {
@@ -750,6 +987,7 @@ impl NoteCanvas {
         let mut st = self.state.borrow_mut();
         st.document = doc;
         st.history = CommandHistory::with_next_id(100, max_id + 1);
+        st.next_stroke_id = max_id + 1;
         st.file_path = Some(path.clone());
 
         // Inizializza worker di storage asincrono per questo file
@@ -845,6 +1083,7 @@ impl NoteCanvas {
         let mut st = self.state.borrow_mut();
         st.document = doc;
         st.history = CommandHistory::with_next_id(100, max_id + 1);
+        st.next_stroke_id = max_id + 1;
         st.storage_worker = None;
         st.file_path = None;
         st.active_builder = None;

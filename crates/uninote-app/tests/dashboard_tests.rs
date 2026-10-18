@@ -17,9 +17,12 @@ use std::sync::{mpsc, OnceLock};
 use std::thread;
 
 use uninote_app::dashboard::{
-    format_badge_label, render_cairo_thumbnail, OpenDocCallback, UniNoteDashboard,
+    format_badge_label, render_cairo_thumbnail, scan_directory, FolderEntry, OpenDocCallback,
+    UniNoteDashboard,
 };
-use uninote_app::preferences::{DashboardRecentStore, RecentDocumentMeta};
+use uninote_app::preferences::{
+    next_available_note_path_in_dir, DashboardRecentStore, RecentDocumentMeta,
+};
 use uninote_core::model::DocumentFormat;
 
 // ============================================================================
@@ -543,5 +546,167 @@ fn test_t5_real_uninote_dashboard_widget_instantiation() {
         assert_eq!(dashboard.store().borrow().recent_files.len(), 1);
 
         let _ = fs::remove_file(temp_doc_path);
+    });
+}
+
+// ============================================================================
+// TIER 6: MILESTONE 2 — FOLDER HIERARCHY & SIDEBAR NAVIGATION
+// ============================================================================
+
+#[test]
+fn test_m2_subfolder_note_auto_naming() {
+    let temp_dir = unique_dash_temp_path("subfolder_naming", "dir");
+    fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+
+    // Initially, directory is empty: next note should be "Nuova nota 1"
+    let (name1, path1) = next_available_note_path_in_dir(&temp_dir);
+    assert_eq!(name1, "Nuova nota 1");
+    assert_eq!(path1, temp_dir.join("Nuova nota 1.uninote"));
+
+    // Create Nuova nota 1.uninote on disk
+    fs::write(&path1, "content 1").unwrap();
+
+    // Now next should be "Nuova nota 2"
+    let (name2, path2) = next_available_note_path_in_dir(&temp_dir);
+    assert_eq!(name2, "Nuova nota 2");
+    assert_eq!(path2, temp_dir.join("Nuova nota 2.uninote"));
+
+    // Create Nuova nota 2.uninote on disk
+    fs::write(&path2, "content 2").unwrap();
+
+    // Now next should be "Nuova nota 3"
+    let (name3, path3) = next_available_note_path_in_dir(&temp_dir);
+    assert_eq!(name3, "Nuova nota 3");
+    assert_eq!(path3, temp_dir.join("Nuova nota 3.uninote"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_m2_directory_scanner_enumerates_folders_and_files() {
+    let root = unique_dash_temp_path("scan_root", "dir");
+    fs::create_dir_all(&root).unwrap();
+
+    let algebra = root.join("Algebra Lineare");
+    let analisi = root.join("Analisi Matematica");
+    let hidden_dir = root.join(".cache_uninote");
+    fs::create_dir_all(&algebra).unwrap();
+    fs::create_dir_all(&analisi).unwrap();
+    fs::create_dir_all(&hidden_dir).unwrap();
+
+    // Files in root
+    let root_doc = root.join("Appunti Generali.uninote");
+    let root_pdf = root.join("Programma Corso.pdf");
+    let root_hidden = root.join(".DS_Store");
+    fs::write(&root_doc, "doc").unwrap();
+    fs::write(&root_pdf, "pdf").unwrap();
+    fs::write(&root_hidden, "hidden").unwrap();
+
+    // Files in subfolder algebra
+    fs::write(algebra.join("Matrici.uninote"), "doc").unwrap();
+    fs::write(algebra.join("Vettori.uninote"), "doc").unwrap();
+    fs::write(algebra.join("Slide.pdf"), "pdf").unwrap();
+
+    let (folders, files) = scan_directory(&root).expect("Scan directory must succeed");
+
+    // Folders must include Algebra and Analisi, but NOT hidden_dir
+    assert_eq!(folders.len(), 2);
+    let algebra_entry = folders.iter().find(|f| f.name == "Algebra Lineare");
+    assert!(algebra_entry.is_some());
+    assert_eq!(algebra_entry.unwrap().item_count, 3);
+
+    let analisi_entry = folders.iter().find(|f| f.name == "Analisi Matematica");
+    assert!(analisi_entry.is_some());
+    assert_eq!(analisi_entry.unwrap().item_count, 0);
+
+    // Files must include root_doc and root_pdf, but NOT hidden
+    assert_eq!(files.len(), 2);
+    assert!(files.contains(&root_doc));
+    assert!(files.contains(&root_pdf));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn test_m2_dashboard_breadcrumb_and_navigation() {
+    run_on_gtk_thread(|| {
+        let root = unique_dash_temp_path("nav_root", "dir");
+        let sub = root.join("Geometria");
+        let subsub = sub.join("Curve");
+        fs::create_dir_all(&subsub).unwrap();
+
+        let store = std::rc::Rc::new(std::cell::RefCell::new(DashboardRecentStore::new()));
+        let dashboard = UniNoteDashboard::with_store_and_root(store, root.clone());
+
+        // 1. Initial state at root
+        assert!(dashboard.is_at_root());
+        assert_eq!(dashboard.current_folder(), root);
+        assert_eq!(dashboard.root_folder(), root);
+
+        // 2. Navigate into Geometria
+        dashboard.navigate_to(sub.clone());
+        assert!(!dashboard.is_at_root());
+        assert_eq!(dashboard.current_folder(), sub);
+
+        // 3. Navigate into Curve
+        dashboard.navigate_to(subsub.clone());
+        assert!(!dashboard.is_at_root());
+        assert_eq!(dashboard.current_folder(), subsub);
+
+        // 4. Navigate up to Geometria
+        dashboard.navigate_up();
+        assert_eq!(dashboard.current_folder(), sub);
+
+        // 5. Navigate up to root
+        dashboard.navigate_up();
+        assert!(dashboard.is_at_root());
+        assert_eq!(dashboard.current_folder(), root);
+
+        // 6. Navigate up when already at root remains at root
+        dashboard.navigate_up();
+        assert!(dashboard.is_at_root());
+        assert_eq!(dashboard.current_folder(), root);
+
+        let _ = fs::remove_dir_all(&root);
+    });
+}
+
+#[test]
+fn test_m2_sidebar_and_folder_cards_rendering() {
+    run_on_gtk_thread(|| {
+        let root = unique_dash_temp_path("cards_root", "dir");
+        let sub1 = root.join("Fisica 1");
+        fs::create_dir_all(&sub1).unwrap();
+
+        let store = std::rc::Rc::new(std::cell::RefCell::new(DashboardRecentStore::new()));
+        let dashboard = UniNoteDashboard::with_store_and_root(store.clone(), root.clone());
+
+        let folder_entry = FolderEntry {
+            path: sub1.clone(),
+            name: "Fisica 1".to_string(),
+            item_count: 5,
+            last_modified: 12345,
+        };
+
+        let navigated = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let nav_clone = navigated.clone();
+        let nav_cb = std::rc::Rc::new(move |p: PathBuf| {
+            *nav_clone.borrow_mut() = Some(p);
+        });
+
+        let card = UniNoteDashboard::create_folder_card(
+            &folder_entry,
+            nav_cb,
+            std::rc::Rc::new(|| {}),
+            &store,
+        );
+
+        assert!(card.has_css_class("dms-flowbox-child"));
+        assert!(card.child().is_some());
+
+        // Refresh dashboard should not crash
+        dashboard.refresh();
+
+        let _ = fs::remove_dir_all(&root);
     });
 }

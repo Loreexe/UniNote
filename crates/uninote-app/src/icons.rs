@@ -30,6 +30,9 @@ pub enum IconKind {
     Edit,
     Copy,
     Trash,
+    Folder,
+    FolderPlus,
+    FolderOpen,
 }
 
 /// Crea una `DrawingArea` GTK4 che disegna l'icona vettoriale indicata con Cairo.
@@ -95,6 +98,9 @@ pub fn create_icon(kind: IconKind, size: i32, custom_color: Option<gdk::RGBA>) -
             IconKind::Edit => draw_edit(cr),
             IconKind::Copy => draw_copy(cr),
             IconKind::Trash => draw_trash(cr),
+            IconKind::Folder => draw_folder(cr),
+            IconKind::FolderPlus => draw_folder_plus(cr),
+            IconKind::FolderOpen => draw_folder_open(cr),
         }
 
         cr.restore().expect("cairo restore");
@@ -479,6 +485,53 @@ fn draw_trash(cr: &cairo::Context) {
     let _ = cr.stroke();
 }
 
+fn draw_folder(cr: &cairo::Context) {
+    // Lucide folder vector geometry (24x24)
+    cr.move_to(4.0, 20.0);
+    cr.arc(20.0, 18.0, 2.0, PI / 2.0, 0.0);
+    cr.line_to(22.0, 8.0);
+    cr.arc(20.0, 8.0, 2.0, 0.0, 3.0 * PI / 2.0);
+    cr.line_to(12.0, 6.0);
+    cr.line_to(10.0, 4.0);
+    cr.line_to(4.0, 4.0);
+    cr.arc(4.0, 6.0, 2.0, 3.0 * PI / 2.0, PI);
+    cr.line_to(2.0, 18.0);
+    cr.arc(4.0, 18.0, 2.0, PI, PI / 2.0);
+    cr.close_path();
+    let _ = cr.stroke();
+}
+
+fn draw_folder_plus(cr: &cairo::Context) {
+    draw_folder(cr);
+    cr.move_to(12.0, 10.0);
+    cr.line_to(12.0, 16.0);
+    let _ = cr.stroke();
+    cr.move_to(9.0, 13.0);
+    cr.line_to(15.0, 13.0);
+    let _ = cr.stroke();
+}
+
+fn draw_folder_open(cr: &cairo::Context) {
+    // Parte posteriore della cartella con tab
+    cr.move_to(2.0, 11.0);
+    cr.line_to(2.0, 6.0);
+    cr.arc(4.0, 6.0, 2.0, 3.0 * PI / 2.0, PI);
+    cr.line_to(10.0, 4.0);
+    cr.line_to(12.0, 6.0);
+    cr.line_to(20.0, 6.0);
+    cr.arc(20.0, 8.0, 2.0, 0.0, 3.0 * PI / 2.0);
+    cr.line_to(22.0, 11.0);
+    let _ = cr.stroke();
+
+    // Falda anteriore aperta in prospettiva
+    cr.move_to(2.0, 12.0);
+    cr.line_to(5.0, 20.0);
+    cr.line_to(20.5, 20.0);
+    cr.line_to(22.5, 12.0);
+    cr.close_path();
+    let _ = cr.stroke();
+}
+
 /// Disegna il logo ufficiale UniNote: Monogramma 'U' accademico fuso con un pennino stilografico di precisione.
 fn draw_app_logo(cr: &cairo::Context, w: f64, h: f64) {
     if w <= 0.0 || h <= 0.0 {
@@ -632,5 +685,31 @@ mod tests {
         let data = surface.take_data().expect("take_data");
         let painted_pixels = data.iter().filter(|&&b| b > 0).count();
         assert!(painted_pixels > 50, "Highlighter must paint pixels");
+    }
+
+    #[test]
+    fn test_draw_folder_icons_render_properly() {
+        for (name, draw_fn) in [
+            ("folder", draw_folder as fn(&cairo::Context)),
+            ("folder_plus", draw_folder_plus),
+            ("folder_open", draw_folder_open),
+        ] {
+            let surface = ImageSurface::create(Format::ARgb32, 24, 24).expect("surface create");
+            let cr = cairo::Context::new(&surface).expect("cairo context");
+            cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+            cr.set_line_width(2.0);
+            draw_fn(&cr);
+            assert!(cr.status().is_ok(), "Cairo status error for {}", name);
+
+            drop(cr);
+            let data = surface.take_data().expect("take_data");
+            let painted_pixels = data.iter().filter(|&&b| b > 0).count();
+            assert!(
+                painted_pixels > 30,
+                "Icon {} must paint pixels: got {}",
+                name,
+                painted_pixels
+            );
+        }
     }
 }

@@ -21,6 +21,7 @@ fn main() -> glib::ExitCode {
     app.connect_activate(|app| {
         gtk4::Window::set_default_icon_name(APP_ID);
         uninote_app::init_application_style();
+        uninote_app::clipboard::init_system_clipboard_sync();
 
         // Applica modalità tema salvata
         let settings = uninote_app::preferences::FullAppSettingsModel::load();
@@ -44,6 +45,7 @@ fn main() -> glib::ExitCode {
 
     app.connect_open(|app, files, _hint| {
         gtk4::Window::set_default_icon_name(APP_ID);
+        uninote_app::clipboard::init_system_clipboard_sync();
         if let Some(file) = files.first() {
             if let Some(path) = file.path() {
                 let mut store = DashboardRecentStore::load();

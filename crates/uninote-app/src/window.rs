@@ -41,6 +41,9 @@ impl UniNoteWindow {
             );
         }
 
+        // Inizializza sincronizzazione clipboard di sistema (GdkClipboard IPC)
+        crate::clipboard::init_system_clipboard_sync();
+
         // Finestra principale senza decorazioni rigide di sistema
         let window = ApplicationWindow::builder()
             .application(app)
@@ -1627,73 +1630,95 @@ impl UniNoteWindow {
             }
 
             if is_ctrl {
-                match keyval {
-                    gdk::Key::z | gdk::Key::Z => {
-                        if is_shift {
+                let is_editable_focused = gtk4::prelude::GtkWindowExt::focus(&win_keys)
+                    .is_some_and(|w| w.is::<gtk4::Editable>());
+                if !is_editable_focused {
+                    match keyval {
+                        gdk::Key::c | gdk::Key::C => {
+                            if c_keys.copy_selected() {
+                                return glib::Propagation::Stop;
+                            }
+                        }
+                        gdk::Key::x | gdk::Key::X => {
+                            if c_keys.cut_selected() {
+                                return glib::Propagation::Stop;
+                            }
+                        }
+                        gdk::Key::v | gdk::Key::V => {
+                            if c_keys.paste_from_clipboard() {
+                                return glib::Propagation::Stop;
+                            }
+                        }
+                        gdk::Key::z | gdk::Key::Z => {
+                            if is_shift {
+                                c_keys.redo();
+                            } else {
+                                c_keys.undo();
+                            }
+                            return glib::Propagation::Stop;
+                        }
+                        gdk::Key::y | gdk::Key::Y => {
                             c_keys.redo();
-                        } else {
-                            c_keys.undo();
+                            return glib::Propagation::Stop;
                         }
-                        return glib::Propagation::Stop;
-                    }
-                    gdk::Key::y | gdk::Key::Y => {
-                        c_keys.redo();
-                        return glib::Propagation::Stop;
-                    }
-                    gdk::Key::_0 | gdk::Key::KP_0 => {
-                        let is_wb =
-                            c_keys.state().borrow().document.format == DocumentFormat::Whiteboard;
-                        if is_wb {
-                            c_keys.center_content();
-                        } else {
-                            c_keys.reset_zoom();
+                        gdk::Key::_0 | gdk::Key::KP_0 => {
+                            let is_wb = c_keys.state().borrow().document.format
+                                == DocumentFormat::Whiteboard;
+                            if is_wb {
+                                c_keys.center_content();
+                            } else {
+                                c_keys.reset_zoom();
+                            }
+                            let z =
+                                (c_keys.state().borrow().viewport.zoom * 100.0).round() as usize;
+                            lbl_zoom_sync.set_label(&format!("{}%", z));
+                            return glib::Propagation::Stop;
                         }
-                        let z = (c_keys.state().borrow().viewport.zoom * 100.0).round() as usize;
-                        lbl_zoom_sync.set_label(&format!("{}%", z));
-                        return glib::Propagation::Stop;
-                    }
-                    gdk::Key::plus | gdk::Key::equal | gdk::Key::KP_Add => {
-                        c_keys.zoom_in();
-                        let z = (c_keys.state().borrow().viewport.zoom * 100.0).round() as usize;
-                        lbl_zoom_sync.set_label(&format!("{}%", z));
-                        return glib::Propagation::Stop;
-                    }
-                    gdk::Key::minus | gdk::Key::underscore | gdk::Key::KP_Subtract => {
-                        c_keys.zoom_out();
-                        let z = (c_keys.state().borrow().viewport.zoom * 100.0).round() as usize;
-                        lbl_zoom_sync.set_label(&format!("{}%", z));
-                        return glib::Propagation::Stop;
-                    }
-                    gdk::Key::s | gdk::Key::S => {
-                        let state_rc = c_keys.state();
-                        let st = state_rc.borrow();
-                        if let Some(ref path) = st.file_path {
-                            let path_clone = path.clone();
-                            drop(st);
-                            let _ = c_keys.save_as(path_clone);
-                        } else {
-                            drop(st);
-                            let dialog = FileDialog::builder()
-                                .title("Salva Quaderno UniNote")
-                                .initial_name("quaderno.uninote")
-                                .modal(true)
-                                .build();
-                            let c_ref = c_keys.clone();
-                            dialog.save(Some(&win_keys), gio::Cancellable::NONE, move |res| {
-                                if let Ok(file) = res {
-                                    if let Some(path) = file.path() {
-                                        let _ = c_ref.save_as(path);
+                        gdk::Key::plus | gdk::Key::equal | gdk::Key::KP_Add => {
+                            c_keys.zoom_in();
+                            let z =
+                                (c_keys.state().borrow().viewport.zoom * 100.0).round() as usize;
+                            lbl_zoom_sync.set_label(&format!("{}%", z));
+                            return glib::Propagation::Stop;
+                        }
+                        gdk::Key::minus | gdk::Key::underscore | gdk::Key::KP_Subtract => {
+                            c_keys.zoom_out();
+                            let z =
+                                (c_keys.state().borrow().viewport.zoom * 100.0).round() as usize;
+                            lbl_zoom_sync.set_label(&format!("{}%", z));
+                            return glib::Propagation::Stop;
+                        }
+                        gdk::Key::s | gdk::Key::S => {
+                            let state_rc = c_keys.state();
+                            let st = state_rc.borrow();
+                            if let Some(ref path) = st.file_path {
+                                let path_clone = path.clone();
+                                drop(st);
+                                let _ = c_keys.save_as(path_clone);
+                            } else {
+                                drop(st);
+                                let dialog = FileDialog::builder()
+                                    .title("Salva Quaderno UniNote")
+                                    .initial_name("quaderno.uninote")
+                                    .modal(true)
+                                    .build();
+                                let c_ref = c_keys.clone();
+                                dialog.save(Some(&win_keys), gio::Cancellable::NONE, move |res| {
+                                    if let Ok(file) = res {
+                                        if let Some(path) = file.path() {
+                                            let _ = c_ref.save_as(path);
+                                        }
                                     }
-                                }
-                            });
+                                });
+                            }
+                            return glib::Propagation::Stop;
                         }
-                        return glib::Propagation::Stop;
+                        gdk::Key::n | gdk::Key::N => {
+                            c_keys.new_document();
+                            return glib::Propagation::Stop;
+                        }
+                        _ => {}
                     }
-                    gdk::Key::n | gdk::Key::N => {
-                        c_keys.new_document();
-                        return glib::Propagation::Stop;
-                    }
-                    _ => {}
                 }
             }
             glib::Propagation::Proceed
@@ -1787,9 +1812,11 @@ impl UniNoteWindow {
             c_create.center_page_1();
 
             let store = d_create.store();
-            let _ = store.borrow().ensure_default_notes_dir();
-            let notes_dir = std::path::PathBuf::from(&store.borrow().default_notes_dir);
-            let note_path = notes_dir.join(format!("{}.uninote", title));
+            let active_dir = d_create.current_folder();
+            if !active_dir.exists() {
+                let _ = std::fs::create_dir_all(&active_dir);
+            }
+            let note_path = active_dir.join(format!("{}.uninote", title));
 
             if let Err(e) = c_create.save_as(note_path.clone()) {
                 eprintln!("Attenzione: impossibile inizializzare autosave: {}", e);

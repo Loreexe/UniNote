@@ -29,6 +29,8 @@ pub enum DocCommand {
         delta_x: f64,
         delta_y: f64,
     },
+    /// Incolla di uno o più elementi su una pagina con preservazione R-Tree e z-index.
+    PasteItems { page_id: Uuid, items: Vec<Item> },
 }
 
 /// Gestore della cronologia dei comandi per Undo / Redo e tracciamento delle revisioni monotone.
@@ -62,6 +64,20 @@ impl CommandHistory {
             max_depth,
             next_item_id: next_id.max(1),
         }
+    }
+
+    pub fn next_item_id(&self) -> u64 {
+        self.next_item_id
+    }
+
+    pub fn set_next_item_id(&mut self, next_id: u64) {
+        self.next_item_id = next_id.max(1);
+    }
+
+    pub fn alloc_item_id(&mut self) -> u64 {
+        let id = self.next_item_id;
+        self.next_item_id += 1;
+        id
     }
 
     pub fn can_undo(&self) -> bool {
@@ -192,6 +208,15 @@ impl CommandHistory {
                     }
                 }
             }
+            DocCommand::PasteItems { page_id, items } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    for item in items {
+                        page.spatial_index.insert(item);
+                        page.items.push(item.clone());
+                    }
+                    page.items.sort_by_key(|it| it.z_index);
+                }
+            }
         }
     }
 
@@ -266,6 +291,18 @@ impl CommandHistory {
                             }
                         }
                     }
+                }
+            }
+            DocCommand::PasteItems { page_id, items } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    let ids_to_remove: HashSet<u64> = items.iter().map(|it| it.id).collect();
+                    for it in items {
+                        let ItemKind::Stroke(s) = &it.kind;
+                        if let Some(bbox) = s.bounding_box() {
+                            page.spatial_index.remove(it.id, &bbox);
+                        }
+                    }
+                    page.items.retain(|it| !ids_to_remove.contains(&it.id));
                 }
             }
         }

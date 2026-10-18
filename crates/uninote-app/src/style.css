@@ -1065,3 +1065,275 @@ scale.dms-pill-scale trough {
     background-color: rgba(186, 26, 26, 0.12);
     color: #BA1A1A;
 }
+
+/* ============================================================================
+ * DMS DASHBOARD FOLDER HIERARCHY & SIDEBAR NAVIGATION (Milestone 2)
+ * ============================================================================ */
+
+/* Layout a colonna divisa: Sidebar a sinistra (~260px) + Area Principale a destra */
+.dms-dashboard-split {
+    background-color: transparent;
+}
+
+.dms-dashboard-sidebar {
+    background-color: @dms_surface_container;
+    border-right: 1px solid @dms_outline;
+    min-width: 260px;
+    padding: 12px 0;
+}
+
+.light-theme .dms-dashboard-sidebar {
+    background-color: @dms_surface_container_light;
+    border-right: 1px solid @dms_outline_light;
+}
+
+.dms-sidebar-header {
+    padding: 8px 16px 12px 16px;
+    border-bottom: 1px solid @dms_outline;
+    margin-bottom: 8px;
+}
+
+.light-theme .dms-sidebar-header {
+    border-bottom: 1px solid @dms_outline_light;
+}
+
+.dms-sidebar-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: @dms_text_secondary;
+}
+
+.light-theme .dms-sidebar-title {
+    color: @dms_text_secondary_light;
+}
+
+.dms-btn-new-folder {
+    min-height: 28px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    background-color: transparent;
+    color: @dms_primary;
+    border: 1px solid transparent;
+    transition: all 120ms ease-in-out;
+}
+
+.dms-btn-new-folder:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+    color: @dms_primary;
+}
+
+.light-theme .dms-btn-new-folder {
+    color: @dms_primary_light;
+}
+
+.light-theme .dms-btn-new-folder:hover {
+    background-color: @dms_surface_container_high_light;
+    border-color: @dms_outline_variant_light;
+    color: @dms_primary_light;
+}
+
+.dms-sidebar-scroll {
+    background-color: transparent;
+}
+
+.dms-sidebar-item {
+    border-radius: 8px;
+    padding: 8px 12px;
+    background-color: transparent;
+    transition: background-color 120ms ease-in-out;
+}
+
+.dms-sidebar-item:hover {
+    background-color: @dms_surface_container_high;
+}
+
+.light-theme .dms-sidebar-item:hover {
+    background-color: @dms_surface_container_high_light;
+}
+
+.dms-sidebar-item.active {
+    background-color: @dms_primary_container;
+}
+
+.light-theme .dms-sidebar-item.active {
+    background-color: @dms_primary_container_light;
+}
+
+.dms-sidebar-item-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: @dms_text_primary;
+}
+
+.dms-sidebar-item.active .dms-sidebar-item-label {
+    color: @dms_on_primary_container;
+    font-weight: 700;
+}
+
+.light-theme .dms-sidebar-item-label {
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-sidebar-item.active .dms-sidebar-item-label {
+    color: @dms_on_primary_container_light;
+    font-weight: 700;
+}
+
+.dms-sidebar-item-badge {
+    font-size: 11px;
+    color: @dms_text_secondary;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background-color: @dms_surface_container_highest;
+}
+
+.light-theme .dms-sidebar-item-badge {
+    color: @dms_text_secondary_light;
+    background-color: @dms_surface_container_high_light;
+}
+
+.dms-sidebar-item.active .dms-sidebar-item-badge {
+    color: @dms_on_primary_container;
+    background-color: rgba(0, 77, 101, 0.4);
+}
+
+.light-theme .dms-sidebar-item.active .dms-sidebar-item-badge {
+    color: @dms_on_primary_container_light;
+    background-color: rgba(200, 230, 255, 0.8);
+}
+
+/* Barra di Navigazione Breadcrumbs e "Torna su" */
+.dms-breadcrumbs-bar {
+    padding: 4px 16px 8px 16px;
+    border-bottom: 1px solid @dms_outline;
+    min-height: 42px;
+}
+
+.light-theme .dms-breadcrumbs-bar {
+    border-bottom: 1px solid @dms_outline_light;
+}
+
+.dms-btn-up {
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 6px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+    padding: 0;
+    transition: all 120ms ease-in-out;
+}
+
+.dms-btn-up:hover:not(:disabled) {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_primary;
+}
+
+.dms-btn-up:disabled {
+    opacity: 0.4;
+}
+
+.light-theme .dms-btn-up {
+    background-color: @dms_surface_container_high_light;
+    border-color: @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-btn-up:hover:not(:disabled) {
+    background-color: @dms_surface_container_highest_light;
+    border-color: @dms_primary_light;
+}
+
+.dms-breadcrumb-btn {
+    background: transparent;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+    color: @dms_primary;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: background-color 120ms ease-in-out;
+}
+
+.dms-breadcrumb-btn:hover {
+    background-color: @dms_surface_container_highest;
+}
+
+.light-theme .dms-breadcrumb-btn {
+    color: @dms_primary_light;
+}
+
+.light-theme .dms-breadcrumb-btn:hover {
+    background-color: @dms_surface_container_high_light;
+}
+
+.dms-breadcrumb-sep {
+    font-size: 14px;
+    color: @dms_text_secondary;
+    margin: 0 2px;
+}
+
+.light-theme .dms-breadcrumb-sep {
+    color: @dms_text_secondary_light;
+}
+
+/* Card Cartella nella FlowBox */
+.dms-folder-card {
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    border-radius: 12px;
+    transition: transform 150ms ease-in-out, box-shadow 150ms ease-in-out, border-color 150ms ease-in-out;
+}
+
+.dms-folder-card:hover {
+    transform: translateY(-2px);
+    border-color: @dms_primary;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.light-theme .dms-folder-card {
+    background-color: @dms_surface_container_light;
+    border: 1px solid @dms_outline_light;
+    box-shadow: 0 4px 14px rgba(23, 33, 38, 0.08);
+}
+
+.light-theme .dms-folder-card:hover {
+    transform: translateY(-2px);
+    border-color: @dms_primary_light;
+    box-shadow: 0 8px 22px rgba(23, 33, 38, 0.16);
+}
+
+.dms-folder-art {
+    background: linear-gradient(135deg, @dms_surface_container_high 0%, @dms_surface_container_highest 100%);
+    border-top-left-radius: 11px;
+    border-top-right-radius: 11px;
+}
+
+.light-theme .dms-folder-art {
+    background: linear-gradient(135deg, @dms_surface_container_high_light 0%, @dms_surface_container_highest_light 100%);
+}
+
+.dms-folder-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: @dms_text_primary;
+}
+
+.light-theme .dms-folder-title {
+    color: @dms_text_primary_light;
+}
+
+.dms-folder-badge {
+    font-size: 11px;
+    color: @dms_text_secondary;
+}
+
+.light-theme .dms-folder-badge {
+    color: @dms_text_secondary_light;
+}
+

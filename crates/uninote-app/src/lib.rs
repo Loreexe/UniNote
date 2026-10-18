@@ -1,6 +1,7 @@
 #![allow(clippy::new_without_default)]
 
 pub mod canvas;
+pub mod clipboard;
 pub mod dashboard;
 pub mod hud;
 pub mod icons;
@@ -10,6 +11,12 @@ pub mod preferences;
 pub mod selection;
 pub mod settings;
 pub mod window;
+
+pub use clipboard::{
+    clear_clipboard, deserialize_clipboard, get_app_clipboard, get_clipboard_data,
+    init_system_clipboard_sync, serialize_clipboard, set_clipboard_data, ClipboardData,
+    APP_CLIPBOARD, MIME_UNINOTE_SELECTION,
+};
 
 pub use dashboard::{
     get_or_create_thumbnail_path, render_cairo_thumbnail, thumbnail_cache_dir,

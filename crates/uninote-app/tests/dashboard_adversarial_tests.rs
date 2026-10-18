@@ -16,7 +16,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use uninote_app::dashboard::{get_or_create_thumbnail_path, render_cairo_thumbnail};
+use uninote_app::dashboard::{
+    get_or_create_thumbnail_path, is_safe_subpath, render_cairo_thumbnail, sanitize_folder_name,
+    scan_directory,
+};
 use uninote_app::preferences::{DashboardRecentStore, RecentDocumentMeta};
 use uninote_core::model::DocumentFormat;
 
@@ -777,4 +780,408 @@ fn test_adv_search_query_filtering_adversarial() {
 
     // 5. Query matching nothing
     assert_eq!(store.filter_by_query("NonExistingSubjectXYZ").len(), 0);
+}
+
+// ============================================================================
+// 7. MILESTONE 2: FOLDER HIERARCHY, PATH TRAVERSAL & ADVERSARIAL DEFENSE
+// ============================================================================
+
+#[test]
+fn test_m2_adversarial_sanitize_folder_name() {
+    // 1. Empty or whitespace
+    assert!(sanitize_folder_name("").is_err());
+    assert!(sanitize_folder_name("   ").is_err());
+    assert!(sanitize_folder_name("\t\n  ").is_err());
+
+    // 2. Reserved directory traversal names
+    assert!(sanitize_folder_name(".").is_err());
+    assert!(sanitize_folder_name("..").is_err());
+
+    // 3. Path separators and null bytes
+    assert!(sanitize_folder_name("folder/sub").is_err());
+    assert!(sanitize_folder_name("folder\\sub").is_err());
+    assert!(sanitize_folder_name("folder\0name").is_err());
+    assert!(sanitize_folder_name("../escaped").is_err());
+    assert!(sanitize_folder_name("../../etc/passwd").is_err());
+    assert!(sanitize_folder_name("/tmp/malicious").is_err());
+    assert!(sanitize_folder_name("\0").is_err());
+
+    // 4. Illegal filesystem characters
+    for bad_char in [':', '*', '?', '"', '<', '>', '|'] {
+        let name = format!("test{}folder", bad_char);
+        assert!(
+            sanitize_folder_name(&name).is_err(),
+            "Expected error for character {}",
+            bad_char
+        );
+    }
+
+    // 5. Oversized names (> 255 chars, including 500 chars)
+    let long_name = "a".repeat(256);
+    assert!(sanitize_folder_name(&long_name).is_err());
+    let huge_name = "b".repeat(500);
+    assert!(sanitize_folder_name(&huge_name).is_err());
+
+    // 6. Valid folder names (with trimming)
+    assert_eq!(
+        sanitize_folder_name("  Analisi Matematica 1  ").unwrap(),
+        "Analisi Matematica 1"
+    );
+    assert_eq!(
+        sanitize_folder_name("Fisica (A.A. 2026-2027)").unwrap(),
+        "Fisica (A.A. 2026-2027)"
+    );
+    assert_eq!(
+        sanitize_folder_name("Chimica_Organica").unwrap(),
+        "Chimica_Organica"
+    );
+}
+
+#[test]
+fn test_m2_adversarial_path_traversal_subpath_defense() {
+    let base_tmp = unique_test_path("traversal_root", "dir");
+    fs::create_dir_all(&base_tmp).unwrap();
+
+    let sub_valid = base_tmp.join("Appunti").join("Matematica");
+    fs::create_dir_all(&sub_valid).unwrap();
+
+    // 1. Valid subpaths within root must be accepted
+    assert!(is_safe_subpath(&base_tmp, &base_tmp));
+    assert!(is_safe_subpath(&base_tmp, &base_tmp.join("Appunti")));
+    assert!(is_safe_subpath(&base_tmp, &sub_valid));
+
+    // 2. Relative traversal climbing out of root must be REJECTED
+    let escape_relative = base_tmp.join("../outside_world");
+    assert!(!is_safe_subpath(&base_tmp, &escape_relative));
+
+    let deep_escape = base_tmp.join("Appunti").join("../../escaped");
+    assert!(!is_safe_subpath(&base_tmp, &deep_escape));
+
+    // 3. Absolute paths outside root must be REJECTED
+    assert!(!is_safe_subpath(&base_tmp, Path::new("/etc")));
+    assert!(!is_safe_subpath(&base_tmp, Path::new("/usr/bin")));
+    assert!(!is_safe_subpath(&base_tmp, Path::new("/root")));
+
+    let _ = fs::remove_dir_all(&base_tmp);
+}
+
+#[test]
+fn test_m2_adversarial_symlink_escape_protection() {
+    let root = unique_test_path("symlink_root", "dir");
+    let outside = unique_test_path("symlink_outside", "dir");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+
+    // Create a symlink inside root pointing to outside directory
+    let symlink_path = root.join("malicious_link");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside, &symlink_path).expect("Symlink creation must succeed");
+
+        // Canonicalization defense MUST detect that the target resolves outside root
+        // Symlink pointing to temporary or system root directories
+        let link_to_tmp = root.join("link_to_tmp");
+        let link_to_etc = root.join("link_to_etc");
+        let _ = std::os::unix::fs::symlink("/tmp", &link_to_tmp);
+        let _ = std::os::unix::fs::symlink("/etc", &link_to_etc);
+
+        assert!(
+            !is_safe_subpath(&root, &symlink_path),
+            "Symlink escaping root must be rejected by is_safe_subpath"
+        );
+        assert!(
+            !is_safe_subpath(&root, &link_to_tmp),
+            "Symlink pointing to /tmp must be rejected by is_safe_subpath"
+        );
+        assert!(
+            !is_safe_subpath(&root, &link_to_etc),
+            "Symlink pointing to /etc must be rejected by is_safe_subpath"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&outside);
+}
+
+#[test]
+fn test_m2_adversarial_store_folder_rename_synchronization() {
+    let mut store = DashboardRecentStore::new();
+    let root = PathBuf::from("/home/student/Documenti/UniNote");
+
+    let old_folder = root.join("Algebra");
+    let new_folder = root.join("Algebra_Moderna");
+
+    let doc_in_algebra = old_folder.join("Lezione1.uninote");
+    let doc_in_sub = old_folder.join("Esercizi").join("Foglio1.uninote");
+    let doc_other = root.join("Fisica").join("Meccanica.uninote");
+
+    store.add_recent(RecentDocumentMeta {
+        file_path: doc_in_algebra.to_string_lossy().to_string(),
+        title: "Lezione 1".into(),
+        format: DocumentFormat::Notebook,
+        last_modified_timestamp: 100,
+        page_count: 5,
+        thumbnail_path: None,
+    });
+    store.add_recent(RecentDocumentMeta {
+        file_path: doc_in_sub.to_string_lossy().to_string(),
+        title: "Foglio 1".into(),
+        format: DocumentFormat::Notebook,
+        last_modified_timestamp: 200,
+        page_count: 3,
+        thumbnail_path: None,
+    });
+    store.add_recent(RecentDocumentMeta {
+        file_path: doc_other.to_string_lossy().to_string(),
+        title: "Meccanica".into(),
+        format: DocumentFormat::Whiteboard,
+        last_modified_timestamp: 300,
+        page_count: 1,
+        thumbnail_path: None,
+    });
+
+    assert_eq!(store.recent_files.len(), 3);
+
+    // Rename folder
+    store.update_folder_rename(&old_folder, &new_folder);
+
+    // Verify paths updated
+    let updated_doc1 = store
+        .recent_files
+        .iter()
+        .find(|r| r.title == "Lezione 1")
+        .unwrap();
+    assert_eq!(
+        updated_doc1.file_path,
+        new_folder.join("Lezione1.uninote").to_string_lossy()
+    );
+
+    let updated_doc2 = store
+        .recent_files
+        .iter()
+        .find(|r| r.title == "Foglio 1")
+        .unwrap();
+    assert_eq!(
+        updated_doc2.file_path,
+        new_folder
+            .join("Esercizi")
+            .join("Foglio1.uninote")
+            .to_string_lossy()
+    );
+
+    // Unrelated folder unchanged
+    let unchanged = store
+        .recent_files
+        .iter()
+        .find(|r| r.title == "Meccanica")
+        .unwrap();
+    assert_eq!(unchanged.file_path, doc_other.to_string_lossy());
+}
+
+#[test]
+fn test_m2_adversarial_store_remove_recents_under_folder() {
+    let mut store = DashboardRecentStore::new();
+    let root = PathBuf::from("/home/student/Documenti/UniNote");
+
+    let target_folder = root.join("Eliminami");
+    let keep_folder = root.join("Conserva");
+
+    store.add_recent(RecentDocumentMeta {
+        file_path: target_folder.join("NotaA.uninote").to_string_lossy().into(),
+        title: "Nota A".into(),
+        format: DocumentFormat::Notebook,
+        last_modified_timestamp: 10,
+        page_count: 1,
+        thumbnail_path: None,
+    });
+    store.add_recent(RecentDocumentMeta {
+        file_path: target_folder
+            .join("Sub")
+            .join("NotaB.uninote")
+            .to_string_lossy()
+            .into(),
+        title: "Nota B".into(),
+        format: DocumentFormat::Notebook,
+        last_modified_timestamp: 20,
+        page_count: 2,
+        thumbnail_path: None,
+    });
+    store.add_recent(RecentDocumentMeta {
+        file_path: keep_folder
+            .join("NotaSicura.uninote")
+            .to_string_lossy()
+            .into(),
+        title: "Nota Sicura".into(),
+        format: DocumentFormat::Notebook,
+        last_modified_timestamp: 30,
+        page_count: 10,
+        thumbnail_path: None,
+    });
+
+    assert_eq!(store.recent_files.len(), 3);
+
+    // Remove recents under target_folder
+    store.remove_recents_under(&target_folder);
+
+    assert_eq!(store.recent_files.len(), 1);
+    assert_eq!(store.recent_files[0].title, "Nota Sicura");
+}
+
+#[test]
+fn test_m2_adversarial_empty_directory_and_empty_state() {
+    let root = unique_test_path("empty_scan", "dir");
+    fs::create_dir_all(&root).unwrap();
+
+    // 1. Completely empty directory
+    let (folders, files) = scan_directory(&root).expect("Empty directory scan should succeed");
+    assert!(folders.is_empty());
+    assert!(files.is_empty());
+
+    // 2. Directory containing only hidden entries (.DS_Store, .git, etc.)
+    fs::create_dir_all(root.join(".hidden_sub")).unwrap();
+    fs::write(root.join(".DS_Store"), "junk").unwrap();
+    let git_dir = root.join(".git");
+    fs::create_dir_all(&git_dir).unwrap();
+    fs::write(git_dir.join("config"), "bare = false").unwrap();
+    let (folders_hidden, files_hidden) =
+        scan_directory(&root).expect("Directory with only hidden entries scan should succeed");
+    assert!(folders_hidden.is_empty());
+    assert!(files_hidden.is_empty());
+
+    // 3. Non-existent directory returns empty cleanly
+    let non_existent = root.join("does_not_exist_at_all");
+    let (f_non, fi_non) =
+        scan_directory(&non_existent).expect("Non-existent scan should return Ok");
+    assert!(f_non.is_empty());
+    assert!(fi_non.is_empty());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn test_m2_adversarial_deep_stress_and_prefix_isolation() {
+    // 1. Prefix isolation on update_folder_rename and remove_recents_under
+    let mut store = DashboardRecentStore::new();
+    let root = PathBuf::from("/home/student/UniNote");
+    let target = root.join("Informatica");
+    let sibling = root.join("Informatica_Avanzata");
+
+    store.add_recent(RecentDocumentMeta {
+        file_path: target.join("Note1.uninote").to_string_lossy().into(),
+        title: "Note 1".into(),
+        format: DocumentFormat::Notebook,
+        last_modified_timestamp: 10,
+        page_count: 1,
+        thumbnail_path: None,
+    });
+    store.add_recent(RecentDocumentMeta {
+        file_path: target
+            .join("Sub")
+            .join("Nested.uninote")
+            .to_string_lossy()
+            .into(),
+        title: "Nested Note".into(),
+        format: DocumentFormat::Notebook,
+        last_modified_timestamp: 20,
+        page_count: 2,
+        thumbnail_path: None,
+    });
+    store.add_recent(RecentDocumentMeta {
+        file_path: sibling.join("Note2.uninote").to_string_lossy().into(),
+        title: "Sibling Note".into(),
+        format: DocumentFormat::Notebook,
+        last_modified_timestamp: 30,
+        page_count: 3,
+        thumbnail_path: None,
+    });
+
+    let renamed_target = root.join("Computer_Science");
+    store.update_folder_rename(&target, &renamed_target);
+
+    // Verify target and its subfolder renamed
+    let n1 = store
+        .recent_files
+        .iter()
+        .find(|r| r.title == "Note 1")
+        .unwrap();
+    assert_eq!(
+        n1.file_path,
+        renamed_target.join("Note1.uninote").to_string_lossy()
+    );
+
+    let n_nested = store
+        .recent_files
+        .iter()
+        .find(|r| r.title == "Nested Note")
+        .unwrap();
+    assert_eq!(
+        n_nested.file_path,
+        renamed_target
+            .join("Sub")
+            .join("Nested.uninote")
+            .to_string_lossy()
+    );
+
+    // Sibling MUST NOT be renamed
+    let n_sibling = store
+        .recent_files
+        .iter()
+        .find(|r| r.title == "Sibling Note")
+        .unwrap();
+    assert_eq!(
+        n_sibling.file_path,
+        sibling.join("Note2.uninote").to_string_lossy()
+    );
+
+    // Remove recents under renamed_target: sibling must survive
+    store.remove_recents_under(&renamed_target);
+    assert_eq!(store.recent_files.len(), 1);
+    assert_eq!(store.recent_files[0].title, "Sibling Note");
+
+    // 2. Symlink chain and relative symlink escape protection
+    let root_sym = unique_test_path("chain_root", "dir");
+    let outside_dir = unique_test_path("chain_outside", "dir");
+    fs::create_dir_all(&root_sym).unwrap();
+    fs::create_dir_all(&outside_dir).unwrap();
+
+    #[cfg(unix)]
+    {
+        // Relative symlink climbing out: root/sub/climb -> ../../../
+        let sub = root_sym.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let climb_link = sub.join("climb");
+        let _ = std::os::unix::fs::symlink("../../..", &climb_link);
+        assert!(!is_safe_subpath(&root_sym, &climb_link));
+
+        // Symlink chain: link_a -> link_b -> outside
+        let link_b = root_sym.join("link_b");
+        let link_a = root_sym.join("link_a");
+        let _ = std::os::unix::fs::symlink(&outside_dir, &link_b);
+        let _ = std::os::unix::fs::symlink(&link_b, &link_a);
+        assert!(!is_safe_subpath(&root_sym, &link_a));
+    }
+
+    let _ = fs::remove_dir_all(&root_sym);
+    let _ = fs::remove_dir_all(&outside_dir);
+
+    // 3. scan_directory case insensitivity for PDF and item counting
+    let scan_dir = unique_test_path("scan_complex", "dir");
+    fs::create_dir_all(&scan_dir).unwrap();
+
+    let sub1 = scan_dir.join("Corso_A");
+    fs::create_dir_all(&sub1).unwrap();
+    fs::write(sub1.join("appunti.uninote"), "doc").unwrap();
+    fs::write(sub1.join("dispensa.pdf"), "pdf").unwrap();
+    fs::write(sub1.join("SLIDES.PDF"), "pdf").unwrap();
+    fs::write(sub1.join("diagram.Pdf"), "pdf").unwrap();
+    fs::write(sub1.join("ignore.txt"), "txt").unwrap();
+    fs::write(sub1.join(".DS_Store"), "junk").unwrap();
+
+    let (folders, files) = scan_directory(&scan_dir).expect("Scan complex");
+    assert_eq!(folders.len(), 1);
+    assert_eq!(files.len(), 0);
+    assert_eq!(folders[0].name, "Corso_A");
+    assert_eq!(folders[0].item_count, 4); // 1 uninote + 3 PDFs (.pdf, .PDF, .Pdf)
+
+    let _ = fs::remove_dir_all(&scan_dir);
 }

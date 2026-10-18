@@ -258,18 +258,9 @@ impl DashboardRecentStore {
         Ok(())
     }
 
-    /// Trova il prossimo nome e percorso disponibile per "Nuova nota n.uninote".
+    /// Trova il prossimo nome e percorso disponibile per "Nuova nota n.uninote" nella directory predefinita.
     pub fn next_available_note_path(&self) -> (String, PathBuf) {
-        let dir = PathBuf::from(&self.default_notes_dir);
-        let mut idx = 1;
-        loop {
-            let title = format!("Nuova nota {}", idx);
-            let candidate = dir.join(format!("{}.uninote", title));
-            if !candidate.exists() {
-                return (title, candidate);
-            }
-            idx += 1;
-        }
+        next_available_note_path_in_dir(Path::new(&self.default_notes_dir))
     }
 
     /// Rimuove un file specifico dall'elenco dei recenti.
@@ -291,6 +282,37 @@ impl DashboardRecentStore {
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
         }
+    }
+
+    /// Aggiorna i percorsi dei documenti memorizzati quando una cartella viene rinominata.
+    pub fn update_folder_rename(&mut self, old_dir: &Path, new_dir: &Path) {
+        for doc in &mut self.recent_files {
+            let doc_p = PathBuf::from(&doc.file_path);
+            if let Ok(rel) = doc_p.strip_prefix(old_dir) {
+                doc.file_path = new_dir.join(rel).to_string_lossy().to_string();
+            }
+        }
+    }
+
+    /// Rimuove dall'archivio dei recenti tutti i documenti situati sotto la directory indicata.
+    pub fn remove_recents_under(&mut self, dir: &Path) {
+        self.recent_files.retain(|doc| {
+            let doc_p = Path::new(&doc.file_path);
+            !doc_p.starts_with(dir)
+        });
+    }
+}
+
+/// Trova il prossimo nome e percorso disponibile per "Nuova nota n.uninote" all'interno di una cartella specifica.
+pub fn next_available_note_path_in_dir(dir: &Path) -> (String, PathBuf) {
+    let mut idx = 1;
+    loop {
+        let title = format!("Nuova nota {}", idx);
+        let candidate = dir.join(format!("{}.uninote", title));
+        if !candidate.exists() {
+            return (title, candidate);
+        }
+        idx += 1;
     }
 }
 
@@ -368,14 +390,9 @@ pub struct FullAppSettingsModel {
 impl Default for FullAppSettingsModel {
     fn default() -> Self {
         let mut shortcuts = HashMap::new();
-        shortcuts.insert("undo".into(), "<Primary>z".into());
-        shortcuts.insert("redo".into(), "<Primary>y".into());
-        shortcuts.insert("save".into(), "<Primary>s".into());
-        shortcuts.insert("open".into(), "<Primary>o".into());
-        shortcuts.insert("new".into(), "<Primary>n".into());
-        shortcuts.insert("home".into(), "<Primary>h".into());
-        shortcuts.insert("telemetry".into(), "F12".into());
-        shortcuts.insert("zoom_reset".into(), "<Primary>0".into());
+        for (id, _, _, def) in Self::SHORTCUT_SPECS {
+            shortcuts.insert(id.to_string(), def.to_string());
+        }
 
         Self {
             min_contact_pressure: 0.05,
@@ -456,6 +473,24 @@ impl FullAppSettingsModel {
             "Reimposta Zoom al 100%",
             "Riporta il livello di zoom al 100% (scala 1:1)",
             "<Primary>0",
+        ),
+        (
+            "copy",
+            "Copia Selezione",
+            "Copia gli elementi selezionati negli appunti",
+            "<Primary>c",
+        ),
+        (
+            "cut",
+            "Taglia Selezione",
+            "Taglia gli elementi selezionati negli appunti",
+            "<Primary>x",
+        ),
+        (
+            "paste",
+            "Incolla Selezione",
+            "Incolla gli elementi dagli appunti",
+            "<Primary>v",
         ),
     ];
 
