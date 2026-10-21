@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <title>UniNote Logo Light</title>
-  <g id="Layer_1" data-name="Layer 1">
-    <path d="M210 0 L814 0 C929.98 0 1024 94.02 1024 210 L1024 814 C1024 929.98 929.98 1024 814 1024 L210 1024 C94.02 1024 0 929.98 0 814 L0 210 C0 94.02 94.02 0 210 0 Z" fill="#f4faff"/>
-    <path d="M232 200 L232 470 C232 600 292 662 352 662 C412 662 472 600 472 470 L472 200" fill="none" stroke="#151f25" stroke-width="86" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M560 662 L560 200 L800 662 L800 200" fill="none" stroke="#151f25" stroke-width="86" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M244 720 C400 768 612 768 796 706" fill="none" stroke="#c28a1e" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M776 704 C776 691.85 785.85 682 798 682 C810.15 682 820 691.85 820 704 C820 716.15 810.15 726 798 726 C785.85 726 776 716.15 776 704 Z" fill="#c28a1e"/>
-    <text transform="matrix(1 0 0 1 0 812)" x="512" y="102.624" xml:space="preserve" font-family="&apos;Noto Sans&apos;, sans-serif" font-size="96" font-weight="bold" fill="#151f25" text-anchor="middle"><tspan x="512" y="102.624">UniNote</tspan></text>
+  <title>uninote_logo_light</title>
+  <g id="Badge_Background">
+    <path id="Badge_Background-2" data-name="Badge_Background" d="M210 0 L814 0 C929.98 0 1024 94.02 1024 210 L1024 814 C1024 929.98 929.98 1024 814 1024 L210 1024 C94.02 1024 0 929.98 0 814 L0 210 C0 94.02 94.02 0 210 0 Z" fill="#f4faff"/>
+  </g>
+  <g id="U_BrushStroke">
+    <path id="U_BrushStroke-2" data-name="U_BrushStroke" d="M355 229.59 C342.36 236.02 338.81 308.3 335.23 348.08 C331.66 387.87 331.06 428.43 333.54 468.3 C336.03 508.16 340.96 548.53 350.15 587.28 C359.35 626.04 368.03 668.73 388.72 700.85 C409.41 732.97 440.78 769.33 474.27 780 C507.77 790.67 559.4 783.49 589.71 764.88 C620.01 746.27 641.61 704.16 656.11 668.35 C670.6 632.54 671.78 589.73 676.7 550.02 C681.62 510.31 683.49 470.12 685.61 430.09 C687.72 390.07 688.58 349.89 689.39 309.88 C690.2 269.86 697.37 196.24 690.46 190 C683.54 183.76 656.94 238.77 647.91 272.46 C638.89 306.16 641.13 352.39 636.33 392.18 C631.52 431.96 627.3 472.07 619.08 511.18 C610.86 550.3 607.1 602.47 587.01 626.86 C566.92 651.26 520.6 671.03 498.52 657.55 C476.44 644.07 465.89 584.21 454.52 545.98 C443.16 507.76 437.58 467.62 430.34 428.2 C423.09 388.79 423.61 342.61 411.05 309.51 C398.5 276.4 367.64 223.16 355 229.59 Z" fill="#151f25"/>
+  </g>
+  <g id="Ink_Dot">
+    <path id="Ink_Dot-2" data-name="Ink_Dot" d="M682.3 169.2 C682.3 162.02 688.12 156.2 695.3 156.2 C702.48 156.2 708.3 162.02 708.3 169.2 C708.3 176.38 702.48 182.2 695.3 182.2 C688.12 182.2 682.3 176.38 682.3 169.2 Z" fill="#c28a1e"/>
   </g>
 </svg>
