@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>UniNote Mark</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M210 0 L814 0 C929.98 0 1024 94.02 1024 210 L1024 814 C1024 929.98 929.98 1024 814 1024 L210 1024 C94.02 1024 0 929.98 0 814 L0 210 C0 94.02 94.02 0 210 0 Z" fill="#0c2230"/>
+    <path d="M232 190 L232 470 C232 610 292 678 352 678 C412 678 472 610 472 470 L472 190" fill="none" stroke="#6dd2ff" stroke-width="92" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M560 678 L560 190 L800 678 L800 190" fill="none" stroke="#6dd2ff" stroke-width="92" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M244 748 C400 796 612 796 796 734" fill="none" stroke="#ffd875" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M776 732 C776 719.85 785.85 710 798 710 C810.15 710 820 719.85 820 732 C820 744.15 810.15 754 798 754 C785.85 754 776 744.15 776 732 Z" fill="#ffd875"/>
+  </g>
+</svg>

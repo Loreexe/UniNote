@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>UniNote Logo Dark</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M210 0 L814 0 C929.98 0 1024 94.02 1024 210 L1024 814 C1024 929.98 929.98 1024 814 1024 L210 1024 C94.02 1024 0 929.98 0 814 L0 210 C0 94.02 94.02 0 210 0 Z" fill="#0c2230"/>
+    <path d="M232 200 L232 470 C232 600 292 662 352 662 C412 662 472 600 472 470 L472 200" fill="none" stroke="#6dd2ff" stroke-width="86" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M560 662 L560 200 L800 662 L800 200" fill="none" stroke="#6dd2ff" stroke-width="86" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M244 720 C400 768 612 768 796 706" fill="none" stroke="#ffd875" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M776 704 C776 691.85 785.85 682 798 682 C810.15 682 820 691.85 820 704 C820 716.15 810.15 726 798 726 C785.85 726 776 716.15 776 704 Z" fill="#ffd875"/>
+    <text transform="matrix(1 0 0 1 0 812)" x="512" y="102.624" xml:space="preserve" font-family="&apos;Noto Sans&apos;, sans-serif" font-size="96" font-weight="bold" fill="#d9e4eb" text-anchor="middle"><tspan x="512" y="102.624">UniNote</tspan></text>
+  </g>
+</svg>
