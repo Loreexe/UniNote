@@ -68,6 +68,45 @@ impl CubicBezierSegment {
         self.p1.1 += dy;
     }
 
+    /// Scala il segmento di Bézier rispetto a un'origine (origin_x, origin_y) con fattori (sx, sy).
+    /// Lo spessore del tratto viene scalato isotropicamente con la media quadratica dei fattori.
+    #[inline]
+    pub fn scale(&mut self, sx: f64, sy: f64, origin_x: f64, origin_y: f64) {
+        let scale_pt = |p: (f64, f64)| {
+            (
+                origin_x + (p.0 - origin_x) * sx,
+                origin_y + (p.1 - origin_y) * sy,
+            )
+        };
+        self.p0 = scale_pt(self.p0);
+        self.cp1 = scale_pt(self.cp1);
+        self.cp2 = scale_pt(self.cp2);
+        self.p1 = scale_pt(self.p1);
+
+        let sw = ((sx * sx + sy * sy) / 2.0).sqrt();
+        self.width0 *= sw;
+        self.width1 *= sw;
+    }
+
+    /// Ruota il segmento di Bézier di un angolo (in radianti) rispetto a un centro (origin_x, origin_y).
+    #[inline]
+    pub fn rotate(&mut self, angle_rad: f64, origin_x: f64, origin_y: f64) {
+        let cos_a = angle_rad.cos();
+        let sin_a = angle_rad.sin();
+        let rotate_pt = |p: (f64, f64)| {
+            let dx = p.0 - origin_x;
+            let dy = p.1 - origin_y;
+            (
+                origin_x + dx * cos_a - dy * sin_a,
+                origin_y + dx * sin_a + dy * cos_a,
+            )
+        };
+        self.p0 = rotate_pt(self.p0);
+        self.cp1 = rotate_pt(self.cp1);
+        self.cp2 = rotate_pt(self.cp2);
+        self.p1 = rotate_pt(self.p1);
+    }
+
     /// Valuta la coordinata 2D (x, y) lungo la curva per il parametro t in [0.0, 1.0].
     pub fn evaluate(&self, t: f64) -> (f64, f64) {
         let t = t.clamp(0.0, 1.0);

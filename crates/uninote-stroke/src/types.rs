@@ -435,4 +435,81 @@ impl Stroke {
             seg.translate(dx, dy);
         }
     }
+
+    /// Scala tutti i punti, campioni grezzi, spessori e segmenti di Bézier rispetto a un punto di origine.
+    pub fn scale(&mut self, sx: f64, sy: f64, origin_x: f64, origin_y: f64) {
+        if !sx.is_finite() || !sy.is_finite() || !origin_x.is_finite() || !origin_y.is_finite() {
+            return;
+        }
+        let sw = ((sx * sx + sy * sy) / 2.0).sqrt();
+        self.style.base_width *= sw;
+
+        for p in &mut self.points {
+            p.x = origin_x + (p.x - origin_x) * sx;
+            p.y = origin_y + (p.y - origin_y) * sy;
+            p.width *= sw;
+        }
+        for s in &mut self.raw_samples {
+            s.position.0 = origin_x + (s.position.0 - origin_x) * sx;
+            s.position.1 = origin_y + (s.position.1 - origin_y) * sy;
+        }
+        for seg in &mut self.cached_bezier {
+            seg.scale(sx, sy, origin_x, origin_y);
+        }
+        self.cached_bbox = self.compute_bounding_box();
+    }
+
+    /// Ruota tutti i punti, campioni grezzi e segmenti di Bézier di un angolo (in radianti) attorno a un centro.
+    pub fn rotate(&mut self, angle_rad: f64, origin_x: f64, origin_y: f64) {
+        if !angle_rad.is_finite() || !origin_x.is_finite() || !origin_y.is_finite() {
+            return;
+        }
+        let cos_a = angle_rad.cos();
+        let sin_a = angle_rad.sin();
+
+        for p in &mut self.points {
+            let dx = p.x - origin_x;
+            let dy = p.y - origin_y;
+            p.x = origin_x + dx * cos_a - dy * sin_a;
+            p.y = origin_y + dx * sin_a + dy * cos_a;
+        }
+        for s in &mut self.raw_samples {
+            let dx = s.position.0 - origin_x;
+            let dy = s.position.1 - origin_y;
+            s.position.0 = origin_x + dx * cos_a - dy * sin_a;
+            s.position.1 = origin_y + dx * sin_a + dy * cos_a;
+        }
+        for seg in &mut self.cached_bezier {
+            seg.rotate(angle_rad, origin_x, origin_y);
+        }
+        self.cached_bbox = self.compute_bounding_box();
+    }
+
+    /// Modifica il colore del tratto postumo.
+    pub fn set_color(&mut self, color: (f64, f64, f64, f64)) {
+        self.style.color = color;
+    }
+
+    /// Modifica lo spessore base del tratto postumo, ricalcolando proporzionalmente la larghezza dei punti.
+    pub fn set_base_width(&mut self, new_width: f64) {
+        if !new_width.is_finite() || new_width <= 0.0 {
+            return;
+        }
+        let old_width = self.style.base_width;
+        let factor = if old_width > 1e-6 {
+            new_width / old_width
+        } else {
+            1.0
+        };
+        self.style.base_width = new_width;
+
+        for p in &mut self.points {
+            p.width *= factor;
+        }
+        for seg in &mut self.cached_bezier {
+            seg.width0 *= factor;
+            seg.width1 *= factor;
+        }
+        self.cached_bbox = self.compute_bounding_box();
+    }
 }

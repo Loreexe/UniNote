@@ -31,6 +31,25 @@ pub enum DocCommand {
     },
     /// Incolla di uno o più elementi su una pagina con preservazione R-Tree e z-index.
     PasteItems { page_id: Uuid, items: Vec<Item> },
+    /// Trasformazione affine (scala e/o rotazione) di uno o più elementi attorno a un perno.
+    TransformItems {
+        page_id: Uuid,
+        item_ids: Vec<ItemId>,
+        origin_x: f64,
+        origin_y: f64,
+        scale_x: f64,
+        scale_y: f64,
+        rotation_rad: f64,
+    },
+    /// Modifica di stile (colore e/o spessore base) di elementi con snapshot pre/post per Undo.
+    ModifyItemsStyle {
+        page_id: Uuid,
+        items_style: Vec<(
+            ItemId,
+            uninote_stroke::StrokeStyle,
+            uninote_stroke::StrokeStyle,
+        )>,
+    },
 }
 
 /// Gestore della cronologia dei comandi per Undo / Redo e tracciamento delle revisioni monotone.
@@ -217,6 +236,61 @@ impl CommandHistory {
                     page.items.sort_by_key(|it| it.z_index);
                 }
             }
+            DocCommand::TransformItems {
+                page_id,
+                item_ids,
+                origin_x,
+                origin_y,
+                scale_x,
+                scale_y,
+                rotation_rad,
+            } => {
+                if !origin_x.is_finite()
+                    || !origin_y.is_finite()
+                    || !scale_x.is_finite()
+                    || !scale_y.is_finite()
+                    || !rotation_rad.is_finite()
+                    || item_ids.is_empty()
+                {
+                    return;
+                }
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    let id_set: HashSet<ItemId> = item_ids.iter().copied().collect();
+                    for item in &mut page.items {
+                        if id_set.contains(&item.id) {
+                            let ItemKind::Stroke(stroke) = &mut item.kind;
+                            if let Some(old_bbox) = stroke.bounding_box() {
+                                page.spatial_index.remove(item.id, &old_bbox);
+                            }
+                            if (*scale_x - 1.0).abs() > 1e-9 || (*scale_y - 1.0).abs() > 1e-9 {
+                                stroke.scale(*scale_x, *scale_y, *origin_x, *origin_y);
+                            }
+                            if rotation_rad.abs() > 1e-9 {
+                                stroke.rotate(*rotation_rad, *origin_x, *origin_y);
+                            }
+                            page.spatial_index.insert(item);
+                        }
+                    }
+                }
+            }
+            DocCommand::ModifyItemsStyle {
+                page_id,
+                items_style,
+            } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    for (id, _old_style, new_style) in items_style {
+                        if let Some(item) = page.items.iter_mut().find(|it| it.id == *id) {
+                            let ItemKind::Stroke(stroke) = &mut item.kind;
+                            if let Some(old_bbox) = stroke.bounding_box() {
+                                page.spatial_index.remove(item.id, &old_bbox);
+                            }
+                            stroke.style = new_style.clone();
+                            stroke.recompute_cache();
+                            page.spatial_index.insert(item);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -303,6 +377,68 @@ impl CommandHistory {
                         }
                     }
                     page.items.retain(|it| !ids_to_remove.contains(&it.id));
+                }
+            }
+            DocCommand::TransformItems {
+                page_id,
+                item_ids,
+                origin_x,
+                origin_y,
+                scale_x,
+                scale_y,
+                rotation_rad,
+            } => {
+                if !origin_x.is_finite()
+                    || !origin_y.is_finite()
+                    || !scale_x.is_finite()
+                    || !scale_y.is_finite()
+                    || !rotation_rad.is_finite()
+                    || item_ids.is_empty()
+                    || scale_x.abs() < 1e-9
+                    || scale_y.abs() < 1e-9
+                {
+                    return;
+                }
+                let inv_sx = 1.0 / scale_x;
+                let inv_sy = 1.0 / scale_y;
+                let inv_rot = -rotation_rad;
+
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    let id_set: HashSet<ItemId> = item_ids.iter().copied().collect();
+                    for item in &mut page.items {
+                        if id_set.contains(&item.id) {
+                            let ItemKind::Stroke(stroke) = &mut item.kind;
+                            if let Some(cur_bbox) = stroke.bounding_box() {
+                                page.spatial_index.remove(item.id, &cur_bbox);
+                            }
+                            // Inverti rotazione prima e poi scala
+                            if inv_rot.abs() > 1e-9 {
+                                stroke.rotate(inv_rot, *origin_x, *origin_y);
+                            }
+                            if (inv_sx - 1.0).abs() > 1e-9 || (inv_sy - 1.0).abs() > 1e-9 {
+                                stroke.scale(inv_sx, inv_sy, *origin_x, *origin_y);
+                            }
+                            page.spatial_index.insert(item);
+                        }
+                    }
+                }
+            }
+            DocCommand::ModifyItemsStyle {
+                page_id,
+                items_style,
+            } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    for (id, old_style, _new_style) in items_style {
+                        if let Some(item) = page.items.iter_mut().find(|it| it.id == *id) {
+                            let ItemKind::Stroke(stroke) = &mut item.kind;
+                            if let Some(cur_bbox) = stroke.bounding_box() {
+                                page.spatial_index.remove(item.id, &cur_bbox);
+                            }
+                            stroke.style = old_style.clone();
+                            stroke.recompute_cache();
+                            page.spatial_index.insert(item);
+                        }
+                    }
                 }
             }
         }
