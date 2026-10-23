@@ -156,7 +156,7 @@ fn test_t1_r3_atomic_persistence_save_and_load() {
     let temp_file = unique_settings_temp_path("save_load");
     let mut original = FullAppSettingsModel::default();
     original.min_contact_pressure = 0.08;
-    original.pressure_curve = PressureCurve::Soft;
+    original.set_pressure_curve(PressureCurve::Soft);
     original.theme_mode = ThemeMode::ForceDarkOled;
     original.barrel_button_action = BarrelButtonAction::LassoSelect;
 

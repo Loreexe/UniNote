@@ -3,6 +3,11 @@
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share
+CARGO_TARGET_DIR ?= $(shell cargo metadata --format-version 1 --no-deps 2>/dev/null | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
+ifeq ($(CARGO_TARGET_DIR),)
+CARGO_TARGET_DIR := target
+endif
+RELEASE_BIN ?= $(CARGO_TARGET_DIR)/release/uninote
 
 all: build
 
@@ -38,7 +43,7 @@ build-flatpak: icons
 
 install: release icons
 	@echo "Installazione di UniNote in $(PREFIX)..."
-	install -Dm755 target/release/uninote $(DESTDIR)$(BINDIR)/uninote
+	install -Dm755 $(RELEASE_BIN) $(DESTDIR)$(BINDIR)/uninote
 	install -Dm644 data/org.uninote.UniNote.desktop $(DESTDIR)$(DATADIR)/applications/org.uninote.UniNote.desktop
 	install -Dm644 data/org.uninote.UniNote.metainfo.xml $(DESTDIR)$(DATADIR)/metainfo/org.uninote.UniNote.metainfo.xml
 	install -Dm644 data/org.uninote.UniNote.xml $(DESTDIR)$(DATADIR)/mime/packages/org.uninote.UniNote.xml

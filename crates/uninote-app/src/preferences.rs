@@ -341,6 +341,67 @@ impl PressureCurve {
     }
 }
 
+/// Preset di sensibilità dello stilo esposti nella vista base delle impostazioni.
+///
+/// I preset sono pensati per utenti non tecnici: ognuno configura internamente
+/// la curva di pressione tecnica [`PressureCurve`] del digitizer MPP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum StylusSensitivity {
+    /// Morbida: risposta ad alta sensibilità, tratto leggero anche con pressioni basse.
+    Soft,
+    /// Media: risposta naturale e bilanciata (predefinito).
+    #[default]
+    Medium,
+    /// Dura: tratto marcato, privilegia le pressioni più intense.
+    Hard,
+}
+
+impl StylusSensitivity {
+    /// Etichette localizzate dei preset mostrati nella vista base.
+    pub const LABELS: [&'static str; 3] = ["Morbida", "Media", "Dura"];
+
+    /// Indice del preset nella vista base (0 = Morbida, 1 = Media, 2 = Dura).
+    pub fn index(&self) -> u32 {
+        match self {
+            Self::Soft => 0,
+            Self::Medium => 1,
+            Self::Hard => 2,
+        }
+    }
+
+    /// Ricostruisce il preset a partire dall'indice della vista base.
+    pub fn from_index(index: u32) -> Self {
+        match index {
+            0 => Self::Soft,
+            2 => Self::Hard,
+            _ => Self::Medium,
+        }
+    }
+
+    /// Curva di pressione tecnica configurata internamente dal preset.
+    pub fn curve(&self) -> PressureCurve {
+        match self {
+            Self::Soft => PressureCurve::Soft,
+            Self::Medium => PressureCurve::Linear,
+            Self::Hard => PressureCurve::Hard,
+        }
+    }
+
+    /// Preset base corrispondente a una curva di pressione tecnica.
+    pub fn from_curve(curve: PressureCurve) -> Self {
+        match curve {
+            PressureCurve::Soft => Self::Soft,
+            PressureCurve::Hard => Self::Hard,
+            PressureCurve::Linear => Self::Medium,
+        }
+    }
+
+    /// Applica la curva calibrata del preset alla pressione grezza [0.0, 1.0].
+    pub fn apply(&self, raw: f64) -> f64 {
+        self.curve().apply(raw)
+    }
+}
+
 /// Modalità tema dell'interfaccia DMS / GTK4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThemeMode {
@@ -359,15 +420,34 @@ pub enum BarrelButtonAction {
     ColorPicker,
 }
 
-/// Modello completo delle preferenze strutturato secondo le 4 schede di `UniNoteSettingsWindow`.
+/// Modello completo delle preferenze strutturato secondo le 5 schede di `UniNoteSettingsWindow`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FullAppSettingsModel {
+    // Vista avanzata (parametri tecnici di calibrazione fine)
+    #[serde(default)]
+    pub advanced_options_enabled: bool,
+
     // Tab 1: Hardware MPP
     pub min_contact_pressure: f64,
     pub pressure_curve: PressureCurve,
+    /// Preset di sensibilità accessibile nella vista base (Morbida/Media/Dura).
+    #[serde(default)]
+    pub stylus_sensitivity: StylusSensitivity,
+    /// Soglia di distacco stilo dal vetro (cutoff lift-off in pressione grezza).
+    #[serde(default = "default_stylus_lift_off_cutoff")]
+    pub stylus_lift_off_cutoff: f64,
     pub anti_hover_blip_threshold: f64,
+    /// Filtro anti-hover MPP attivo (scarta i campioni in aria a pressione sub-soglia).
+    #[serde(default = "default_true")]
+    pub anti_hover_enabled: bool,
+    /// Protezione palmo attiva su touchscreen.
+    #[serde(default = "default_true")]
+    pub palm_rejection_enabled: bool,
     pub one_euro_filter_enabled: bool,
     pub one_euro_cutoff_hz: f64,
+    /// Coefficiente di velocità beta del filtro One Euro.
+    #[serde(default = "default_one_euro_beta")]
+    pub one_euro_beta: f64,
     pub palm_proximity_timeout_ms: u64,
     pub palm_cooldown_ms: u64,
     pub hud_telemetry_enabled: bool,
@@ -387,6 +467,21 @@ pub struct FullAppSettingsModel {
     pub barrel_button_action: BarrelButtonAction,
 }
 
+/// Valore booleano predefinito condiviso per i nuovi campi opzionali del modello.
+fn default_true() -> bool {
+    true
+}
+
+/// Coefficiente di velocità predefinito del filtro One Euro (1€).
+fn default_one_euro_beta() -> f64 {
+    0.04
+}
+
+/// Soglia di distacco stilo predefinita (cutoff lift-off in pressione grezza).
+fn default_stylus_lift_off_cutoff() -> f64 {
+    0.045
+}
+
 impl Default for FullAppSettingsModel {
     fn default() -> Self {
         let mut shortcuts = HashMap::new();
@@ -395,11 +490,18 @@ impl Default for FullAppSettingsModel {
         }
 
         Self {
+            advanced_options_enabled: false,
+
             min_contact_pressure: 0.05,
             pressure_curve: PressureCurve::Linear,
+            stylus_sensitivity: StylusSensitivity::Medium,
+            stylus_lift_off_cutoff: 0.045,
             anti_hover_blip_threshold: 0.065,
+            anti_hover_enabled: true,
+            palm_rejection_enabled: true,
             one_euro_filter_enabled: true,
             one_euro_cutoff_hz: 1.0,
+            one_euro_beta: 0.04,
             palm_proximity_timeout_ms: 300,
             palm_cooldown_ms: 200,
             hud_telemetry_enabled: false,
@@ -548,11 +650,39 @@ impl FullAppSettingsModel {
         self.orthogonal_snap_tolerance_deg = self.orthogonal_snap_tolerance_deg.clamp(2.0, 25.0);
         self.rdp_epsilon_factor = self.rdp_epsilon_factor.clamp(0.01, 0.15);
 
+        // Campi introdotti dalla vista avanzata: NaN e infiniti vengono riportati ai default.
+        self.one_euro_beta = if self.one_euro_beta.is_finite() {
+            self.one_euro_beta.clamp(0.0, 1.0)
+        } else {
+            0.04
+        };
+        self.stylus_lift_off_cutoff = if self.stylus_lift_off_cutoff.is_finite() {
+            self.stylus_lift_off_cutoff.clamp(0.01, 0.20)
+        } else {
+            0.045
+        };
+
+        // Il preset base è la rappresentazione accessibile della curva tecnica: i due
+        // valori devono restare coerenti anche per i file salvati da versioni precedenti.
+        self.stylus_sensitivity = StylusSensitivity::from_curve(self.pressure_curve);
+
         for (id, _, _, def) in Self::SHORTCUT_SPECS {
             self.shortcuts
                 .entry(id.to_string())
                 .or_insert_with(|| def.to_string());
         }
+    }
+
+    /// Imposta il preset di sensibilità base allineando internamente la curva di pressione.
+    pub fn set_stylus_sensitivity(&mut self, sensitivity: StylusSensitivity) {
+        self.stylus_sensitivity = sensitivity;
+        self.pressure_curve = sensitivity.curve();
+    }
+
+    /// Imposta la curva di pressione tecnica allineando il preset di sensibilità base.
+    pub fn set_pressure_curve(&mut self, curve: PressureCurve) {
+        self.pressure_curve = curve;
+        self.stylus_sensitivity = StylusSensitivity::from_curve(curve);
     }
 
     /// Salva le impostazioni atomicamente usando un file temporaneo indicizzato dal PID e da un contatore.

@@ -1592,9 +1592,9 @@ fn test_t1_f12_01_github_tab_presence_and_order() {
 #[test]
 fn test_t1_f12_02_github_tab_version_matches_manifest() {
     let pkg_ver = env!("CARGO_PKG_VERSION");
-    assert!(
-        pkg_ver == "0.4.5" || pkg_ver == "0.4.3" || pkg_ver == "0.4.0",
-        "Cargo package version must match target 0.4.5, 0.4.3 (or 0.4.0 in pre-M4)"
+    assert_eq!(
+        pkg_ver, "0.4.5",
+        "Cargo package version must match target 0.4.5"
     );
 }
 
@@ -1631,23 +1631,24 @@ fn test_t1_f12_05_github_tab_license_display_gpl3() {
 
 #[test]
 fn test_t1_f13_01_semver_workspace_version_is_0_4_5() {
-    let cargo_toml = fs::read_to_string("/home/cachylore/Nextcloud/UniNote/Cargo.toml")
-        .expect("Failed to read workspace Cargo.toml");
+    let cargo_toml = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("Cargo.toml"))
+            .expect("Resolve root Cargo.toml path"),
+    )
+    .expect("Failed to read workspace Cargo.toml");
     assert!(
-        cargo_toml.contains("version = \"0.4.5\"")
-            || cargo_toml.contains("version = \"0.4.3\"")
-            || cargo_toml.contains("version = \"0.4.0\""),
-        "Workspace Cargo.toml must declare target version 0.4.5, 0.4.3 (or 0.4.0 in pre-M4)"
+        cargo_toml.contains("version = \"0.4.5\""),
+        "Workspace Cargo.toml must declare version = \"0.4.5\""
     );
 }
 
 #[test]
 fn test_t1_f13_02_window_version_badge_displays_v0_4_5() {
     let badge_text = concat!("v", env!("CARGO_PKG_VERSION"));
-    assert!(
-        badge_text == "v0.4.5" || badge_text == "v0.4.3" || badge_text == "v0.4.0",
-        "UI badge must display v0.4.5, v0.4.3 (or v0.4.0 in pre-M4)"
-    );
+    assert_eq!(badge_text, "v0.4.5", "UI badge must display v0.4.5");
 }
 
 #[test]
@@ -2956,8 +2957,8 @@ fn test_t3_13_github_tab_inspect_version_matches_note_metadata_and_badge() {
     // F12 + F13
     let manifest_ver = env!("CARGO_PKG_VERSION");
     let badge_ver = concat!("v", env!("CARGO_PKG_VERSION"));
-    assert!(manifest_ver == "0.4.5" || manifest_ver == "0.4.3" || manifest_ver == "0.4.0");
-    assert!(badge_ver == "v0.4.5" || badge_ver == "v0.4.3" || badge_ver == "v0.4.0");
+    assert_eq!(manifest_ver, "0.4.5");
+    assert_eq!(badge_ver, "v0.4.5");
 }
 
 // ============================================================================
@@ -3125,11 +3126,7 @@ fn test_t4_scenario_4_settings_customization_and_github_discovery() {
         GITHUB_ISSUES_URL,
         "https://github.com/Loreexe/UniNote/issues"
     );
-    assert!(
-        env!("CARGO_PKG_VERSION") == "0.4.5"
-            || env!("CARGO_PKG_VERSION") == "0.4.3"
-            || env!("CARGO_PKG_VERSION") == "0.4.0"
-    );
+    assert_eq!(env!("CARGO_PKG_VERSION"), "0.4.5");
 }
 
 /// Scenario 5: Heavy stress clipboard lifecycle

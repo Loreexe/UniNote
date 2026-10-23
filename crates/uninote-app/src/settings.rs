@@ -1,17 +1,42 @@
-use crate::preferences::{BarrelButtonAction, FullAppSettingsModel, PressureCurve, ThemeMode};
+use crate::icons::{create_icon, IconKind};
+use crate::preferences::{
+    BarrelButtonAction, FullAppSettingsModel, PressureCurve, StylusSensitivity, ThemeMode,
+};
 use gtk4::cairo::Context;
 use gtk4::gdk;
+use gtk4::gio;
+use gtk4::gio::prelude::FileExtManual;
 use gtk4::prelude::*;
 use gtk4::{
-    Adjustment, Align, Box as GtkBox, Button, DrawingArea, Entry, GestureStylus, Orientation,
-    ProgressBar, Scale, SpinButton, Switch,
+    Adjustment, Align, Box as GtkBox, Button, DrawingArea, Entry, GestureStylus, Label,
+    Orientation, ProgressBar, Scale, SpinButton, Switch,
 };
 use libadwaita::prelude::*;
-use libadwaita::{ActionRow, ComboRow, PreferencesGroup, PreferencesPage, PreferencesWindow};
-use std::cell::RefCell;
+use libadwaita::{
+    ActionRow, ComboRow, PreferencesGroup, PreferencesPage, PreferencesWindow, SwitchRow,
+};
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 pub type SettingsChangedCallback = Rc<RefCell<Option<Box<dyn Fn(&FullAppSettingsModel)>>>>;
+
+/// Versione corrente dell'applicazione mostrata nella scheda GitHub.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Etichetta versione con prefisso `v` (usata nel badge del titolo e nella scheda GitHub).
+pub const APP_VERSION_LABEL: &str = concat!("v", env!("CARGO_PKG_VERSION"));
+
+/// URL del repository ufficiale UniNote.
+pub const GITHUB_REPO_URL: &str = "https://github.com/Loreexe/UniNote";
+/// URL per l'apertura di una nuova segnalazione (bug o feedback).
+pub const GITHUB_NEW_ISSUE_URL: &str = "https://github.com/Loreexe/UniNote/issues/new";
+/// URL delle note di rilascio ufficiali.
+pub const GITHUB_RELEASES_URL: &str = "https://github.com/Loreexe/UniNote/releases";
+/// URL del testo integrale della licenza GNU General Public License v3.0.
+pub const GPL_3_0_LICENSE_URL: &str = "https://www.gnu.org/licenses/gpl-3.0.html";
+/// Endpoint pubblico interrogato dal pulsante "Verifica Aggiornamenti".
+const GITHUB_LATEST_RELEASE_API: &str =
+    "https://api.github.com/repos/Loreexe/UniNote/releases/latest";
 
 /// Finestra preferenze nativa Adwaita / DMS multi-scheda.
 pub struct UniNoteSettingsWindow {
@@ -24,6 +49,160 @@ impl Default for UniNoteSettingsWindow {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ============================================================================
+// STATO CONDIVISO DELLA VISTA AVANZATA
+// ============================================================================
+
+/// Callback di visibilità registrato dai gruppi tecnici della vista avanzata.
+type AdvancedVisibilityHook = Rc<dyn Fn(bool)>;
+
+/// Stato condiviso della modalità "Opzioni Avanzate" tra le schede della finestra.
+///
+/// Lo switch "Opzioni Avanzate" è replicato in testa alle schede che espongono
+/// parametri tecnici: tutte le occorrenze riflettono e aggiornano lo stesso stato.
+#[derive(Clone)]
+struct AdvancedState {
+    enabled: Rc<Cell<bool>>,
+    syncing: Rc<Cell<bool>>,
+    switches: Rc<RefCell<Vec<SwitchRow>>>,
+    hooks: Rc<RefCell<Vec<AdvancedVisibilityHook>>>,
+}
+
+impl AdvancedState {
+    /// Crea lo stato inizializzandolo dal valore persistito nel modello.
+    fn new(initial: bool) -> Self {
+        Self {
+            enabled: Rc::new(Cell::new(initial)),
+            syncing: Rc::new(Cell::new(false)),
+            switches: Rc::new(RefCell::new(Vec::new())),
+            hooks: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    /// Restituisce `true` se la vista avanzata è attiva.
+    fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// Restituisce `true` se lo stato è in fase di propagazione (per evitare cicli).
+    fn is_syncing(&self) -> bool {
+        self.syncing.get()
+    }
+
+    /// Registra uno switch "Opzioni Avanzate" da tenere allineato allo stato.
+    fn register_switch(&self, row: SwitchRow) {
+        self.switches.borrow_mut().push(row);
+    }
+
+    /// Registra un callback di visibilità per i gruppi tecnici.
+    fn register_visibility_hook(&self, hook: AdvancedVisibilityHook) {
+        self.hooks.borrow_mut().push(hook);
+    }
+
+    /// Propaga il nuovo stato a tutti gli switch registrati e ai gruppi tecnici.
+    fn set_enabled(&self, value: bool) {
+        self.enabled.set(value);
+
+        let switches: Vec<SwitchRow> = self.switches.borrow().clone();
+        self.syncing.set(true);
+        for row in switches {
+            row.set_active(value);
+        }
+        self.syncing.set(false);
+
+        let hooks: Vec<AdvancedVisibilityHook> = self.hooks.borrow().clone();
+        for hook in hooks {
+            hook(value);
+        }
+    }
+}
+
+// ============================================================================
+// FUNZIONI DI SUPPORTO
+// ============================================================================
+
+/// Traduce una curva di pressione tecnica nell'indice del selettore avanzato.
+fn curve_index(curve: PressureCurve) -> u32 {
+    match curve {
+        PressureCurve::Linear => 0,
+        PressureCurve::Soft => 1,
+        PressureCurve::Hard => 2,
+    }
+}
+
+/// Traduce l'indice del selettore avanzato in una curva di pressione tecnica.
+fn curve_from_index(index: u32) -> PressureCurve {
+    match index {
+        1 => PressureCurve::Soft,
+        2 => PressureCurve::Hard,
+        _ => PressureCurve::Linear,
+    }
+}
+
+/// Crea un pulsante collegamento che apre un URI esterno con il gestore predefinito.
+fn link_button(label: &str, uri: &str) -> Button {
+    let button = Button::builder()
+        .label(label)
+        .valign(Align::Center)
+        .css_classes(["dms-action-btn"])
+        .build();
+
+    let uri = uri.to_string();
+    button.connect_clicked(move |_| {
+        if let Err(err) = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>)
+        {
+            // Nessun gestore predefinito per lo schema URI: la pagina resta comunque
+            // consultabile incollando l'indirizzo riportato nel sottotitolo della riga.
+            eprintln!("UniNote: impossibile aprire l'URI '{uri}': {err}");
+        }
+    });
+
+    button
+}
+
+/// Crea una riga `AdwActionRow` con pulsante collegamento verso un URI esterno.
+fn link_row(title: &str, subtitle: &str, uri: &str, button_label: &str) -> ActionRow {
+    let row = ActionRow::builder().title(title).subtitle(subtitle).build();
+    let button = link_button(button_label, uri);
+    row.add_suffix(&button);
+    row.set_activatable_widget(Some(&button));
+    row
+}
+
+/// Costruisce lo switch "Opzioni Avanzate" replicato in testa alle schede tecniche.
+fn build_advanced_switch(
+    settings: &Rc<RefCell<FullAppSettingsModel>>,
+    on_changed: &SettingsChangedCallback,
+    advanced: &AdvancedState,
+) -> SwitchRow {
+    let row = SwitchRow::builder()
+        .title("Opzioni Avanzate")
+        .subtitle(
+            "Mostra i parametri tecnici di calibrazione fine del digitizer (soglie, filtri 1€, anti-hover, palm rejection).",
+        )
+        .active(advanced.is_enabled())
+        .build();
+
+    let adv_state = advanced.clone();
+    let s_adv = settings.clone();
+    let cb_adv = on_changed.clone();
+    row.connect_active_notify(move |switch_row| {
+        if adv_state.is_syncing() {
+            return;
+        }
+        let active = switch_row.is_active();
+        adv_state.set_enabled(active);
+        s_adv.borrow_mut().advanced_options_enabled = active;
+        let _ = s_adv.borrow().save();
+        if let Some(ref cb) = *cb_adv.borrow() {
+            cb(&s_adv.borrow());
+        }
+    });
+
+    advanced.register_switch(row.clone());
+    row
 }
 
 impl UniNoteSettingsWindow {
@@ -42,16 +221,19 @@ impl UniNoteSettingsWindow {
             .build();
 
         let on_changed = Rc::new(RefCell::new(None));
+        let advanced = AdvancedState::new(settings.borrow().advanced_options_enabled);
 
-        let page_hardware = Self::build_hardware_page(&settings, &on_changed);
+        let page_hardware = Self::build_hardware_page(&settings, &on_changed, &advanced);
         let page_appearance = Self::build_appearance_page(&settings, &on_changed);
-        let page_tools = Self::build_tools_page(&settings, &on_changed);
+        let page_tools = Self::build_tools_page(&settings, &on_changed, &advanced);
         let page_shortcuts = Self::build_shortcuts_page(&settings, &on_changed);
+        let page_github = Self::build_github_page();
 
         window.add(&page_hardware);
         window.add(&page_appearance);
         window.add(&page_tools);
         window.add(&page_shortcuts);
+        window.add(&page_github);
 
         if !libadwaita::StyleManager::default().is_dark() {
             window.add_css_class("light-theme");
@@ -79,50 +261,98 @@ impl UniNoteSettingsWindow {
     fn build_hardware_page(
         settings: &Rc<RefCell<FullAppSettingsModel>>,
         on_changed: &SettingsChangedCallback,
+        advanced: &AdvancedState,
     ) -> PreferencesPage {
         let page = PreferencesPage::builder()
             .title("Hardware MPP")
             .icon_name("input-tablet-symbolic")
             .build();
 
-        // Gruppo 1: Calibrazione Pressione e Contatto
-        let grp_pressure = PreferencesGroup::builder()
-            .title("Calibrazione Digitizer Microsoft Pen Protocol (MPP)")
+        // ---------------------------------------------------------------------
+        // GRUPPO 0: VISTA BASE + SWITCH "OPZIONI AVANZATE"
+        // ---------------------------------------------------------------------
+        let grp_quick = PreferencesGroup::builder()
+            .title("Configurazione Rapida")
             .description(
-                "Regola la soglia di contatto fisico con il vetro e la curva di risposta dinamica.",
+                "Preset intuitivi per la scrittura a mano. Attiva 'Opzioni Avanzate' per i parametri tecnici di calibrazione fine.",
             )
             .build();
 
-        // 1.1 Soglia Minima di Contatto
-        let row_threshold = ActionRow::builder()
-            .title("Soglia Minima di Contatto")
-            .subtitle("Pressione minima per avviare il tratto inchiostro ed evitare spike in aria.")
+        let row_advanced = build_advanced_switch(settings, on_changed, advanced);
+        grp_quick.add(&row_advanced);
+
+        // 1.1 Preset di Sensibilità dello Stilo (Morbida / Media / Dura)
+        let row_sensitivity = ComboRow::builder()
+            .title("Sensibilità dello Stilo")
+            .subtitle("Scegli un preset immediato: la curva di pressione viene calibrata automaticamente.")
+            .model(&gtk4::StringList::new(&StylusSensitivity::LABELS))
             .build();
 
-        let initial_thresh = settings.borrow().min_contact_pressure;
-        let adj_thresh = Adjustment::new(initial_thresh, 0.01, 0.50, 0.005, 0.05, 0.0);
-        let scale_thresh = Scale::builder()
-            .adjustment(&adj_thresh)
-            .digits(3)
-            .draw_value(true)
-            .value_pos(gtk4::PositionType::Right)
-            .width_request(180)
+        row_sensitivity.set_selected(settings.borrow().stylus_sensitivity.index());
+
+        // 1.2 Curva di Pressione Tecnica (vista avanzata, allineata al preset base)
+        let row_curve = ComboRow::builder()
+            .title("Curva di Risposta alla Pressione")
+            .subtitle("Curva tecnica grezza applicata alla pressione grezza del digitizer.")
+            .model(&gtk4::StringList::new(&[
+                "Lineare (Naturale)",
+                "Morbida (Alta Sensibilità)",
+                "Dura (Tratto Marcato)",
+            ]))
             .build();
 
-        let s_thresh = settings.clone();
-        let cb_thresh = on_changed.clone();
-        scale_thresh.connect_value_changed(move |scale| {
-            let val = scale.value();
-            s_thresh.borrow_mut().min_contact_pressure = val;
-            let _ = s_thresh.borrow().save();
-            if let Some(ref cb) = *cb_thresh.borrow() {
-                cb(&s_thresh.borrow());
+        row_curve.set_selected(curve_index(settings.borrow().pressure_curve));
+
+        // Sincronizzazione bidirezionale tra preset base e curva tecnica
+        let sync_guard = Rc::new(Cell::new(false));
+
+        let curve_row = row_curve.clone();
+        let s_sens = settings.clone();
+        let cb_sens = on_changed.clone();
+        let guard_sens = sync_guard.clone();
+        row_sensitivity.connect_selected_notify(move |combo| {
+            if guard_sens.get() {
+                return;
             }
-        });
-        row_threshold.add_suffix(&scale_thresh);
-        grp_pressure.add(&row_threshold);
+            guard_sens.set(true);
 
-        // 1.2 Barra di Prova Live Pressione
+            let sensitivity = StylusSensitivity::from_index(combo.selected());
+            s_sens.borrow_mut().set_stylus_sensitivity(sensitivity);
+            curve_row.set_selected(curve_index(sensitivity.curve()));
+
+            let _ = s_sens.borrow().save();
+            if let Some(ref cb) = *cb_sens.borrow() {
+                cb(&s_sens.borrow());
+            }
+
+            guard_sens.set(false);
+        });
+
+        let sens_row = row_sensitivity.clone();
+        let s_curve = settings.clone();
+        let cb_curve = on_changed.clone();
+        let guard_curve = sync_guard.clone();
+        row_curve.connect_selected_notify(move |combo| {
+            if guard_curve.get() {
+                return;
+            }
+            guard_curve.set(true);
+
+            let curve = curve_from_index(combo.selected());
+            s_curve.borrow_mut().set_pressure_curve(curve);
+            sens_row.set_selected(StylusSensitivity::from_curve(curve).index());
+
+            let _ = s_curve.borrow().save();
+            if let Some(ref cb) = *cb_curve.borrow() {
+                cb(&s_curve.borrow());
+            }
+
+            guard_curve.set(false);
+        });
+
+        grp_quick.add(&row_sensitivity);
+
+        // 1.3 Barra di Prova Live Pressione
         let row_live = ActionRow::builder()
             .title("Test Pressione dal Vivo")
             .subtitle("Premi con lo stilo su quest'area per verificare la risposta del digitizer.")
@@ -153,27 +383,27 @@ impl UniNoteSettingsWindow {
         let stylus_ctrl = GestureStylus::new();
 
         let p_bar_down = p_bar.clone();
-        let s_curve_down = s_curve_for_live.clone();
+        let s_sens_down = s_curve_for_live.clone();
         stylus_ctrl.connect_down(move |gesture, _x, _y| {
             let raw_p = gesture
                 .axis(gdk::AxisUse::Pressure)
                 .unwrap_or(0.0)
                 .clamp(0.0, 1.0);
-            let curve = s_curve_down.borrow().pressure_curve;
-            let calibrated = curve.apply(raw_p);
+            let sensitivity = s_sens_down.borrow().stylus_sensitivity;
+            let calibrated = sensitivity.apply(raw_p);
             p_bar_down.set_fraction(calibrated);
             p_bar_down.set_text(Some(&format!("{:.3}", calibrated)));
         });
 
         let p_bar_motion = p_bar.clone();
-        let s_curve_motion = s_curve_for_live.clone();
+        let s_sens_motion = s_curve_for_live.clone();
         stylus_ctrl.connect_motion(move |gesture, _x, _y| {
             let raw_p = gesture
                 .axis(gdk::AxisUse::Pressure)
                 .unwrap_or(0.0)
                 .clamp(0.0, 1.0);
-            let curve = s_curve_motion.borrow().pressure_curve;
-            let calibrated = curve.apply(raw_p);
+            let sensitivity = s_sens_motion.borrow().stylus_sensitivity;
+            let calibrated = sensitivity.apply(raw_p);
             p_bar_motion.set_fraction(calibrated);
             p_bar_motion.set_text(Some(&format!("{:.3}", calibrated)));
         });
@@ -194,107 +424,131 @@ impl UniNoteSettingsWindow {
         live_box.append(&live_area);
         live_box.append(&progress_live);
         row_live.add_suffix(&live_box);
-        grp_pressure.add(&row_live);
+        grp_quick.add(&row_live);
 
-        // 1.3 Curva di Sensibilità
-        let curve_strings = [
-            "Lineare (Naturale)",
-            "Morbida (Alta Sensibilità)",
-            "Dura (Tratto Marcato)",
-        ];
-        let row_curve = ComboRow::builder()
-            .title("Curva di Risposta alla Pressione")
-            .subtitle("Adatta l'erogazione dello spessore alla forza della tua mano.")
-            .model(&gtk4::StringList::new(&curve_strings))
+        // 1.4 Protezione Palmo (toggle accessibile nella vista base)
+        let row_palm_toggle = SwitchRow::builder()
+            .title("Protezione Palmo (Palm Rejection)")
+            .subtitle("Ignora il contatto della mano sul touchscreen mentre scrivi con lo stilo.")
+            .active(settings.borrow().palm_rejection_enabled)
             .build();
 
-        let initial_curve_idx = match settings.borrow().pressure_curve {
-            PressureCurve::Linear => 0,
-            PressureCurve::Soft => 1,
-            PressureCurve::Hard => 2,
-        };
-        row_curve.set_selected(initial_curve_idx);
-
-        let s_curve = settings.clone();
-        let cb_curve = on_changed.clone();
-        row_curve.connect_selected_notify(move |combo| {
-            let curve = match combo.selected() {
-                1 => PressureCurve::Soft,
-                2 => PressureCurve::Hard,
-                _ => PressureCurve::Linear,
-            };
-            s_curve.borrow_mut().pressure_curve = curve;
-            let _ = s_curve.borrow().save();
-            if let Some(ref cb) = *cb_curve.borrow() {
-                cb(&s_curve.borrow());
+        let s_palm_toggle = settings.clone();
+        let cb_palm_toggle = on_changed.clone();
+        row_palm_toggle.connect_active_notify(move |switch_row| {
+            let active = switch_row.is_active();
+            s_palm_toggle.borrow_mut().palm_rejection_enabled = active;
+            let _ = s_palm_toggle.borrow().save();
+            if let Some(ref cb) = *cb_palm_toggle.borrow() {
+                cb(&s_palm_toggle.borrow());
             }
         });
-        grp_pressure.add(&row_curve);
-        page.add(&grp_pressure);
+        grp_quick.add(&row_palm_toggle);
 
-        // Gruppo 2: Filtri Anti-Hover & Anti-Blip
-        let grp_filters = PreferencesGroup::builder()
-            .title("Filtri Hardware e Stabilizzazione")
-            .description("Protezione da campioni spuri capacitivi ed eliminazione spike.")
+        page.add(&grp_quick);
+
+        // ---------------------------------------------------------------------
+        // GRUPPO 1 (AVANZATO): CALIBRAZIONE DIGITIZER
+        // ---------------------------------------------------------------------
+        let grp_digitizer = PreferencesGroup::builder()
+            .title("Calibrazione Digitizer MPP Avanzata")
+            .description("Soglie numeriche di contatto, cutoff di distacco stilo e curva grezza.")
             .build();
 
-        // 2.1 Soglia Anti-Hover & Anti-Blip
-        let row_blip = ActionRow::builder()
-            .title("Soglia Filtro Anti-Blip")
-            .subtitle(
-                "Scarta campioni capacitivi transitori privi di reale pressione (default 0.065).",
-            )
+        // Soglia numerica di pressione di contatto
+        let row_threshold = ActionRow::builder()
+            .title("Soglia Minima di Contatto")
+            .subtitle("Pressione minima per avviare il tratto inchiostro ed evitare spike in aria.")
             .build();
 
-        let initial_blip = settings.borrow().anti_hover_blip_threshold;
-        let adj_blip = Adjustment::new(initial_blip, 0.02, 0.20, 0.005, 0.02, 0.0);
-        let scale_blip = Scale::builder()
-            .adjustment(&adj_blip)
+        let initial_thresh = settings.borrow().min_contact_pressure;
+        let adj_thresh = Adjustment::new(initial_thresh, 0.01, 0.50, 0.005, 0.05, 0.0);
+        let scale_thresh = Scale::builder()
+            .adjustment(&adj_thresh)
             .digits(3)
             .draw_value(true)
             .value_pos(gtk4::PositionType::Right)
             .width_request(180)
             .build();
 
-        let s_blip = settings.clone();
-        let cb_blip = on_changed.clone();
-        scale_blip.connect_value_changed(move |scale| {
+        let s_thresh = settings.clone();
+        let cb_thresh = on_changed.clone();
+        scale_thresh.connect_value_changed(move |scale| {
             let val = scale.value();
-            s_blip.borrow_mut().anti_hover_blip_threshold = val;
-            let _ = s_blip.borrow().save();
-            if let Some(ref cb) = *cb_blip.borrow() {
-                cb(&s_blip.borrow());
+            s_thresh.borrow_mut().min_contact_pressure = val;
+            let _ = s_thresh.borrow().save();
+            if let Some(ref cb) = *cb_thresh.borrow() {
+                cb(&s_thresh.borrow());
             }
         });
-        row_blip.add_suffix(&scale_blip);
-        grp_filters.add(&row_blip);
+        row_threshold.add_suffix(&scale_thresh);
+        grp_digitizer.add(&row_threshold);
 
-        // 2.2 One Euro Filter (Toggle)
-        let row_one_euro = ActionRow::builder()
-            .title("Filtro Adattivo 1€ (One Euro Filter)")
-            .subtitle("Smoothing dinamico adattivo per azzerare jitter e tremolio.")
+        // Cutoff di distacco stilo dal vetro
+        let adj_lift_off = Adjustment::new(
+            settings.borrow().stylus_lift_off_cutoff,
+            0.01,
+            0.20,
+            0.005,
+            0.01,
+            0.0,
+        );
+        let row_lift_off = ActionRow::builder()
+            .title("Cutoff di Distacco Stilo")
+            .subtitle("Pressione sotto la quale il contatto viene considerato staccato dal vetro.")
             .build();
 
-        let switch_oe = Switch::builder()
-            .active(settings.borrow().one_euro_filter_enabled)
+        let spin_lift_off = SpinButton::builder()
+            .adjustment(&adj_lift_off)
+            .digits(3)
+            .climb_rate(0.005)
             .valign(Align::Center)
+            .build();
+
+        let s_lift_off = settings.clone();
+        let cb_lift_off = on_changed.clone();
+        spin_lift_off.connect_value_changed(move |spin| {
+            let val = spin.value();
+            s_lift_off.borrow_mut().stylus_lift_off_cutoff = val;
+            let _ = s_lift_off.borrow().save();
+            if let Some(ref cb) = *cb_lift_off.borrow() {
+                cb(&s_lift_off.borrow());
+            }
+        });
+        row_lift_off.add_suffix(&spin_lift_off);
+        grp_digitizer.add(&row_lift_off);
+
+        // Curva di pressione tecnica
+        grp_digitizer.add(&row_curve);
+        page.add(&grp_digitizer);
+
+        // ---------------------------------------------------------------------
+        // GRUPPO 2 (AVANZATO): FILTRO ADATTIVO 1 EURO
+        // ---------------------------------------------------------------------
+        let grp_one_euro = PreferencesGroup::builder()
+            .title("Filtro Adattivo 1€ (One Euro Filter)")
+            .description("Smoothing dinamico adattivo per azzerare jitter e tremolio.")
+            .build();
+
+        let row_one_euro = SwitchRow::builder()
+            .title("Filtro Adattivo 1€ (One Euro Filter)")
+            .subtitle("Smoothing dinamico adattivo per azzerare jitter e tremolio.")
+            .active(settings.borrow().one_euro_filter_enabled)
             .build();
 
         let s_oe = settings.clone();
         let cb_oe = on_changed.clone();
-        switch_oe.connect_active_notify(move |switch| {
-            let active = switch.is_active();
+        row_one_euro.connect_active_notify(move |switch_row| {
+            let active = switch_row.is_active();
             s_oe.borrow_mut().one_euro_filter_enabled = active;
             let _ = s_oe.borrow().save();
             if let Some(ref cb) = *cb_oe.borrow() {
                 cb(&s_oe.borrow());
             }
         });
-        row_one_euro.add_suffix(&switch_oe);
-        row_one_euro.set_activatable_widget(Some(&switch_oe));
-        grp_filters.add(&row_one_euro);
+        grp_one_euro.add(&row_one_euro);
 
-        // 2.3 Cutoff Frequenza 1€
+        // Cutoff Frequenza 1€
         let adj_oe_cutoff = Adjustment::new(
             settings.borrow().one_euro_cutoff_hz,
             0.1,
@@ -326,12 +580,104 @@ impl UniNoteSettingsWindow {
             }
         });
         row_oe_cutoff.add_suffix(&spin_oe);
-        grp_filters.add(&row_oe_cutoff);
+        grp_one_euro.add(&row_oe_cutoff);
+
+        // Coefficiente di velocità beta
+        let adj_oe_beta =
+            Adjustment::new(settings.borrow().one_euro_beta, 0.0, 1.0, 0.005, 0.01, 0.0);
+        let row_oe_beta = ActionRow::builder()
+            .title("Coefficiente di Velocità β (1€)")
+            .subtitle(
+                "Adattamento del cutoff alla velocità del tratto: valori alti riducono il ritardo.",
+            )
+            .build();
+
+        let spin_beta = SpinButton::builder()
+            .adjustment(&adj_oe_beta)
+            .digits(3)
+            .climb_rate(0.005)
+            .valign(Align::Center)
+            .build();
+
+        let s_beta = settings.clone();
+        let cb_beta = on_changed.clone();
+        spin_beta.connect_value_changed(move |spin| {
+            let val = spin.value();
+            s_beta.borrow_mut().one_euro_beta = val;
+            let _ = s_beta.borrow().save();
+            if let Some(ref cb) = *cb_beta.borrow() {
+                cb(&s_beta.borrow());
+            }
+        });
+        row_oe_beta.add_suffix(&spin_beta);
+        grp_one_euro.add(&row_oe_beta);
+        page.add(&grp_one_euro);
+
+        // ---------------------------------------------------------------------
+        // GRUPPO 3 (AVANZATO): FILTRI ANTI-HOVER E ANTI-BLIP
+        // ---------------------------------------------------------------------
+        let grp_filters = PreferencesGroup::builder()
+            .title("Filtri Anti-Hover e Anti-Blip")
+            .description("Protezione da campioni spuri capacitivi ed eliminazione spike.")
+            .build();
+
+        let row_anti_hover = SwitchRow::builder()
+            .title("Filtro Anti-Hover MPP")
+            .subtitle(
+                "Scarta i campioni in aria a pressione sub-soglia durante l'hover dello stilo.",
+            )
+            .active(settings.borrow().anti_hover_enabled)
+            .build();
+
+        let s_ah = settings.clone();
+        let cb_ah = on_changed.clone();
+        row_anti_hover.connect_active_notify(move |switch_row| {
+            let active = switch_row.is_active();
+            s_ah.borrow_mut().anti_hover_enabled = active;
+            let _ = s_ah.borrow().save();
+            if let Some(ref cb) = *cb_ah.borrow() {
+                cb(&s_ah.borrow());
+            }
+        });
+        grp_filters.add(&row_anti_hover);
+
+        // Soglia Anti-Blip
+        let row_blip = ActionRow::builder()
+            .title("Soglia Filtro Anti-Blip")
+            .subtitle(
+                "Scarta campioni capacitivi transitori privi di reale pressione (default 0.065).",
+            )
+            .build();
+
+        let initial_blip = settings.borrow().anti_hover_blip_threshold;
+        let adj_blip = Adjustment::new(initial_blip, 0.02, 0.20, 0.005, 0.02, 0.0);
+        let scale_blip = Scale::builder()
+            .adjustment(&adj_blip)
+            .digits(3)
+            .draw_value(true)
+            .value_pos(gtk4::PositionType::Right)
+            .width_request(180)
+            .build();
+
+        let s_blip = settings.clone();
+        let cb_blip = on_changed.clone();
+        scale_blip.connect_value_changed(move |scale| {
+            let val = scale.value();
+            s_blip.borrow_mut().anti_hover_blip_threshold = val;
+            let _ = s_blip.borrow().save();
+            if let Some(ref cb) = *cb_blip.borrow() {
+                cb(&s_blip.borrow());
+            }
+        });
+        row_blip.add_suffix(&scale_blip);
+        grp_filters.add(&row_blip);
         page.add(&grp_filters);
 
-        // Gruppo 3: Riconoscimento Palmo (Palm Rejection)
+        // ---------------------------------------------------------------------
+        // GRUPPO 4 (AVANZATO): PROTEZIONE PALMO AVANZATA
+        // ---------------------------------------------------------------------
         let grp_palm = PreferencesGroup::builder()
-            .title("Protezione Palmo (Palm Rejection)")
+            .title("Protezione Palmo Avanzata (Timeout &amp; Cooldown)")
             .description("Parametri temporali della macchina a stati anti-palmo su touchscreen.")
             .build();
 
@@ -402,32 +748,55 @@ impl UniNoteSettingsWindow {
         });
         row_cooldown.add_suffix(&spin_cd);
         grp_palm.add(&row_cooldown);
+        page.add(&grp_palm);
 
-        // 3.3 HUD Telemetria
-        let row_hud = ActionRow::builder()
-            .title("Overlay Telemetria Diagnostica (F12)")
-            .subtitle("Mostra frequenza Hz, tempo rendering e statistiche hardware a schermo.")
+        // ---------------------------------------------------------------------
+        // GRUPPO 5 (AVANZATO): TELEMETRIA DIAGNOSTICA
+        // ---------------------------------------------------------------------
+        let grp_diagnostics = PreferencesGroup::builder()
+            .title("Diagnostica e Telemetria")
+            .description("Overlay di diagnostica a schermo per il monitoraggio del digitizer.")
             .build();
 
-        let switch_hud = Switch::builder()
+        let row_hud = SwitchRow::builder()
+            .title("Overlay Telemetria Diagnostica (F12)")
+            .subtitle("Mostra frequenza Hz, tempo rendering e statistiche hardware a schermo.")
             .active(settings.borrow().hud_telemetry_enabled)
-            .valign(Align::Center)
             .build();
 
         let s_hud = settings.clone();
         let cb_hud = on_changed.clone();
-        switch_hud.connect_active_notify(move |switch| {
-            let val = switch.is_active();
+        row_hud.connect_active_notify(move |switch_row| {
+            let val = switch_row.is_active();
             s_hud.borrow_mut().hud_telemetry_enabled = val;
             let _ = s_hud.borrow().save();
             if let Some(ref cb) = *cb_hud.borrow() {
                 cb(&s_hud.borrow());
             }
         });
-        row_hud.add_suffix(&switch_hud);
-        row_hud.set_activatable_widget(Some(&switch_hud));
-        grp_palm.add(&row_hud);
-        page.add(&grp_palm);
+        grp_diagnostics.add(&row_hud);
+        page.add(&grp_diagnostics);
+
+        // ---------------------------------------------------------------------
+        // VISIBILITÀ DEI GRUPPI TECNICI (espansa solo al toggle)
+        // ---------------------------------------------------------------------
+        let advanced_groups = [
+            grp_digitizer.clone(),
+            grp_one_euro.clone(),
+            grp_filters.clone(),
+            grp_palm.clone(),
+            grp_diagnostics.clone(),
+        ];
+
+        for group in &advanced_groups {
+            group.set_visible(advanced.is_enabled());
+        }
+
+        advanced.register_visibility_hook(Rc::new(move |visible| {
+            for group in &advanced_groups {
+                group.set_visible(visible);
+            }
+        }));
 
         page
     }
@@ -653,14 +1022,26 @@ impl UniNoteSettingsWindow {
     fn build_tools_page(
         settings: &Rc<RefCell<FullAppSettingsModel>>,
         on_changed: &SettingsChangedCallback,
+        advanced: &AdvancedState,
     ) -> PreferencesPage {
         let page = PreferencesPage::builder()
             .title("Strumenti")
             .icon_name("draw-polygon-symbolic")
             .build();
 
+        let grp_switch = PreferencesGroup::builder()
+            .title("Configurazione Rapida")
+            .description(
+                "Attiva 'Opzioni Avanzate' per mostrare le tolleranze geometriche di calibrazione.",
+            )
+            .build();
+
+        let row_advanced = build_advanced_switch(settings, on_changed, advanced);
+        grp_switch.add(&row_advanced);
+        page.add(&grp_switch);
+
         let grp_shapes = PreferencesGroup::builder()
-            .title("Riconoscimento Geometrico Forme")
+            .title("Tolleranze Geometriche Poligoni (RDP &amp; Snap)")
             .description(
                 "Tolleranze per la sintesi vettoriale di linee rette, rettangoli e poligoni.",
             )
@@ -773,6 +1154,13 @@ impl UniNoteSettingsWindow {
         row_reset_colors.add_suffix(&btn_reset_colors);
         grp_dock.add(&row_reset_colors);
         page.add(&grp_dock);
+
+        // Il gruppo delle tolleranze geometriche è visibile solo in modalità avanzata
+        grp_shapes.set_visible(advanced.is_enabled());
+        let shapes_group = grp_shapes.clone();
+        advanced.register_visibility_hook(Rc::new(move |visible| {
+            shapes_group.set_visible(visible);
+        }));
 
         page
     }
@@ -927,6 +1315,170 @@ impl UniNoteSettingsWindow {
         grp_keys.add(&row_reset_all);
 
         page.add(&grp_keys);
+        page
+    }
+
+    // =========================================================================
+    // SCHEDA 5: GITHUB, LICENZA E AGGIORNAMENTI
+    // =========================================================================
+    fn build_github_page() -> PreferencesPage {
+        let page = PreferencesPage::builder()
+            .title("GitHub")
+            .icon_name("applications-internet-symbolic")
+            .build();
+
+        // ---------------------------------------------------------------------
+        // GRUPPO 1: BADGE PROGETTO
+        // ---------------------------------------------------------------------
+        let grp_project = PreferencesGroup::builder()
+            .title("UniNote")
+            .description(
+                "Suite accademica Linux nativa per appunti a mano libera con stilo (MPP/ELAN).",
+            )
+            .build();
+
+        let row_badge = ActionRow::builder()
+            .title("UniNote")
+            .subtitle(format!("Versione {}", APP_VERSION_LABEL))
+            .build();
+
+        let app_logo = create_icon(IconKind::AppLogo, 40, None);
+        row_badge.add_prefix(&app_logo);
+
+        let ver_label = Label::builder()
+            .label(APP_VERSION_LABEL)
+            .valign(Align::Center)
+            .css_classes(["dms-thick-chip"])
+            .build();
+        row_badge.add_suffix(&ver_label);
+        grp_project.add(&row_badge);
+
+        let row_license = link_row(
+            "Licenza Open Source",
+            "GNU General Public License v3.0 (GPL-3.0)",
+            GPL_3_0_LICENSE_URL,
+            "Apri",
+        );
+        grp_project.add(&row_license);
+        page.add(&grp_project);
+
+        // ---------------------------------------------------------------------
+        // GRUPPO 2: COLLEGAMENTI UFFICIALI
+        // ---------------------------------------------------------------------
+        let grp_links = PreferencesGroup::builder()
+            .title("Collegamenti Ufficiali")
+            .description(
+                "Risorse del progetto su GitHub: sorgenti, segnalazioni e note di rilascio.",
+            )
+            .build();
+
+        let row_repo = link_row(
+            "Repository Ufficiale",
+            GITHUB_REPO_URL,
+            GITHUB_REPO_URL,
+            "Apri",
+        );
+        grp_links.add(&row_repo);
+
+        let row_issue = link_row(
+            "Segnala un Bug o Feedback",
+            GITHUB_NEW_ISSUE_URL,
+            GITHUB_NEW_ISSUE_URL,
+            "Segnala",
+        );
+        grp_links.add(&row_issue);
+
+        let row_releases = link_row(
+            "Note di Rilascio / Changelog",
+            GITHUB_RELEASES_URL,
+            GITHUB_RELEASES_URL,
+            "Apri",
+        );
+        grp_links.add(&row_releases);
+        page.add(&grp_links);
+
+        // ---------------------------------------------------------------------
+        // GRUPPO 3: VERIFICA AGGIORNAMENTI
+        // ---------------------------------------------------------------------
+        let grp_updates = PreferencesGroup::builder()
+            .title("Aggiornamenti")
+            .description("Verifica in modo sicuro l'ultima release pubblicata su GitHub.")
+            .build();
+
+        let row_check = ActionRow::builder()
+            .title("Verifica Aggiornamenti")
+            .subtitle(format!(
+                "Interroga l'API pubblica di GitHub e confronta il risultato con la versione installata ({}).",
+                APP_VERSION_LABEL
+            ))
+            .build();
+
+        let btn_check = Button::builder()
+            .label("Verifica Aggiornamenti")
+            .valign(Align::Center)
+            .css_classes(["dms-action-btn"])
+            .build();
+
+        row_check.add_suffix(&btn_check);
+        grp_updates.add(&row_check);
+
+        let row_status = ActionRow::builder()
+            .title("Stato della Verifica")
+            .subtitle("Nessuna verifica eseguita.")
+            .build();
+        grp_updates.add(&row_status);
+
+        let status_row = row_status.clone();
+        btn_check.connect_clicked(move |_| {
+            status_row.set_subtitle("Verifica in corso…");
+
+            let file = gio::File::for_uri(GITHUB_LATEST_RELEASE_API);
+            let status_row = status_row.clone();
+            file.load_contents_async(None::<&gio::Cancellable>, move |result| {
+                let message = match result {
+                    Ok((contents, _etag)) => {
+                        let body = String::from_utf8_lossy(&contents).to_string();
+                        match serde_json::from_str::<serde_json::Value>(&body) {
+                            Ok(json) => {
+                                let tag = json
+                                    .get("tag_name")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or_default()
+                                    .trim_start_matches('v')
+                                    .to_string();
+
+                                if tag.is_empty() {
+                                    "Risposta inattesa dal server GitHub: apri le Note di Rilascio per la verifica manuale.".to_string()
+                                } else if tag == APP_VERSION {
+                                    format!(
+                                        "Sei aggiornato: l'ultima release pubblicata è v{}.",
+                                        tag
+                                    )
+                                } else {
+                                    format!(
+                                        "Nuova release disponibile: v{} (versione installata: v{}).",
+                                        tag, APP_VERSION
+                                    )
+                                }
+                            }
+                            Err(err) => format!(
+                                "Risposta di GitHub non interpretabile ({}). Apri le Note di Rilascio.",
+                                err
+                            ),
+                        }
+                    }
+                    Err(err) => format!(
+                        "Impossibile contattare GitHub ({}). Apri le Note di Rilascio per la verifica manuale.",
+                        err
+                    ),
+                };
+
+                status_row.set_subtitle(&message);
+            });
+        });
+
+        page.add(&grp_updates);
+
         page
     }
 

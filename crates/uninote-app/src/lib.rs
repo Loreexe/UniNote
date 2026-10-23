@@ -26,10 +26,13 @@ pub use pdf_cache::{PdfCacheConfig, PdfCacheError, PdfCacheManager, PdfPageKey};
 pub use pdf_export::{append_pdf_pages, export_to_pdf, import_from_pdf};
 pub use preferences::{
     AppPreferences, BarrelButtonAction, DashboardRecentStore, FullAppSettingsModel, PenSlotConfig,
-    PressureCurve, RecentDocumentMeta, ThemeMode,
+    PressureCurve, RecentDocumentMeta, StylusSensitivity, ThemeMode,
 };
 pub use selection::AppSelectionEngine;
-pub use settings::UniNoteSettingsWindow;
+pub use settings::{
+    UniNoteSettingsWindow, APP_VERSION, APP_VERSION_LABEL, GITHUB_NEW_ISSUE_URL,
+    GITHUB_RELEASES_URL, GITHUB_REPO_URL, GPL_3_0_LICENSE_URL,
+};
 pub use window::UniNoteWindow;
 
 /// Inizializza il provider CSS globale per tutte le finestre dell'applicazione.
