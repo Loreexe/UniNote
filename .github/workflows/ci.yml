@@ -55,7 +55,9 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run test suite with virtual display (cargo test)
-        run: xvfb-run --auto-servernum cargo test --workspace
+        # I test di performance misurano latenze reali: l'esecuzione parallela dei
+        # test sullo stesso runner (2 vCPU) falsa i budget, quindi si serializza.
+        run: xvfb-run --auto-servernum cargo test --workspace -- --test-threads=1
 
       - name: Validate Wiki freshness (check_freshness.py)
         run: |

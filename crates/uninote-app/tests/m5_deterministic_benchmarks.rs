@@ -606,13 +606,15 @@ fn bench_06_sqlite_wal_persistence_save_load_10k_strokes() {
         save_ms, load_ms
     );
 
+    // Budget debug ampi: su runner CI condivisi (2 vCPU) una singola operazione
+    // SQLite da 10.000 tratti può richiedere oltre un secondo in modalità non ottimizzata.
     let max_save_ms = if cfg!(debug_assertions) {
-        1500.0
+        2500.0
     } else {
         150.0
     };
     let max_load_ms = if cfg!(debug_assertions) {
-        1000.0
+        2000.0
     } else {
         150.0
     };
