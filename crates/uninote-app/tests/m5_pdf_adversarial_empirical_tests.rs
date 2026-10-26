@@ -828,10 +828,10 @@ fn test_m5_pdf_cache_sharpness_at_rest_and_scale_clamping() {
     assert_eq!(s_low.width(), 500); // 500 * 1.0
     assert_eq!(s_low.height(), 700); // 700 * 1.0
 
-    // 4. Upper bound clamp (10.0x clamped to 5.0x)
-    let s_high = cache.update_raster_scale(&temp_pdf, 0, 10.0).unwrap();
-    assert_eq!(s_high.width(), 2500); // 500 * 5.0
-    assert_eq!(s_high.height(), 3500); // 700 * 5.0
+    // 4. Upper bound clamp (15.0x clamped to 10.0x)
+    let s_high = cache.update_raster_scale(&temp_pdf, 0, 15.0).unwrap();
+    assert_eq!(s_high.width(), 5000); // 500 * 10.0
+    assert_eq!(s_high.height(), 7000); // 700 * 10.0
 
     let _ = fs::remove_file(temp_pdf);
 }

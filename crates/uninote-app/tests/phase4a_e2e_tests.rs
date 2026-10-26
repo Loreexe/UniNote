@@ -1593,8 +1593,8 @@ fn test_t1_f12_01_github_tab_presence_and_order() {
 fn test_t1_f12_02_github_tab_version_matches_manifest() {
     let pkg_ver = env!("CARGO_PKG_VERSION");
     assert_eq!(
-        pkg_ver, "0.4.7",
-        "Cargo package version must match target 0.4.7"
+        pkg_ver, "0.4.8",
+        "Cargo package version must match target 0.4.8"
     );
 }
 
@@ -1627,10 +1627,10 @@ fn test_t1_f12_05_github_tab_license_display_gpl3() {
     );
 }
 
-// --- F13: SemVer 0.4.7 & Quality Gate ---
+// --- F13: SemVer 0.4.8 & Quality Gate ---
 
 #[test]
-fn test_t1_f13_01_semver_workspace_version_is_0_4_7() {
+fn test_t1_f13_01_semver_workspace_version_is_0_4_8() {
     let cargo_toml = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -1640,15 +1640,15 @@ fn test_t1_f13_01_semver_workspace_version_is_0_4_7() {
     )
     .expect("Failed to read workspace Cargo.toml");
     assert!(
-        cargo_toml.contains("version = \"0.4.7\""),
-        "Workspace Cargo.toml must declare version = \"0.4.7\""
+        cargo_toml.contains("version = \"0.4.8\""),
+        "Workspace Cargo.toml must declare version = \"0.4.8\""
     );
 }
 
 #[test]
-fn test_t1_f13_02_window_version_badge_displays_v0_4_7() {
+fn test_t1_f13_02_window_version_badge_displays_v0_4_8() {
     let badge_text = concat!("v", env!("CARGO_PKG_VERSION"));
-    assert_eq!(badge_text, "v0.4.7", "UI badge must display v0.4.7");
+    assert_eq!(badge_text, "v0.4.8", "UI badge must display v0.4.8");
 }
 
 #[test]
@@ -2957,8 +2957,8 @@ fn test_t3_13_github_tab_inspect_version_matches_note_metadata_and_badge() {
     // F12 + F13
     let manifest_ver = env!("CARGO_PKG_VERSION");
     let badge_ver = concat!("v", env!("CARGO_PKG_VERSION"));
-    assert_eq!(manifest_ver, "0.4.7");
-    assert_eq!(badge_ver, "v0.4.7");
+    assert_eq!(manifest_ver, "0.4.8");
+    assert_eq!(badge_ver, "v0.4.8");
 }
 
 // ============================================================================
@@ -3126,7 +3126,7 @@ fn test_t4_scenario_4_settings_customization_and_github_discovery() {
         GITHUB_ISSUES_URL,
         "https://github.com/Loreexe/UniNote/issues"
     );
-    assert_eq!(env!("CARGO_PKG_VERSION"), "0.4.7");
+    assert_eq!(env!("CARGO_PKG_VERSION"), "0.4.8");
 }
 
 /// Scenario 5: Heavy stress clipboard lifecycle

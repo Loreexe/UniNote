@@ -3,6 +3,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uninote_core::model::DocumentFormat;
 
+/// Modalità operativa dello strumento gomma (Tratto Intero o Per Segmento analitico).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum EraserMode {
+    #[default]
+    WholeStroke,
+    Segment,
+}
+
 // ============================================================================
 // 1. PEN DOCK PREFERENCES (AppPreferences)
 // ============================================================================
@@ -36,6 +44,18 @@ pub struct AppPreferences {
     pub stroke_width: f64,
     pub slots: Vec<PenSlotConfig>,
     pub active_slot_index: usize,
+    #[serde(default = "default_eraser_mode")]
+    pub eraser_mode: EraserMode,
+    #[serde(default = "default_eraser_radius")]
+    pub eraser_radius: f64,
+}
+
+fn default_eraser_mode() -> EraserMode {
+    EraserMode::WholeStroke
+}
+
+fn default_eraser_radius() -> f64 {
+    16.0
 }
 
 impl Default for AppPreferences {
@@ -51,6 +71,8 @@ impl Default for AppPreferences {
                 PenSlotConfig::new("#79D9A5", (0.475, 0.851, 0.647, 1.0), "Menta"),
                 PenSlotConfig::new("#FFD875", (1.0, 0.847, 0.459, 1.0), "Oro Brillante"),
             ],
+            eraser_mode: EraserMode::WholeStroke,
+            eraser_radius: 16.0,
         }
     }
 }
@@ -80,7 +102,27 @@ impl AppPreferences {
         if prefs.active_slot_index >= prefs.slots.len() {
             prefs.active_slot_index = 0;
         }
+        if !prefs.eraser_radius.is_finite() {
+            prefs.eraser_radius = 16.0;
+        } else {
+            prefs.eraser_radius = prefs.eraser_radius.clamp(4.0, 64.0);
+        }
         Ok(prefs)
+    }
+
+    /// Rimuove uno slot penna all'indice specificato se sono presenti almeno 2 slot.
+    /// Restituisce `true` se lo slot è stato rimosso, `false` se l'operazione non è consentita (es. solo 1 slot rimasto).
+    pub fn remove_slot(&mut self, index: usize) -> bool {
+        if self.slots.len() <= 1 || index >= self.slots.len() {
+            return false;
+        }
+        self.slots.remove(index);
+        if self.active_slot_index >= self.slots.len() {
+            self.active_slot_index = self.slots.len() - 1;
+        } else if self.active_slot_index > index {
+            self.active_slot_index -= 1;
+        }
+        true
     }
 
     /// Salva le preferenze nel file standard `$XDG_CONFIG_HOME/uninote/preferences.json`.

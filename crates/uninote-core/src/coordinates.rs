@@ -84,12 +84,15 @@ impl Default for Viewport {
     }
 }
 
+pub const MIN_ZOOM: f64 = 0.25;
+pub const MAX_ZOOM: f64 = 10.0;
+
 impl Viewport {
     pub fn new(offset_x: f64, offset_y: f64, zoom: f64) -> Self {
         Self {
             offset_x,
             offset_y,
-            zoom: zoom.clamp(0.25, 5.0),
+            zoom: zoom.clamp(MIN_ZOOM, MAX_ZOOM),
         }
     }
 
@@ -117,7 +120,7 @@ impl Viewport {
     /// Mantiene invariate le coordinate documento presenti sotto (pivot_sx, pivot_sy).
     pub fn zoom_at(&mut self, pivot_screen: (f64, f64), zoom_multiplier: f64) {
         let (doc_x, doc_y) = self.screen_to_document(pivot_screen);
-        let new_zoom = (self.zoom * zoom_multiplier).clamp(0.25, 5.0);
+        let new_zoom = (self.zoom * zoom_multiplier).clamp(MIN_ZOOM, MAX_ZOOM);
 
         self.offset_x = pivot_screen.0 - doc_x * new_zoom;
         self.offset_y = pivot_screen.1 - doc_y * new_zoom;

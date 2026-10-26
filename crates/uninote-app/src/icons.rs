@@ -33,6 +33,7 @@ pub enum IconKind {
     Folder,
     FolderPlus,
     FolderOpen,
+    Cloud,
 }
 
 /// Crea una `DrawingArea` GTK4 che disegna l'icona vettoriale indicata con Cairo.
@@ -101,6 +102,7 @@ pub fn create_icon(kind: IconKind, size: i32, custom_color: Option<gdk::RGBA>) -
             IconKind::Folder => draw_folder(cr),
             IconKind::FolderPlus => draw_folder_plus(cr),
             IconKind::FolderOpen => draw_folder_open(cr),
+            IconKind::Cloud => draw_cloud(cr),
         }
 
         cr.restore().expect("cairo restore");
@@ -532,6 +534,18 @@ fn draw_folder_open(cr: &cairo::Context) {
     let _ = cr.stroke();
 }
 
+fn draw_cloud(cr: &cairo::Context) {
+    // Lucide Cloud vettoriale nitido (24x24)
+    cr.move_to(17.5, 19.0);
+    cr.line_to(8.5, 19.0);
+    cr.arc(8.5, 15.5, 3.5, PI / 2.0, PI);
+    cr.arc(8.5, 12.0, 3.5, PI, 1.4 * PI);
+    cr.arc(13.5, 9.5, 4.5, PI, 0.0);
+    cr.arc(17.5, 14.5, 4.5, 1.6 * PI, PI / 2.0);
+    cr.close_path();
+    let _ = cr.stroke();
+}
+
 /// Disegna il logo ufficiale UniNote: Monogramma 'U' accademico fuso con un pennino stilografico di precisione.
 fn draw_app_logo(cr: &cairo::Context, w: f64, h: f64) {
     if w <= 0.0 || h <= 0.0 {
@@ -756,6 +770,7 @@ mod tests {
             ("folder", draw_folder as fn(&cairo::Context)),
             ("folder_plus", draw_folder_plus),
             ("folder_open", draw_folder_open),
+            ("cloud", draw_cloud),
         ] {
             let surface = ImageSurface::create(Format::ARgb32, 24, 24).expect("surface create");
             let cr = cairo::Context::new(&surface).expect("cairo context");

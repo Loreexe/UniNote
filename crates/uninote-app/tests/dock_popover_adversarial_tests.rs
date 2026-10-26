@@ -169,6 +169,7 @@ fn test_in_memory_nan_or_inf_save_never_panics() {
         stroke_width: f64::INFINITY,
         slots: vec![],
         active_slot_index: 0,
+        ..Default::default()
     };
 
     let save_res = nan_prefs.save_to_path(&file_path);
@@ -289,6 +290,7 @@ fn test_massive_slots_vector_150_slots_roundtrip() {
         stroke_width: 3.5,
         slots: Vec::with_capacity(150),
         active_slot_index: 149,
+        ..Default::default()
     };
 
     for i in 0..150 {

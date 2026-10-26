@@ -225,7 +225,7 @@ impl PdfCacheManager {
         page_index: usize,
         target_scale: f64,
     ) -> Result<ImageSurface, PdfCacheError> {
-        let clamped_scale = target_scale.clamp(1.0, 5.0);
+        let clamped_scale = target_scale.clamp(1.0, 10.0);
         self.render_page_raster(source_path, page_index, clamped_scale)
     }
 

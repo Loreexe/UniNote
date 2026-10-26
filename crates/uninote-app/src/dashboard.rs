@@ -843,6 +843,14 @@ impl UniNoteDashboard {
             .build();
         sidebar_box.append(&folder_scroll);
 
+        let btn_connect_cloud = Button::builder()
+            .label("☁️ Gestisci Cloud...")
+            .css_classes(["flat", "dms-btn-connect-cloud"])
+            .margin_top(8)
+            .margin_bottom(4)
+            .build();
+        sidebar_box.append(&btn_connect_cloud);
+
         main_box.append(&sidebar_box);
 
         // Separatore verticale DMS
@@ -1049,6 +1057,7 @@ impl UniNoteDashboard {
             btn_import_pdf,
             btn_open_file,
             btn_settings,
+            btn_connect_cloud,
         );
         dashboard.refresh();
 
@@ -1056,6 +1065,7 @@ impl UniNoteDashboard {
     }
 
     /// Collega i segnali di ricerca, apertura file, importazione PDF, cartelle e creazione documento.
+    #[allow(clippy::too_many_arguments)]
     fn wire_signals(
         &self,
         btn_new_doc: Button,
@@ -1064,6 +1074,7 @@ impl UniNoteDashboard {
         btn_import: Button,
         btn_open: Button,
         btn_settings: Button,
+        btn_connect_cloud: Button,
     ) {
         let store_ref = self.store.clone();
         let flow_ref = self.flow_box.clone();
@@ -1088,7 +1099,15 @@ impl UniNoteDashboard {
             let root_f = root_folder.clone();
             let od = open_cb.clone();
             Rc::new(move |target: PathBuf| {
-                if is_safe_subpath(&root_f, &target) || target == root_f {
+                let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
+                let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
+                let is_valid = is_safe_subpath(&root_f, &target)
+                    || target == root_f
+                    || is_safe_subpath(&nc_dir, &target)
+                    || target == nc_dir
+                    || is_safe_subpath(&gd_dir, &target)
+                    || target == gd_dir;
+                if is_valid {
                     *cur_f.borrow_mut() = target;
                 } else {
                     *cur_f.borrow_mut() = root_f.clone();
@@ -1147,15 +1166,37 @@ impl UniNoteDashboard {
         let nav_cb_up = nav_cb.clone();
         btn_up.connect_clicked(move |_| {
             let cur = cur_f_up.borrow().clone();
-            if cur != root_f_up {
+            let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
+            let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
+            if cur == nc_dir || cur == gd_dir {
+                nav_cb_up(root_f_up.clone());
+            } else if cur != root_f_up {
                 if let Some(parent) = cur.parent() {
-                    if parent.starts_with(&root_f_up) {
+                    if parent.starts_with(&root_f_up)
+                        || parent == nc_dir
+                        || is_safe_subpath(&nc_dir, parent)
+                        || parent == gd_dir
+                        || is_safe_subpath(&gd_dir, parent)
+                    {
                         nav_cb_up(parent.to_path_buf());
                         return;
                     }
                 }
                 nav_cb_up(root_f_up.clone());
             }
+        });
+
+        // Pulsante Gestisci Cloud
+        let btn_cloud_clone = btn_connect_cloud.clone();
+        let ref_cb_cloud = refresh_cb.clone();
+        btn_connect_cloud.connect_clicked(move |_| {
+            let parent_win = btn_cloud_clone
+                .root()
+                .and_then(|r| r.downcast::<Window>().ok());
+            let r_cb = ref_cb_cloud.clone();
+            crate::cloud::ConnectCloudDialog::new(parent_win.as_ref(), move || {
+                r_cb();
+            });
         });
 
         // Pulsante + Nuova Cartella
@@ -1350,7 +1391,15 @@ impl UniNoteDashboard {
             let od = od_rc.clone();
             let q = q_string.clone();
             Rc::new(move |target: PathBuf| {
-                if is_safe_subpath(&root_f, &target) || target == root_f {
+                let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
+                let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
+                let is_valid = is_safe_subpath(&root_f, &target)
+                    || target == root_f
+                    || is_safe_subpath(&nc_dir, &target)
+                    || target == nc_dir
+                    || is_safe_subpath(&gd_dir, &target)
+                    || target == gd_dir;
+                if is_valid {
                     *cur_f.borrow_mut() = target;
                 } else {
                     *cur_f.borrow_mut() = root_f.clone();
@@ -1524,6 +1573,228 @@ impl UniNoteDashboard {
             item_box.add_controller(gesture);
             folder_list_box.append(&item_box);
         }
+
+        // 3. Sezione Cloud
+        let cloud_settings = crate::cloud::CloudSyncSettings::load();
+        let has_cloud = cloud_settings.nextcloud.is_some() || cloud_settings.google_drive.is_some();
+
+        if has_cloud {
+            let cloud_hdr = Label::builder()
+                .label("Servizi Cloud")
+                .xalign(0.0)
+                .margin_start(12)
+                .margin_top(14)
+                .margin_bottom(4)
+                .css_classes(["dim-label", "caption", "dms-sidebar-section-header"])
+                .build();
+            folder_list_box.append(&cloud_hdr);
+
+            if let Some(ref nc) = cloud_settings.nextcloud {
+                let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
+                let is_active = current_folder == nc_dir;
+                let item_box = GtkBox::builder()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(8)
+                    .margin_start(8)
+                    .margin_end(8)
+                    .margin_top(2)
+                    .margin_bottom(2)
+                    .css_classes(if is_active {
+                        vec!["dms-sidebar-item", "active"]
+                    } else {
+                        vec!["dms-sidebar-item"]
+                    })
+                    .build();
+
+                let icon = create_icon(IconKind::Cloud, 16, None);
+                item_box.append(&icon);
+
+                let lbl = Label::builder()
+                    .label(format!("Nextcloud ({})", nc.username))
+                    .xalign(0.0)
+                    .hexpand(true)
+                    .ellipsize(gtk4::pango::EllipsizeMode::End)
+                    .css_classes(["dms-sidebar-item-label"])
+                    .build();
+                item_box.append(&lbl);
+
+                let count = if let Ok((_, docs)) = scan_directory(&nc_dir) {
+                    docs.len()
+                } else {
+                    0
+                };
+                let badge = Label::builder()
+                    .label(format!("{}", count))
+                    .css_classes(["dms-sidebar-item-badge"])
+                    .build();
+                item_box.append(&badge);
+
+                let gesture = GestureClick::new();
+                let nav = nav_cb.clone();
+                let target_p = nc_dir.clone();
+                gesture.connect_pressed(move |_, _, _, _| {
+                    nav(target_p.clone());
+                });
+                item_box.add_controller(gesture);
+                folder_list_box.append(&item_box);
+
+                let mut nc_subfolders = Vec::new();
+                Self::collect_subfolders_recursive(&nc_dir, 2, &mut nc_subfolders);
+                for (path, name, count, depth) in nc_subfolders {
+                    let is_sub_active = current_folder == path;
+                    let sub_box = GtkBox::builder()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(8)
+                        .margin_start(8 + (depth - 1) as i32 * 14)
+                        .margin_end(8)
+                        .margin_top(2)
+                        .margin_bottom(2)
+                        .css_classes(if is_sub_active {
+                            vec!["dms-sidebar-item", "active"]
+                        } else {
+                            vec!["dms-sidebar-item"]
+                        })
+                        .build();
+
+                    sub_box.append(&create_icon(
+                        if is_sub_active {
+                            IconKind::FolderOpen
+                        } else {
+                            IconKind::Folder
+                        },
+                        16,
+                        None,
+                    ));
+
+                    let sub_lbl = Label::builder()
+                        .label(&name)
+                        .xalign(0.0)
+                        .hexpand(true)
+                        .ellipsize(gtk4::pango::EllipsizeMode::End)
+                        .css_classes(["dms-sidebar-item-label"])
+                        .build();
+                    sub_box.append(&sub_lbl);
+
+                    let sub_badge = Label::builder()
+                        .label(format!("{}", count))
+                        .css_classes(["dms-sidebar-item-badge"])
+                        .build();
+                    sub_box.append(&sub_badge);
+
+                    let g = GestureClick::new();
+                    let n = nav_cb.clone();
+                    let tp = path.clone();
+                    g.connect_pressed(move |_, _, _, _| {
+                        n(tp.clone());
+                    });
+                    sub_box.add_controller(g);
+                    folder_list_box.append(&sub_box);
+                }
+            }
+
+            if let Some(ref gd) = cloud_settings.google_drive {
+                let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
+                let is_active = current_folder == gd_dir;
+                let item_box = GtkBox::builder()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(8)
+                    .margin_start(8)
+                    .margin_end(8)
+                    .margin_top(2)
+                    .margin_bottom(2)
+                    .css_classes(if is_active {
+                        vec!["dms-sidebar-item", "active"]
+                    } else {
+                        vec!["dms-sidebar-item"]
+                    })
+                    .build();
+
+                let icon = create_icon(IconKind::Cloud, 16, None);
+                item_box.append(&icon);
+
+                let lbl = Label::builder()
+                    .label(format!("Google Drive ({})", gd.account_email))
+                    .xalign(0.0)
+                    .hexpand(true)
+                    .ellipsize(gtk4::pango::EllipsizeMode::End)
+                    .css_classes(["dms-sidebar-item-label"])
+                    .build();
+                item_box.append(&lbl);
+
+                let count = if let Ok((_, docs)) = scan_directory(&gd_dir) {
+                    docs.len()
+                } else {
+                    0
+                };
+                let badge = Label::builder()
+                    .label(format!("{}", count))
+                    .css_classes(["dms-sidebar-item-badge"])
+                    .build();
+                item_box.append(&badge);
+
+                let gesture = GestureClick::new();
+                let nav = nav_cb.clone();
+                let target_p = gd_dir.clone();
+                gesture.connect_pressed(move |_, _, _, _| {
+                    nav(target_p.clone());
+                });
+                item_box.add_controller(gesture);
+                folder_list_box.append(&item_box);
+
+                let mut gd_subfolders = Vec::new();
+                Self::collect_subfolders_recursive(&gd_dir, 2, &mut gd_subfolders);
+                for (path, name, count, depth) in gd_subfolders {
+                    let is_sub_active = current_folder == path;
+                    let sub_box = GtkBox::builder()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(8)
+                        .margin_start(8 + (depth - 1) as i32 * 14)
+                        .margin_end(8)
+                        .margin_top(2)
+                        .margin_bottom(2)
+                        .css_classes(if is_sub_active {
+                            vec!["dms-sidebar-item", "active"]
+                        } else {
+                            vec!["dms-sidebar-item"]
+                        })
+                        .build();
+
+                    sub_box.append(&create_icon(
+                        if is_sub_active {
+                            IconKind::FolderOpen
+                        } else {
+                            IconKind::Folder
+                        },
+                        16,
+                        None,
+                    ));
+
+                    let sub_lbl = Label::builder()
+                        .label(&name)
+                        .xalign(0.0)
+                        .hexpand(true)
+                        .ellipsize(gtk4::pango::EllipsizeMode::End)
+                        .css_classes(["dms-sidebar-item-label"])
+                        .build();
+                    sub_box.append(&sub_lbl);
+
+                    let sub_badge = Label::builder()
+                        .label(format!("{}", count))
+                        .css_classes(["dms-sidebar-item-badge"])
+                        .build();
+                    sub_box.append(&sub_badge);
+
+                    let g = GestureClick::new();
+                    let n = nav_cb.clone();
+                    let tp = path.clone();
+                    g.connect_pressed(move |_, _, _, _| {
+                        n(tp.clone());
+                    });
+                    sub_box.add_controller(g);
+                    folder_list_box.append(&sub_box);
+                }
+            }
+        }
     }
 
     fn collect_subfolders_recursive(
@@ -1551,9 +1822,19 @@ impl UniNoteDashboard {
             breadcrumbs_bar.remove(&child);
         }
 
-        let is_at_root = current_folder == root_folder;
+        let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
+        let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
 
-        if !is_at_root {
+        let is_at_root = current_folder == root_folder;
+        let is_at_nc_root = current_folder == nc_dir;
+        let is_at_gd_root = current_folder == gd_dir;
+
+        let in_nc = current_folder == nc_dir || is_safe_subpath(&nc_dir, current_folder);
+        let in_gd = current_folder == gd_dir || is_safe_subpath(&gd_dir, current_folder);
+
+        let is_at_any_root = is_at_root || is_at_nc_root || is_at_gd_root;
+
+        if !is_at_any_root {
             btn_up.set_visible(true);
             btn_up.set_sensitive(true);
             breadcrumbs_bar.append(btn_up);
@@ -1562,53 +1843,157 @@ impl UniNoteDashboard {
             btn_up.set_sensitive(false);
         }
 
-        let btn_root = Button::builder()
-            .label("UniNote")
-            .css_classes(if is_at_root {
-                vec!["dms-breadcrumb-btn", "active"]
-            } else {
-                vec!["dms-breadcrumb-btn"]
-            })
-            .build();
-        let nav_r = nav_cb.clone();
-        let rf = root_folder.to_path_buf();
-        btn_root.connect_clicked(move |_| {
-            nav_r(rf.clone());
-        });
-        breadcrumbs_bar.append(&btn_root);
+        if in_nc {
+            let btn_root = Button::builder()
+                .label("☁️ Nextcloud")
+                .css_classes(if is_at_nc_root {
+                    vec!["dms-breadcrumb-btn", "active"]
+                } else {
+                    vec!["dms-breadcrumb-btn"]
+                })
+                .build();
+            let nav_r = nav_cb.clone();
+            let ncf = nc_dir.clone();
+            btn_root.connect_clicked(move |_| {
+                nav_r(ncf.clone());
+            });
+            breadcrumbs_bar.append(&btn_root);
 
-        if !is_at_root {
-            if let Ok(rel) = current_folder.strip_prefix(root_folder) {
-                let mut accumulated = root_folder.to_path_buf();
-                let components: Vec<_> = rel.components().collect();
-                let num_components = components.len();
+            if !is_at_nc_root {
+                if let Ok(rel) = current_folder.strip_prefix(&nc_dir) {
+                    let mut accumulated = nc_dir;
+                    let components: Vec<_> = rel.components().collect();
+                    let num_components = components.len();
 
-                for (idx, comp) in components.iter().enumerate() {
-                    let sep = Label::builder()
-                        .label("/")
-                        .css_classes(["dms-breadcrumb-sep"])
-                        .build();
-                    breadcrumbs_bar.append(&sep);
+                    for (idx, comp) in components.iter().enumerate() {
+                        let sep = Label::builder()
+                            .label("/")
+                            .css_classes(["dms-breadcrumb-sep"])
+                            .build();
+                        breadcrumbs_bar.append(&sep);
 
-                    accumulated = accumulated.join(comp);
-                    let is_last = idx == num_components - 1;
-                    let comp_name = comp.as_os_str().to_string_lossy().to_string();
+                        accumulated = accumulated.join(comp);
+                        let is_last = idx == num_components - 1;
+                        let comp_name = comp.as_os_str().to_string_lossy().to_string();
 
-                    let btn_comp = Button::builder()
-                        .label(&comp_name)
-                        .css_classes(if is_last {
-                            vec!["dms-breadcrumb-btn", "active"]
-                        } else {
-                            vec!["dms-breadcrumb-btn"]
-                        })
-                        .build();
+                        let btn_comp = Button::builder()
+                            .label(&comp_name)
+                            .css_classes(if is_last {
+                                vec!["dms-breadcrumb-btn", "active"]
+                            } else {
+                                vec!["dms-breadcrumb-btn"]
+                            })
+                            .build();
 
-                    let nav_c = nav_cb.clone();
-                    let target_p = accumulated.clone();
-                    btn_comp.connect_clicked(move |_| {
-                        nav_c(target_p.clone());
-                    });
-                    breadcrumbs_bar.append(&btn_comp);
+                        let nav_c = nav_cb.clone();
+                        let target_p = accumulated.clone();
+                        btn_comp.connect_clicked(move |_| {
+                            nav_c(target_p.clone());
+                        });
+                        breadcrumbs_bar.append(&btn_comp);
+                    }
+                }
+            }
+        } else if in_gd {
+            let btn_root = Button::builder()
+                .label("☁️ Google Drive")
+                .css_classes(if is_at_gd_root {
+                    vec!["dms-breadcrumb-btn", "active"]
+                } else {
+                    vec!["dms-breadcrumb-btn"]
+                })
+                .build();
+            let nav_r = nav_cb.clone();
+            let gdf = gd_dir.clone();
+            btn_root.connect_clicked(move |_| {
+                nav_r(gdf.clone());
+            });
+            breadcrumbs_bar.append(&btn_root);
+
+            if !is_at_gd_root {
+                if let Ok(rel) = current_folder.strip_prefix(&gd_dir) {
+                    let mut accumulated = gd_dir;
+                    let components: Vec<_> = rel.components().collect();
+                    let num_components = components.len();
+
+                    for (idx, comp) in components.iter().enumerate() {
+                        let sep = Label::builder()
+                            .label("/")
+                            .css_classes(["dms-breadcrumb-sep"])
+                            .build();
+                        breadcrumbs_bar.append(&sep);
+
+                        accumulated = accumulated.join(comp);
+                        let is_last = idx == num_components - 1;
+                        let comp_name = comp.as_os_str().to_string_lossy().to_string();
+
+                        let btn_comp = Button::builder()
+                            .label(&comp_name)
+                            .css_classes(if is_last {
+                                vec!["dms-breadcrumb-btn", "active"]
+                            } else {
+                                vec!["dms-breadcrumb-btn"]
+                            })
+                            .build();
+
+                        let nav_c = nav_cb.clone();
+                        let target_p = accumulated.clone();
+                        btn_comp.connect_clicked(move |_| {
+                            nav_c(target_p.clone());
+                        });
+                        breadcrumbs_bar.append(&btn_comp);
+                    }
+                }
+            }
+        } else {
+            let btn_root = Button::builder()
+                .label("UniNote")
+                .css_classes(if is_at_root {
+                    vec!["dms-breadcrumb-btn", "active"]
+                } else {
+                    vec!["dms-breadcrumb-btn"]
+                })
+                .build();
+            let nav_r = nav_cb.clone();
+            let rf = root_folder.to_path_buf();
+            btn_root.connect_clicked(move |_| {
+                nav_r(rf.clone());
+            });
+            breadcrumbs_bar.append(&btn_root);
+
+            if !is_at_root {
+                if let Ok(rel) = current_folder.strip_prefix(root_folder) {
+                    let mut accumulated = root_folder.to_path_buf();
+                    let components: Vec<_> = rel.components().collect();
+                    let num_components = components.len();
+
+                    for (idx, comp) in components.iter().enumerate() {
+                        let sep = Label::builder()
+                            .label("/")
+                            .css_classes(["dms-breadcrumb-sep"])
+                            .build();
+                        breadcrumbs_bar.append(&sep);
+
+                        accumulated = accumulated.join(comp);
+                        let is_last = idx == num_components - 1;
+                        let comp_name = comp.as_os_str().to_string_lossy().to_string();
+
+                        let btn_comp = Button::builder()
+                            .label(&comp_name)
+                            .css_classes(if is_last {
+                                vec!["dms-breadcrumb-btn", "active"]
+                            } else {
+                                vec!["dms-breadcrumb-btn"]
+                            })
+                            .build();
+
+                        let nav_c = nav_cb.clone();
+                        let target_p = accumulated.clone();
+                        btn_comp.connect_clicked(move |_| {
+                            nav_c(target_p.clone());
+                        });
+                        breadcrumbs_bar.append(&btn_comp);
+                    }
                 }
             }
         }

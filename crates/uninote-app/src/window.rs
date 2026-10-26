@@ -9,7 +9,7 @@ use gtk4::prelude::*;
 use gtk4::{
     Align, Box as GtkBox, Button, ColorDialog, DrawingArea, DropDown, EventControllerKey,
     FileDialog, GestureClick, GestureDrag, GestureLongPress, Label, Orientation, Overlay, Popover,
-    Scale,
+    PositionType, Scale,
 };
 use libadwaita::prelude::*;
 use libadwaita::{Application, ApplicationWindow};
@@ -68,6 +68,10 @@ impl UniNoteWindow {
         // Applica preferenze persistite al canvas all'avvio
         let initial_stroke_w = prefs.borrow().stroke_width;
         canvas.set_pen_width(initial_stroke_w);
+        let initial_eraser_mode = prefs.borrow().eraser_mode;
+        canvas.set_eraser_mode(initial_eraser_mode);
+        let initial_eraser_radius = prefs.borrow().eraser_radius;
+        canvas.set_eraser_radius(initial_eraser_radius);
 
         let initial_slot_idx = prefs.borrow().active_slot_index;
         let initial_hex = if let Some(slot) = prefs.borrow().slots.get(initial_slot_idx) {
@@ -335,7 +339,7 @@ impl UniNoteWindow {
             .css_classes(["dms-stroke-preview-area"])
             .build();
 
-        let thick_scale = Scale::with_range(Orientation::Horizontal, 0.5, 12.0, 0.1);
+        let thick_scale = Scale::with_range(Orientation::Horizontal, 0.25, 12.0, 0.05);
         thick_scale.set_value(initial_stroke_w);
         thick_scale.set_width_request(220);
         thick_scale.set_css_classes(&["dms-pill-scale"]);
@@ -360,13 +364,14 @@ impl UniNoteWindow {
         thick_pop_box.append(&stroke_preview);
         thick_pop_box.append(&thick_scale);
 
-        // 5 Chip semantici di preset rapido
+        // 6 Chip semantici di preset rapido
         let presets_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
             .spacing(6)
             .build();
 
-        let preset_chips_data: [(&str, f64); 5] = [
+        let preset_chips_data: [(&str, f64); 6] = [
+            ("Micro", 0.3),
             ("Fine", 1.0),
             ("Normale", 2.0),
             ("Medio", 2.8),
@@ -458,13 +463,28 @@ impl UniNoteWindow {
         ];
 
         let tool_buttons: Rc<RefCell<Vec<Button>>> = Rc::new(RefCell::new(Vec::new()));
+        let eraser_popover = Popover::builder().css_classes(["dms-popover"]).build();
+        let mut eraser_btn_opt: Option<Button> = None;
 
         for (i, (icon_kind, tool_kind, tooltip)) in tools.into_iter().enumerate() {
+            let initial_tip = if tool_kind == ActiveTool::Eraser {
+                match initial_eraser_mode {
+                    EraserMode::WholeStroke => "Gomma (Tratto Intero)",
+                    EraserMode::Segment => "Gomma (Per Segmento)",
+                }
+            } else {
+                tooltip
+            };
+
             let btn = Button::builder()
                 .child(&create_icon(icon_kind, 16, None))
-                .tooltip_text(tooltip)
+                .tooltip_text(initial_tip)
                 .css_classes(["dms-tool-btn"])
                 .build();
+
+            if tool_kind == ActiveTool::Eraser {
+                eraser_btn_opt = Some(btn.clone());
+            }
 
             if i == 0 {
                 btn.add_css_class("active");
@@ -473,6 +493,8 @@ impl UniNoteWindow {
             let c_tool = canvas.clone();
             let all_tools = tool_buttons.clone();
             let btn_self = btn.clone();
+            let pop_click = eraser_popover.clone();
+
             btn.connect_clicked(move |_| {
                 let is_already_active = btn_self.has_css_class("active");
                 for b in all_tools.borrow().iter() {
@@ -491,17 +513,7 @@ impl UniNoteWindow {
                     };
                     c_tool.set_selection_mode(new_mode);
                 } else if tool_kind == ActiveTool::Eraser && is_already_active {
-                    let cur_mode = c_tool.eraser_mode();
-                    let new_mode = match cur_mode {
-                        EraserMode::WholeStroke => EraserMode::Segment,
-                        EraserMode::Segment => EraserMode::WholeStroke,
-                    };
-                    c_tool.set_eraser_mode(new_mode);
-                    let tip = match new_mode {
-                        EraserMode::WholeStroke => "Gomma (Tratto Intero)",
-                        EraserMode::Segment => "Gomma (Per Segmento)",
-                    };
-                    btn_self.set_tooltip_text(Some(tip));
+                    pop_click.popup();
                 } else {
                     c_tool.set_active_tool(tool_kind);
                 }
@@ -510,6 +522,208 @@ impl UniNoteWindow {
             island_box.append(&btn);
             tool_buttons.borrow_mut().push(btn);
         }
+
+        let eraser_btn = eraser_btn_opt.expect("eraser button must exist");
+        eraser_popover.set_parent(&eraser_btn);
+
+        // Controller gesture click destro e long-press su eraser_btn
+        let right_click = GestureClick::builder()
+            .button(gdk::BUTTON_SECONDARY)
+            .build();
+        let pop_rc = eraser_popover.clone();
+        let tools_rc = tool_buttons.clone();
+        let btn_rc = eraser_btn.clone();
+        let canvas_rc = canvas.clone();
+        right_click.connect_pressed(move |gesture, _n, _x, _y| {
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
+            for b in tools_rc.borrow().iter() {
+                b.remove_css_class("active");
+            }
+            btn_rc.add_css_class("active");
+            canvas_rc.set_active_tool(ActiveTool::Eraser);
+            pop_rc.popup();
+        });
+        eraser_btn.add_controller(right_click);
+
+        let long_press = GestureLongPress::new();
+        long_press.set_touch_only(false);
+        let pop_lp = eraser_popover.clone();
+        let tools_lp = tool_buttons.clone();
+        let btn_lp = eraser_btn.clone();
+        let canvas_lp = canvas.clone();
+        long_press.connect_pressed(move |_gesture, _x, _y| {
+            for b in tools_lp.borrow().iter() {
+                b.remove_css_class("active");
+            }
+            btn_lp.add_css_class("active");
+            canvas_lp.set_active_tool(ActiveTool::Eraser);
+            pop_lp.popup();
+        });
+        eraser_btn.add_controller(long_press);
+
+        // Popolamento contenuti del Popover Gomma
+        let eraser_pop_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(10)
+            .margin_start(10)
+            .margin_end(10)
+            .margin_top(8)
+            .margin_bottom(8)
+            .build();
+
+        // Header con titolo e valore numerico raggio
+        let title_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(8)
+            .build();
+        let lbl_eraser_title = Label::builder()
+            .label("Strumento Gomma")
+            .xalign(0.0)
+            .hexpand(true)
+            .css_classes(["brand-title"])
+            .build();
+        title_box.append(&lbl_eraser_title);
+
+        let lbl_radius_val = Label::builder()
+            .label(format!("{:.0} px", initial_eraser_radius))
+            .xalign(1.0)
+            .css_classes(["thick-value"])
+            .build();
+        title_box.append(&lbl_radius_val);
+        eraser_pop_box.append(&title_box);
+
+        // Selettore a pillola modalità (WholeStroke vs Segment)
+        let mode_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(4)
+            .homogeneous(true)
+            .css_classes(["dms-theme-slider"])
+            .build();
+
+        let btn_mode_whole = Button::builder()
+            .label("Tratto Intero")
+            .tooltip_text("Cancella l'intero tratto Bézier toccato")
+            .css_classes(["dms-theme-btn"])
+            .build();
+
+        let btn_mode_segment = Button::builder()
+            .label("Per Segmento")
+            .tooltip_text("Taglia chirurgicamente il tratto nel punto toccato")
+            .css_classes(["dms-theme-btn"])
+            .build();
+
+        let update_mode_ui = {
+            let b_whole = btn_mode_whole.clone();
+            let b_seg = btn_mode_segment.clone();
+            let btn_eraser_ref = eraser_btn.clone();
+            move |mode: EraserMode| {
+                b_whole.remove_css_class("active");
+                b_seg.remove_css_class("active");
+                match mode {
+                    EraserMode::WholeStroke => {
+                        b_whole.add_css_class("active");
+                        btn_eraser_ref.set_tooltip_text(Some("Gomma (Tratto Intero)"));
+                    }
+                    EraserMode::Segment => {
+                        b_seg.add_css_class("active");
+                        btn_eraser_ref.set_tooltip_text(Some("Gomma (Per Segmento)"));
+                    }
+                }
+            }
+        };
+        update_mode_ui(initial_eraser_mode);
+
+        let c_mode_w = canvas.clone();
+        let p_mode_w = prefs.clone();
+        let u_mode_w = update_mode_ui.clone();
+        btn_mode_whole.connect_clicked(move |_| {
+            c_mode_w.set_eraser_mode(EraserMode::WholeStroke);
+            u_mode_w(EraserMode::WholeStroke);
+            p_mode_w.borrow_mut().eraser_mode = EraserMode::WholeStroke;
+            let _ = p_mode_w.borrow().save();
+        });
+
+        let c_mode_s = canvas.clone();
+        let p_mode_s = prefs.clone();
+        let u_mode_s = update_mode_ui.clone();
+        btn_mode_segment.connect_clicked(move |_| {
+            c_mode_s.set_eraser_mode(EraserMode::Segment);
+            u_mode_s(EraserMode::Segment);
+            p_mode_s.borrow_mut().eraser_mode = EraserMode::Segment;
+            let _ = p_mode_s.borrow().save();
+        });
+
+        mode_box.append(&btn_mode_whole);
+        mode_box.append(&btn_mode_segment);
+        eraser_pop_box.append(&mode_box);
+
+        // Etichetta sezione raggio
+        let lbl_radius_section = Label::builder()
+            .label("RAGGIO D'AZIONE")
+            .xalign(0.0)
+            .css_classes(["dms-popover-section-title"])
+            .build();
+        eraser_pop_box.append(&lbl_radius_section);
+
+        // Slider raggio (4.0..=64.0 px)
+        let radius_scale = Scale::with_range(Orientation::Horizontal, 4.0, 64.0, 1.0);
+        radius_scale.set_value(initial_eraser_radius);
+        radius_scale.set_width_request(220);
+        radius_scale.set_css_classes(&["dms-pill-scale"]);
+        eraser_pop_box.append(&radius_scale);
+
+        // Chip preset rapidi (Fine 8px, Medio 16px, Grande 32px)
+        let presets_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(6)
+            .homogeneous(true)
+            .build();
+
+        let presets_data: [(&str, f64); 3] = [("Fine", 8.0), ("Medio", 16.0), ("Grande", 32.0)];
+
+        let preset_buttons: Rc<RefCell<Vec<(Button, f64)>>> = Rc::new(RefCell::new(Vec::new()));
+
+        for (name, preset_val) in presets_data {
+            let p_btn = Button::builder()
+                .label(name)
+                .tooltip_text(format!("{:.0} px", preset_val))
+                .css_classes(["dms-preset-chip"])
+                .build();
+            if (initial_eraser_radius - preset_val).abs() < 0.5 {
+                p_btn.add_css_class("active");
+            }
+            let s_ref = radius_scale.clone();
+            p_btn.connect_clicked(move |_| {
+                s_ref.set_value(preset_val);
+            });
+            presets_box.append(&p_btn);
+            preset_buttons.borrow_mut().push((p_btn, preset_val));
+        }
+        eraser_pop_box.append(&presets_box);
+
+        let c_scale = canvas.clone();
+        let val_lbl_clone = lbl_radius_val.clone();
+        let preset_btns_clone = preset_buttons.clone();
+        let prefs_scale = prefs.clone();
+
+        radius_scale.connect_value_changed(move |scale| {
+            let val = scale.value().round();
+            c_scale.set_eraser_radius(val);
+            val_lbl_clone.set_label(&format!("{:.0} px", val));
+
+            for (btn, preset_val) in preset_btns_clone.borrow().iter() {
+                if (val - preset_val).abs() < 0.5 {
+                    btn.add_css_class("active");
+                } else {
+                    btn.remove_css_class("active");
+                }
+            }
+
+            prefs_scale.borrow_mut().eraser_radius = val;
+            let _ = prefs_scale.borrow().save();
+        });
+
+        eraser_popover.set_child(Some(&eraser_pop_box));
 
         overlay.add_overlay(&island_box);
 
@@ -934,6 +1148,7 @@ impl UniNoteWindow {
             let tool_buttons = tool_buttons.clone();
             let stroke_preview = stroke_preview.clone();
             let window = window.clone();
+            let slots_box = slots_box.clone();
 
             Rc::new(move |slot_cfg: PenSlotConfig| -> Button {
                 let rgba = slot_cfg.rgba;
@@ -999,8 +1214,8 @@ impl UniNoteWindow {
                     stroke_prev_ref.queue_draw();
                 });
 
-                // Clic secondario e Long press per modificare il colore
-                let open_editor = {
+                // Clic secondario e Long press per aprire il menu contestuale (Modifica Colore / Elimina Penna)
+                let open_context_menu = {
                     let slot_self = slot_btn.clone();
                     let all_slots = slot_buttons.clone();
                     let prefs_edit = prefs.clone();
@@ -1008,89 +1223,215 @@ impl UniNoteWindow {
                     let cal_dot_ref = caliber_dot.clone();
                     let stroke_prev_ref = stroke_preview.clone();
                     let win = window.clone();
+                    let slots_box_ref = slots_box.clone();
 
                     Rc::new(move || {
                         let idx = all_slots.borrow().iter().position(|b| b == &slot_self);
-                        let Some(slot_idx) = idx else {
+                        if idx.is_none() {
                             return;
                         };
 
-                        let current_rgba = prefs_edit
-                            .borrow()
-                            .slots
-                            .get(slot_idx)
-                            .map(|s| s.rgba)
-                            .unwrap_or((0.0, 0.0, 0.0, 1.0));
+                        let popover = Popover::builder()
+                            .autohide(true)
+                            .has_arrow(true)
+                            .position(PositionType::Right)
+                            .css_classes(["dms-popover"])
+                            .build();
+                        popover.set_parent(&slot_self);
 
-                        let dialog = ColorDialog::builder()
-                            .title("Modifica Colore Inchiostro")
-                            .modal(true)
+                        let menu_box = GtkBox::builder()
+                            .orientation(Orientation::Vertical)
+                            .spacing(4)
+                            .margin_top(6)
+                            .margin_bottom(6)
+                            .margin_start(6)
+                            .margin_end(6)
                             .build();
 
-                        let initial = gdk::RGBA::new(
-                            current_rgba.0 as f32,
-                            current_rgba.1 as f32,
-                            current_rgba.2 as f32,
-                            current_rgba.3 as f32,
+                        // 1. Modifica Colore
+                        let edit_content = GtkBox::builder()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(8)
+                            .build();
+                        edit_content.append(&create_icon(IconKind::Edit, 16, None));
+                        edit_content.append(
+                            &Label::builder()
+                                .label("Modifica Colore...")
+                                .xalign(0.0)
+                                .build(),
                         );
+                        let btn_edit = Button::builder()
+                            .child(&edit_content)
+                            .css_classes(["dms-menu-item-btn"])
+                            .build();
 
-                        let slot_btn_inner = slot_self.clone();
-                        let prefs_cb = prefs_edit.clone();
-                        let c_color_cb = c_color.clone();
-                        let cal_dot_cb = cal_dot_ref.clone();
-                        let stroke_prev_cb = stroke_prev_ref.clone();
+                        let pop_edit = popover.clone();
+                        let all_slots_edit = all_slots.clone();
+                        let slot_self_edit = slot_self.clone();
+                        let prefs_edit_cb = prefs_edit.clone();
+                        let win_edit = win.clone();
+                        let c_color_edit = c_color.clone();
+                        let cal_dot_edit = cal_dot_ref.clone();
+                        let stroke_prev_edit = stroke_prev_ref.clone();
 
-                        dialog.choose_rgba(
-                            Some(&win),
-                            Some(&initial),
-                            gio::Cancellable::NONE,
-                            move |res| {
-                                if let Ok(rgba) = res {
-                                    let tuple = (
-                                        rgba.red() as f64,
-                                        rgba.green() as f64,
-                                        rgba.blue() as f64,
-                                        rgba.alpha() as f64,
-                                    );
-                                    let hex = format!(
-                                        "#{:02X}{:02X}{:02X}",
-                                        (tuple.0 * 255.0) as u8,
-                                        (tuple.1 * 255.0) as u8,
-                                        (tuple.2 * 255.0) as u8
-                                    );
-                                    let name = format!("Personalizzato {}", hex);
+                        btn_edit.connect_clicked(move |_| {
+                            pop_edit.popdown();
+                            let current_idx = all_slots_edit
+                                .borrow()
+                                .iter()
+                                .position(|b| b == &slot_self_edit);
+                            let Some(cur_slot_idx) = current_idx else {
+                                return;
+                            };
 
-                                    if let Some(slot) =
-                                        prefs_cb.borrow_mut().slots.get_mut(slot_idx)
-                                    {
-                                        slot.hex = hex.clone();
-                                        slot.rgba = tuple;
-                                        slot.name = name.clone();
+                            let current_rgba = prefs_edit_cb
+                                .borrow()
+                                .slots
+                                .get(cur_slot_idx)
+                                .map(|s| s.rgba)
+                                .unwrap_or((0.0, 0.0, 0.0, 1.0));
+
+                            let dialog = ColorDialog::builder()
+                                .title("Modifica Colore Inchiostro")
+                                .modal(true)
+                                .build();
+
+                            let initial = gdk::RGBA::new(
+                                current_rgba.0 as f32,
+                                current_rgba.1 as f32,
+                                current_rgba.2 as f32,
+                                current_rgba.3 as f32,
+                            );
+
+                            let slot_btn_inner = slot_self_edit.clone();
+                            let prefs_cb = prefs_edit_cb.clone();
+                            let c_color_cb = c_color_edit.clone();
+                            let cal_dot_cb = cal_dot_edit.clone();
+                            let stroke_prev_cb = stroke_prev_edit.clone();
+
+                            dialog.choose_rgba(
+                                Some(&win_edit),
+                                Some(&initial),
+                                gio::Cancellable::NONE,
+                                move |res| {
+                                    if let Ok(rgba) = res {
+                                        let tuple = (
+                                            rgba.red() as f64,
+                                            rgba.green() as f64,
+                                            rgba.blue() as f64,
+                                            rgba.alpha() as f64,
+                                        );
+                                        let hex = format!(
+                                            "#{:02X}{:02X}{:02X}",
+                                            (tuple.0 * 255.0) as u8,
+                                            (tuple.1 * 255.0) as u8,
+                                            (tuple.2 * 255.0) as u8
+                                        );
+                                        let name = format!("Personalizzato {}", hex);
+
+                                        if let Some(slot) =
+                                            prefs_cb.borrow_mut().slots.get_mut(cur_slot_idx)
+                                        {
+                                            slot.hex = hex.clone();
+                                            slot.rgba = tuple;
+                                            slot.name = name.clone();
+                                        }
+                                        let _ = prefs_cb.borrow().save();
+
+                                        let new_icon =
+                                            create_icon(IconKind::PenLine, 18, Some(rgba));
+                                        slot_btn_inner.set_child(Some(&new_icon));
+                                        slot_btn_inner.set_tooltip_text(Some(&name));
+
+                                        if prefs_cb.borrow().active_slot_index == cur_slot_idx {
+                                            c_color_cb.set_pen_color(tuple);
+                                            cal_dot_cb.set_markup(&format!(
+                                                "<span foreground='{}' font_desc='11'>●</span>",
+                                                hex
+                                            ));
+                                            stroke_prev_cb.queue_draw();
+                                        }
                                     }
-                                    let _ = prefs_cb.borrow().save();
+                                },
+                            );
+                        });
+                        menu_box.append(&btn_edit);
 
-                                    let new_icon = create_icon(IconKind::PenLine, 18, Some(rgba));
-                                    slot_btn_inner.set_child(Some(&new_icon));
-                                    slot_btn_inner.set_tooltip_text(Some(&name));
+                        // 2. Elimina Penna (disabilitato se rimane un solo slot)
+                        let del_content = GtkBox::builder()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(8)
+                            .build();
+                        del_content.append(&create_icon(IconKind::Trash, 16, None));
+                        del_content
+                            .append(&Label::builder().label("Elimina Penna").xalign(0.0).build());
+                        let btn_del = Button::builder()
+                            .child(&del_content)
+                            .css_classes(["dms-menu-item-btn", "destructive-action"])
+                            .build();
 
-                                    if prefs_cb.borrow().active_slot_index == slot_idx {
-                                        c_color_cb.set_pen_color(tuple);
-                                        cal_dot_cb.set_markup(&format!(
-                                            "<span foreground='{}' font_desc='11'>●</span>",
-                                            hex
-                                        ));
-                                        stroke_prev_cb.queue_draw();
+                        let can_delete = prefs_edit.borrow().slots.len() > 1;
+                        if !can_delete {
+                            btn_del.set_sensitive(false);
+                            btn_del.set_tooltip_text(Some(
+                                "Impossibile eliminare l'unica penna rimasta",
+                            ));
+                        }
+
+                        let pop_del = popover.clone();
+                        let all_slots_del = all_slots.clone();
+                        let slot_self_del = slot_self.clone();
+                        let prefs_del_cb = prefs_edit.clone();
+                        let slots_box_del = slots_box_ref.clone();
+                        let c_color_del = c_color.clone();
+                        let cal_dot_del = cal_dot_ref.clone();
+                        let stroke_prev_del = stroke_prev_ref.clone();
+
+                        btn_del.connect_clicked(move |_| {
+                            pop_del.popdown();
+                            let current_idx = all_slots_del
+                                .borrow()
+                                .iter()
+                                .position(|b| b == &slot_self_del);
+                            let Some(cur_slot_idx) = current_idx else {
+                                return;
+                            };
+
+                            if prefs_del_cb.borrow_mut().remove_slot(cur_slot_idx) {
+                                let _ = prefs_del_cb.borrow().save();
+                                slots_box_del.remove(&slot_self_del);
+                                all_slots_del.borrow_mut().remove(cur_slot_idx);
+
+                                let active_idx = prefs_del_cb.borrow().active_slot_index;
+                                for (i, btn) in all_slots_del.borrow().iter().enumerate() {
+                                    if i == active_idx {
+                                        btn.add_css_class("active");
+                                    } else {
+                                        btn.remove_css_class("active");
                                     }
                                 }
-                            },
-                        );
+
+                                if let Some(cfg) = prefs_del_cb.borrow().slots.get(active_idx) {
+                                    c_color_del.set_pen_color(cfg.rgba);
+                                    cal_dot_del.set_markup(&format!(
+                                        "<span foreground='{}' font_desc='11'>●</span>",
+                                        cfg.hex
+                                    ));
+                                    stroke_prev_del.queue_draw();
+                                }
+                            }
+                        });
+                        menu_box.append(&btn_del);
+
+                        popover.set_child(Some(&menu_box));
+                        popover.popup();
                     })
                 };
 
                 let right_click = GestureClick::builder()
                     .button(gdk::BUTTON_SECONDARY)
                     .build();
-                let editor_rc = open_editor.clone();
+                let editor_rc = open_context_menu.clone();
                 right_click.connect_pressed(move |_, _, _, _| {
                     editor_rc();
                 });
@@ -1098,7 +1439,7 @@ impl UniNoteWindow {
 
                 let long_press = GestureLongPress::new();
                 long_press.set_touch_only(false);
-                let editor_lp = open_editor.clone();
+                let editor_lp = open_context_menu.clone();
                 long_press.connect_pressed(move |_, _, _| {
                     editor_lp();
                 });
@@ -1745,6 +2086,7 @@ impl UniNoteWindow {
         let p2_init = export_popover.clone();
         let p3_init = settings_popover.clone();
         let p4_init = grid_popover.clone();
+        let p5_init = eraser_popover.clone();
         let is_dark_init = libadwaita::StyleManager::default().is_dark();
         if !is_dark_init {
             win_init.add_css_class("light-theme");
@@ -1752,6 +2094,7 @@ impl UniNoteWindow {
             p2_init.add_css_class("light-theme");
             p3_init.add_css_class("light-theme");
             p4_init.add_css_class("light-theme");
+            p5_init.add_css_class("light-theme");
         }
 
         let win_sm = window.clone();
@@ -1759,6 +2102,7 @@ impl UniNoteWindow {
         let p2_sm = export_popover.clone();
         let p3_sm = settings_popover.clone();
         let p4_sm = grid_popover.clone();
+        let p5_sm = eraser_popover.clone();
         libadwaita::StyleManager::default().connect_dark_notify(move |sm| {
             let is_dark = sm.is_dark();
             if is_dark {
@@ -1767,12 +2111,14 @@ impl UniNoteWindow {
                 p2_sm.remove_css_class("light-theme");
                 p3_sm.remove_css_class("light-theme");
                 p4_sm.remove_css_class("light-theme");
+                p5_sm.remove_css_class("light-theme");
             } else {
                 win_sm.add_css_class("light-theme");
                 p1_sm.add_css_class("light-theme");
                 p2_sm.add_css_class("light-theme");
                 p3_sm.add_css_class("light-theme");
                 p4_sm.add_css_class("light-theme");
+                p5_sm.add_css_class("light-theme");
             }
         });
 

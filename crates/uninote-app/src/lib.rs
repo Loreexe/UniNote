@@ -2,6 +2,7 @@
 
 pub mod canvas;
 pub mod clipboard;
+pub mod cloud;
 pub mod dashboard;
 pub mod hud;
 pub mod icons;
@@ -11,6 +12,10 @@ pub mod preferences;
 pub mod selection;
 pub mod settings;
 pub mod window;
+
+pub use cloud::{
+    CloudServiceType, CloudSyncSettings, ConnectCloudDialog, GoogleDriveAccount, NextcloudAccount,
+};
 
 pub use clipboard::{
     clear_clipboard, deserialize_clipboard, get_app_clipboard, get_clipboard_data,

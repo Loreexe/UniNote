@@ -31,7 +31,7 @@ pub struct DynamicGridSpec {
 /// Calcola i parametri ottimali della griglia procedurale in base al fattore di ingrandimento dello schermo.
 pub fn dynamic_grid_spec(zoom: f64) -> DynamicGridSpec {
     let clamped_zoom = if zoom.is_finite() {
-        zoom.clamp(0.25, 5.0)
+        zoom.clamp(0.25, 10.0)
     } else {
         1.0
     };
@@ -50,25 +50,24 @@ pub fn dynamic_grid_spec(zoom: f64) -> DynamicGridSpec {
             alpha: 0.25,
             major_step_pt: base_step * 5.0, // 100.0 pt
         }
-    } else {
+    } else if clamped_zoom <= 5.0 {
         let t = ((clamped_zoom - 2.0) / 3.0).min(1.0); // 0.0 a 2.0, 1.0 a 5.0
         DynamicGridSpec {
             step_pt: base_step / 2.0, // 10.0 pt
             alpha: 0.15 + 0.20 * t,
-            major_step_pt: base_step,
+            major_step_pt: base_step * 2.5,
+        }
+    } else {
+        let t = ((clamped_zoom - 5.0) / 5.0).min(1.0); // 0.0 a 5.0, 1.0 a 10.0
+        DynamicGridSpec {
+            step_pt: base_step / 4.0, // 5.0 pt micro-grid
+            alpha: 0.18 + 0.15 * t,
+            major_step_pt: base_step * 1.25,
         }
     }
 }
 
-/// Modalità operativa dello strumento gomma (Tratto Intero o Per Segmento analitico).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default,
-)]
-pub enum EraserMode {
-    #[default]
-    WholeStroke,
-    Segment,
-}
+pub use crate::preferences::EraserMode;
 
 /// Strumento di disegno/modifica attualmente selezionato.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,6 +281,10 @@ pub struct CanvasState {
     pub viewport: Viewport,
     pub active_tool: ActiveTool,
     pub eraser_mode: EraserMode,
+    /// Raggio della gomma in pixel a schermo (default 16.0 px, clamp 4.0..=64.0).
+    pub eraser_radius: f64,
+    /// Posizione corrente a schermo (x, y) del puntatore della gomma per l'indicatore live.
+    pub eraser_pointer: Option<(f64, f64)>,
     pub selection: SelectionState,
     pub active_builder: Option<StrokeBuilder>,
     pub active_device: Option<DeviceKind>,
@@ -309,6 +312,8 @@ impl CanvasState {
             viewport: Viewport::default(),
             active_tool: ActiveTool::Pen,
             eraser_mode: EraserMode::WholeStroke,
+            eraser_radius: 16.0,
+            eraser_pointer: None,
             selection: SelectionState::default(),
             active_builder: None,
             active_device: None,
@@ -478,6 +483,7 @@ impl NoteCanvas {
         canvas.setup_capture_controller();
         canvas.setup_stylus_controller();
         canvas.setup_mouse_controller();
+        canvas.setup_motion_controller();
         canvas.setup_scroll_and_zoom_controllers();
         canvas
     }
@@ -505,6 +511,9 @@ impl NoteCanvas {
         st.active_tool = tool;
         if tool != ActiveTool::Select {
             st.selection.clear();
+        }
+        if tool != ActiveTool::Eraser {
+            st.eraser_pointer = None;
         }
         let tool_name = match tool {
             ActiveTool::Pen => "Penna",
@@ -539,6 +548,28 @@ impl NoteCanvas {
             .update_metrics(|m| m.current_tool = tool_name.to_string());
         self.hud.update_view();
         self.area.queue_draw();
+    }
+
+    /// Restituisce il raggio corrente della gomma in pixel a schermo.
+    pub fn eraser_radius(&self) -> f64 {
+        self.state.borrow().eraser_radius
+    }
+
+    /// Imposta il raggio della gomma in pixel a schermo, con clamping rigido in [4.0, 64.0],
+    /// e richiede il ridisegno del canvas per aggiornare immediatamente l'indicatore live.
+    pub fn set_eraser_radius(&self, radius: f64) {
+        let clamped = if radius.is_finite() {
+            radius.clamp(4.0, 64.0)
+        } else {
+            16.0
+        };
+        self.state.borrow_mut().eraser_radius = clamped;
+        self.area.queue_draw();
+    }
+
+    /// Restituisce la coordinata a schermo corrente del puntatore della gomma (se attiva).
+    pub fn eraser_pointer(&self) -> Option<(f64, f64)> {
+        self.state.borrow().eraser_pointer
     }
 
     pub fn selection_mode(&self) -> SelectionMode {
@@ -1706,6 +1737,13 @@ impl NoteCanvas {
             // 4. Disegno overlay di selezione (Lasso trail, rubber band, bbox tratteggiato #6DD2FF con maniglia)
             Self::draw_selection_overlay(cr, &st.selection, &vp, is_dark);
 
+            // 5. Disegno indicatore visivo live del raggio della gomma (overlay a schermo)
+            if st.active_tool == ActiveTool::Eraser || st.eraser_pointer.is_some() {
+                if let Some((px, py)) = st.eraser_pointer {
+                    Self::draw_eraser_indicator(cr, px, py, st.eraser_radius, is_dark);
+                }
+            }
+
             // 4. Aggiornamento metriche di rendering HUD (zero-overhead quando nascosto)
             if hud_clone.is_visible() {
                 let render_duration = start_render.elapsed().as_micros() as u64;
@@ -1978,7 +2016,8 @@ impl NoteCanvas {
                     let stroke = prev_builder.finish();
                     Self::commit_finished_stroke(&mut st, stroke);
                 }
-                let radius = 16.0 / st.viewport.zoom;
+                st.eraser_pointer = Some((x, y));
+                let radius = st.eraser_radius / st.viewport.zoom;
                 Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
                 drop(st);
                 area.queue_draw();
@@ -2085,7 +2124,8 @@ impl NoteCanvas {
                     let stroke = prev_builder.finish();
                     Self::commit_finished_stroke(st, stroke);
                 }
-                let radius = 16.0 / st.viewport.zoom;
+                st.eraser_pointer = Some((x, y));
+                let radius = st.eraser_radius / st.viewport.zoom;
                 Self::erase_strokes_at(st, (doc_x, doc_y), radius);
                 drop(st_guard);
                 area.queue_draw();
@@ -2225,6 +2265,9 @@ impl NoteCanvas {
             let mut st = state.borrow_mut();
             st.last_stylus_time = Some(Instant::now());
             st.active_device = None;
+            if st.active_tool != ActiveTool::Eraser && st.eraser_pointer.is_some() {
+                st.eraser_pointer = None;
+            }
 
             let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
 
@@ -2361,7 +2404,8 @@ impl NoteCanvas {
                 }
 
                 if st.active_tool == ActiveTool::Eraser {
-                    let radius = 12.0 / st.viewport.zoom;
+                    st.eraser_pointer = Some((start_x, start_y));
+                    let radius = st.eraser_radius / st.viewport.zoom;
                     Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
                     drop(st);
                     area.queue_draw();
@@ -2457,7 +2501,8 @@ impl NoteCanvas {
                 }
 
                 if st.active_tool == ActiveTool::Eraser {
-                    let radius = 12.0 / st.viewport.zoom;
+                    st.eraser_pointer = Some((cur_screen_x, cur_screen_y));
+                    let radius = st.eraser_radius / st.viewport.zoom;
                     Self::erase_strokes_at(st, (doc_x, doc_y), radius);
                     drop(st_guard);
                     area.queue_draw();
@@ -2523,7 +2568,8 @@ impl NoteCanvas {
                 }
 
                 if st.active_tool == ActiveTool::Eraser {
-                    let radius = 12.0 / st.viewport.zoom;
+                    st.eraser_pointer = Some((cur_x, cur_y));
+                    let radius = st.eraser_radius / st.viewport.zoom;
                     Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
                     drop(st);
                     area.queue_draw();
@@ -2554,6 +2600,59 @@ impl NoteCanvas {
         });
 
         self.area.add_controller(drag);
+    }
+
+    fn setup_motion_controller(&self) {
+        let motion = gtk4::EventControllerMotion::new();
+        let state_clone = self.state.clone();
+        let area_clone = self.area.clone();
+
+        // 1. Motion: tracciamento continuo a schermo
+        motion.connect_motion(move |_ctrl, x, y| {
+            let mut st = state_clone.borrow_mut();
+
+            // ZERO-OVERHEAD FAST PATH:
+            // Se lo strumento attivo non è la gomma, usciamo immediatamente.
+            if st.active_tool != ActiveTool::Eraser {
+                if st.eraser_pointer.is_some() {
+                    st.eraser_pointer = None;
+                    drop(st);
+                    area_clone.queue_draw();
+                }
+                return;
+            }
+
+            // Aggiorna le coordinate a schermo del cerchio della gomma
+            st.eraser_pointer = Some((x, y));
+            drop(st);
+            area_clone.queue_draw();
+        });
+
+        // 2. Leave: quando il puntatore esce dal DrawingArea, rimuovi il cerchio
+        let state_clone2 = self.state.clone();
+        let area_clone2 = self.area.clone();
+        motion.connect_leave(move |_ctrl| {
+            let mut st = state_clone2.borrow_mut();
+            if st.eraser_pointer.is_some() {
+                st.eraser_pointer = None;
+                drop(st);
+                area_clone2.queue_draw();
+            }
+        });
+
+        // 3. Enter: quando il puntatore entra, se la gomma è attiva, mostra il cerchio
+        let state_clone3 = self.state.clone();
+        let area_clone3 = self.area.clone();
+        motion.connect_enter(move |_ctrl, x, y| {
+            let mut st = state_clone3.borrow_mut();
+            if st.active_tool == ActiveTool::Eraser {
+                st.eraser_pointer = Some((x, y));
+                drop(st);
+                area_clone3.queue_draw();
+            }
+        });
+
+        self.area.add_controller(motion);
     }
 
     fn setup_scroll_and_zoom_controllers(&self) {
@@ -3442,6 +3541,41 @@ impl NoteCanvas {
 
             let _ = cr.restore();
         }
+    }
+
+    /// Disegna l'indicatore circolare semitrasparente che segue il puntatore della gomma.
+    pub fn draw_eraser_indicator(
+        cr: &gtk4::cairo::Context,
+        screen_x: f64,
+        screen_y: f64,
+        radius: f64,
+        is_dark: bool,
+    ) {
+        if !radius.is_finite() || radius <= 0.0 || !screen_x.is_finite() || !screen_y.is_finite() {
+            return;
+        }
+
+        let _ = cr.save();
+        cr.set_dash(&[], 0.0);
+        cr.arc(screen_x, screen_y, radius, 0.0, 2.0 * std::f64::consts::PI);
+
+        if is_dark {
+            // Tema scuro: campitura ciano DMS delicata con perimetro netto brillante
+            cr.set_source_rgba(0.427, 0.824, 1.0, 0.12);
+            let _ = cr.fill_preserve();
+            cr.set_source_rgba(0.427, 0.824, 1.0, 0.85);
+            cr.set_line_width(1.5);
+            let _ = cr.stroke();
+        } else {
+            // Tema chiaro: campitura neutra ombreggiata con perimetro scuro ad alto contrasto
+            cr.set_source_rgba(0.15, 0.18, 0.22, 0.08);
+            let _ = cr.fill_preserve();
+            cr.set_source_rgba(0.15, 0.18, 0.22, 0.70);
+            cr.set_line_width(1.5);
+            let _ = cr.stroke();
+        }
+
+        let _ = cr.restore();
     }
 }
 
