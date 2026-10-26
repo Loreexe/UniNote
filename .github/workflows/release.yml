@@ -151,12 +151,13 @@ jobs:
       - name: Build package with makepkg
         run: |
           set -euo pipefail
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git config --global --add safe.directory '*'
-
           VERSION="$(sed -n 's/^pkgver=//p' packaging/aur/uninote/PKGBUILD | head -n1)"
-          git archive --format=tar.gz --prefix="UniNote-${VERSION}/" \
-            -o "/tmp/uninote-${VERSION}.tar.gz" HEAD
+
+          # Crea archivio sorgenti identico al tarball di rilascio GitHub
+          mkdir -p "/tmp/UniNote-${VERSION}"
+          cp -r Cargo.toml Cargo.lock crates data packaging LICENSE README.md "/tmp/UniNote-${VERSION}/"
+          tar -czf "/tmp/uninote-${VERSION}.tar.gz" -C /tmp "UniNote-${VERSION}"
+          rm -rf "/tmp/UniNote-${VERSION}"
           SUM="$(sha256sum "/tmp/uninote-${VERSION}.tar.gz" | cut -d' ' -f1)"
 
           useradd -m builder
