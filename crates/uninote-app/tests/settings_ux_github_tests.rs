@@ -32,6 +32,17 @@ struct GtkTestHarness {
 
 static GTK_HARNESS: OnceLock<GtkTestHarness> = OnceLock::new();
 
+/// Estrae un messaggio leggibile dal payload di un panic catturato.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else {
+        "panic senza payload testuale".to_string()
+    }
+}
+
 fn run_on_gtk_thread<F, R>(f: F) -> R
 where
     F: FnOnce() -> R + Send + 'static,
@@ -56,6 +67,13 @@ where
         .sender
         .send(Box::new(move || {
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            // Il panic avviene su un thread worker: libtest non ne cattura l'output,
+            // quindi lo rendiamo esplicito su stderr e su file per la diagnostica CI.
+            if let Err(payload) = &res {
+                let message = panic_message(payload.as_ref());
+                eprintln!("GTK-TEST-PANIC: {message}");
+                let _ = std::fs::write("/tmp/uninote_gtk_test_panic.log", &message);
+            }
             let _ = res_tx.send(res);
         }))
         .expect("GTK test worker thread is dead");

@@ -59,6 +59,15 @@ jobs:
         # test sullo stesso runner (2 vCPU) falsa i budget, quindi si serializza.
         run: xvfb-run --auto-servernum cargo test --workspace -- --test-threads=1
 
+      - name: Dump GTK test diagnostics (on failure)
+        if: failure()
+        run: |
+          if [ -f /tmp/uninote_gtk_test_panic.log ]; then
+            echo "::group::Payload del panic GTK"
+            cat /tmp/uninote_gtk_test_panic.log
+            echo "::endgroup::"
+          fi
+
       - name: Validate Wiki freshness (check_freshness.py)
         run: |
           if [ -f .uninote-wiki/check_freshness.py ]; then
