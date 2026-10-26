@@ -954,7 +954,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "uninote-app"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "cairo-rs",
  "glib",
@@ -971,7 +971,7 @@ dependencies = [
 
 [[package]]
 name = "uninote-core"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "rstar",
  "serde",
@@ -982,7 +982,7 @@ dependencies = [
 
 [[package]]
 name = "uninote-storage"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "rusqlite",
  "serde",
@@ -995,7 +995,7 @@ dependencies = [
 
 [[package]]
 name = "uninote-stroke"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "serde",
  "serde_json",

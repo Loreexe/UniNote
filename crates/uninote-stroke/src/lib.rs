@@ -5,6 +5,7 @@ pub mod pipeline;
 pub mod recorder;
 pub mod selection;
 pub mod shape;
+pub mod slice;
 pub mod types;
 
 pub use filter::{OneEuroConfig, OneEuroPointFilter, OneEuroScalar};
@@ -20,6 +21,10 @@ pub use selection::{
     SelectionEngine, SelectionMode,
 };
 pub use shape::{recognize_shape, snap_line_orthogonal};
+pub use slice::{
+    extract_bezier_subsegment, find_bezier_circle_intersections, reconstruct_sub_stroke,
+    slice_stroke_with_circle, subdivide_cubic_bezier,
+};
 pub use types::{
     DeviceKind, InputPhase, InputSample, PipelineMode, Rect, Stroke, StrokePoint, StrokeStyle,
 };

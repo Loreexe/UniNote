@@ -512,4 +512,11 @@ impl Stroke {
         }
         self.cached_bbox = self.compute_bounding_box();
     }
+
+    /// Esegue il taglio geometrico analitico del tratto tramite un cerchio gomma (centro e raggio).
+    /// Restituisce una lista di sotto-tratti risultanti (0 se interamente cancellato,
+    /// 1 se accorciato o intoccato, 2+ se diviso internamente).
+    pub fn slice_with_circle(&self, center: (f64, f64), radius: f64) -> Vec<Stroke> {
+        crate::slice::slice_stroke_with_circle(self, center, radius)
+    }
 }

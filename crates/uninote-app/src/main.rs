@@ -8,6 +8,13 @@ use uninote_core::model::DocumentFormat;
 const APP_ID: &str = "org.uninote.UniNote";
 
 fn main() -> glib::ExitCode {
+    // Gestione flag CLI standard (--version / -V)
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
+        println!("uninote {}", env!("CARGO_PKG_VERSION"));
+        return glib::ExitCode::SUCCESS;
+    }
+
     // Inizializza e verifica la cartella predefinita per gli appunti ($XDG_DOCUMENTS_DIR/UniNote)
     let recent_store = DashboardRecentStore::load();
     let _ = recent_store.ensure_default_notes_dir();

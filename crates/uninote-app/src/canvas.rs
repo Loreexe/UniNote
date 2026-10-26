@@ -1,4 +1,7 @@
 use crate::hud::DiagnosticHud;
+use crate::selection::{
+    compute_scale_factors, HandleId, SelectionDragKind, SelectionHitTestResult,
+};
 use gtk4::gdk;
 use gtk4::prelude::*;
 use gtk4::DrawingArea;
@@ -7,7 +10,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Instant;
 use uninote_core::{
-    CommandHistory, DocCommand, Document, DocumentFormat, ItemId, ItemKind, PageBackground,
+    CommandHistory, DocCommand, Document, DocumentFormat, Item, ItemId, ItemKind, PageBackground,
     Viewport,
 };
 use uninote_storage::{DocumentStore, SaveStatus, StorageWorker};
@@ -57,6 +60,16 @@ pub fn dynamic_grid_spec(zoom: f64) -> DynamicGridSpec {
     }
 }
 
+/// Modalità operativa dello strumento gomma (Tratto Intero o Per Segmento analitico).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default,
+)]
+pub enum EraserMode {
+    #[default]
+    WholeStroke,
+    Segment,
+}
+
 /// Strumento di disegno/modifica attualmente selezionato.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTool {
@@ -86,12 +99,20 @@ pub struct SelectionState {
     pub active_rect_start: Option<(f64, f64)>,
     /// Punto corrente del rettangolo di selezione in corso (coordinate documento).
     pub active_rect_current: Option<(f64, f64)>,
-    /// Flag che indica se è in corso un'operazione di trascinamento (drag translation).
+    /// Flag che indica se è in corso un'operazione di trascinamento (drag translation o scaling).
     pub is_dragging: bool,
+    /// Tipologia di trascinamento attiva (None, Translate o ScaleHandle).
+    pub drag_kind: SelectionDragKind,
     /// Punto iniziale del drag in coordinate documento.
     pub drag_start_doc: Option<(f64, f64)>,
     /// Offset corrente di trascinamento (delta_x, delta_y) in coordinate documento.
     pub drag_offset: (f64, f64),
+    /// Punto perno opposto fisso per il ridimensionamento (in coordinate documento).
+    pub scale_anchor: (f64, f64),
+    /// Fattori correnti di scala (scale_x, scale_y) durante il drag della maniglia.
+    pub scale_factors: (f64, f64),
+    /// Indica se il rapporto d'aspetto deve essere bloccato (true di default per gli angoli).
+    pub lock_aspect_ratio: bool,
 }
 
 impl Default for SelectionState {
@@ -105,8 +126,12 @@ impl Default for SelectionState {
             active_rect_start: None,
             active_rect_current: None,
             is_dragging: false,
+            drag_kind: SelectionDragKind::None,
             drag_start_doc: None,
             drag_offset: (0.0, 0.0),
+            scale_anchor: (0.0, 0.0),
+            scale_factors: (1.0, 1.0),
+            lock_aspect_ratio: true,
         }
     }
 }
@@ -128,8 +153,12 @@ impl SelectionState {
         self.active_rect_start = None;
         self.active_rect_current = None;
         self.is_dragging = false;
+        self.drag_kind = SelectionDragKind::None;
         self.drag_start_doc = None;
         self.drag_offset = (0.0, 0.0);
+        self.scale_anchor = (0.0, 0.0);
+        self.scale_factors = (1.0, 1.0);
+        self.lock_aspect_ratio = true;
     }
 
     pub fn hit_test_handle_or_bbox(&self, doc_pt: (f64, f64), tolerance: f64) -> bool {
@@ -140,6 +169,106 @@ impl SelectionState {
         } else {
             false
         }
+    }
+
+    /// Esegue l'hit-test gerarchico a schermo:
+    /// 1. 4 angoli entro un raggio di 15px in coordinate schermo.
+    /// 2. 4 pillole mediane (se la dimensione a schermo è >= 32 px).
+    /// 3. Grip centrale di traslazione e corpo interno del bounding box.
+    /// 4. None.
+    pub fn hit_test(&self, doc_pt: (f64, f64), vp: &Viewport) -> SelectionHitTestResult {
+        let bbox = match self.bbox {
+            Some(ref b) => b,
+            None => return SelectionHitTestResult::None,
+        };
+
+        let screen_pt = vp.document_to_screen(doc_pt);
+        let s_min = vp.document_to_screen((bbox.min_x, bbox.min_y));
+        let s_max = vp.document_to_screen((bbox.max_x, bbox.max_y));
+        let s_left = s_min.0.min(s_max.0);
+        let s_right = s_min.0.max(s_max.0);
+        let s_top = s_min.1.min(s_max.1);
+        let s_bottom = s_min.1.max(s_max.1);
+        let sw = s_right - s_left;
+        let sh = s_bottom - s_top;
+
+        // Raggi di aggancio tattili (pixel schermo)
+        const CORNER_HIT_RADIUS_SQ: f64 = 15.0 * 15.0; // 15 px
+        const PILL_HIT_X: f64 = 14.0;
+        const PILL_HIT_Y: f64 = 10.0;
+
+        // 1. Priorità assoluta: i 4 vertici d'angolo
+        let corners = [
+            (HandleId::TopLeft, s_left, s_top),
+            (HandleId::TopRight, s_right, s_top),
+            (HandleId::BottomRight, s_right, s_bottom),
+            (HandleId::BottomLeft, s_left, s_bottom),
+        ];
+        for (id, cx, cy) in corners {
+            let dx = screen_pt.0 - cx;
+            let dy = screen_pt.1 - cy;
+            if dx * dx + dy * dy <= CORNER_HIT_RADIUS_SQ {
+                return SelectionHitTestResult::Handle(id);
+            }
+        }
+
+        // 2. Se il box ha dimensioni sufficienti (>= 32 px a schermo), controlla i 4 punti mediani
+        if sw >= 32.0 && sh >= 32.0 {
+            let mid_x = (s_left + s_right) / 2.0;
+            let mid_y = (s_top + s_bottom) / 2.0;
+
+            // TopMiddle e BottomMiddle (pillola orizzontale)
+            if (screen_pt.0 - mid_x).abs() <= PILL_HIT_X
+                && (screen_pt.1 - s_top).abs() <= PILL_HIT_Y
+            {
+                return SelectionHitTestResult::Handle(HandleId::TopMiddle);
+            }
+            if (screen_pt.0 - mid_x).abs() <= PILL_HIT_X
+                && (screen_pt.1 - s_bottom).abs() <= PILL_HIT_Y
+            {
+                return SelectionHitTestResult::Handle(HandleId::BottomMiddle);
+            }
+
+            // LeftMiddle e RightMiddle (pillola verticale)
+            if (screen_pt.0 - s_left).abs() <= PILL_HIT_Y
+                && (screen_pt.1 - mid_y).abs() <= PILL_HIT_X
+            {
+                return SelectionHitTestResult::Handle(HandleId::LeftMiddle);
+            }
+            if (screen_pt.0 - s_right).abs() <= PILL_HIT_Y
+                && (screen_pt.1 - mid_y).abs() <= PILL_HIT_X
+            {
+                return SelectionHitTestResult::Handle(HandleId::RightMiddle);
+            }
+        }
+
+        // 3. Controllo grip centrale di traslazione (raggio 15 px a schermo)
+        let mid_x = (s_left + s_right) / 2.0;
+        let mid_y = (s_top + s_bottom) / 2.0;
+        let dx_grip = screen_pt.0 - mid_x;
+        let dy_grip = screen_pt.1 - mid_y;
+        if dx_grip * dx_grip + dy_grip * dy_grip <= 15.0 * 15.0 {
+            return SelectionHitTestResult::Body;
+        }
+
+        // 4. Controllo corpo interno del bounding box con tolleranza di 8 pt doc
+        let tolerance = 8.0 / vp.zoom;
+        if bbox.expand(tolerance).contains_point(doc_pt.0, doc_pt.1) {
+            return SelectionHitTestResult::Body;
+        }
+
+        // 5. Fuori da tutto
+        SelectionHitTestResult::None
+    }
+
+    /// Helper che calcola i fattori di scala richiamando la logica geometrica authoritative di `selection.rs`.
+    pub fn compute_scale_factors(
+        handle: HandleId,
+        bbox: &Rect,
+        cur_doc_pt: (f64, f64),
+        lock_aspect: bool,
+    ) -> ((f64, f64), (f64, f64)) {
+        compute_scale_factors(handle, bbox, cur_doc_pt, lock_aspect)
     }
 }
 
@@ -152,6 +281,7 @@ pub struct CanvasState {
     pub save_status: SaveStatus,
     pub viewport: Viewport,
     pub active_tool: ActiveTool,
+    pub eraser_mode: EraserMode,
     pub selection: SelectionState,
     pub active_builder: Option<StrokeBuilder>,
     pub active_device: Option<DeviceKind>,
@@ -178,6 +308,7 @@ impl CanvasState {
             save_status: SaveStatus::Saved(0),
             viewport: Viewport::default(),
             active_tool: ActiveTool::Pen,
+            eraser_mode: EraserMode::WholeStroke,
             selection: SelectionState::default(),
             active_builder: None,
             active_device: None,
@@ -377,12 +508,32 @@ impl NoteCanvas {
         }
         let tool_name = match tool {
             ActiveTool::Pen => "Penna",
-            ActiveTool::Eraser => "Gomma (Tratto Intero)",
+            ActiveTool::Eraser => match st.eraser_mode {
+                EraserMode::WholeStroke => "Gomma (Tratto Intero)",
+                EraserMode::Segment => "Gomma (Per Segmento)",
+            },
             ActiveTool::Highlighter => "Evidenziatore",
             ActiveTool::Text => "Testo",
             ActiveTool::Line => "Linea Dritta",
             ActiveTool::Shapes => "Forme",
             ActiveTool::Select => "Selezione (Lazo / Rettangolo)",
+        };
+        self.hud
+            .update_metrics(|m| m.current_tool = tool_name.to_string());
+        self.hud.update_view();
+        self.area.queue_draw();
+    }
+
+    pub fn eraser_mode(&self) -> EraserMode {
+        self.state.borrow().eraser_mode
+    }
+
+    pub fn set_eraser_mode(&self, mode: EraserMode) {
+        let mut st = self.state.borrow_mut();
+        st.eraser_mode = mode;
+        let tool_name = match mode {
+            EraserMode::WholeStroke => "Gomma (Tratto Intero)",
+            EraserMode::Segment => "Gomma (Per Segmento)",
         };
         self.hud
             .update_metrics(|m| m.current_tool = tool_name.to_string());
@@ -1362,19 +1513,14 @@ impl NoteCanvas {
 
                                     if let Some(item) = item_opt {
                                         let ItemKind::Stroke(stroke) = &item.kind;
-                                        let is_selected_drag = st.selection.is_dragging
-                                            && st.selection.selected_ids.contains(&item.id);
-                                        if is_selected_drag {
-                                            let _ = cr.save();
-                                            cr.translate(
-                                                st.selection.drag_offset.0,
-                                                st.selection.drag_offset.1,
-                                            );
-                                            Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                            let _ = cr.restore();
-                                        } else {
-                                            Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                        }
+                                        Self::draw_stroke_with_selection(
+                                            cr,
+                                            stroke,
+                                            item.id,
+                                            &st.selection,
+                                            current_mode,
+                                            is_dark,
+                                        );
                                     }
                                 }
 
@@ -1388,18 +1534,14 @@ impl NoteCanvas {
                                             {
                                                 visible_strokes += 1;
                                                 let ItemKind::Stroke(stroke) = &item.kind;
-                                                let _ = cr.save();
-                                                cr.translate(
-                                                    st.selection.drag_offset.0,
-                                                    st.selection.drag_offset.1,
-                                                );
-                                                Self::draw_stroke(
+                                                Self::draw_stroke_with_selection(
                                                     cr,
                                                     stroke,
+                                                    item.id,
+                                                    &st.selection,
                                                     current_mode,
                                                     is_dark,
                                                 );
-                                                let _ = cr.restore();
                                             }
                                         }
                                     }
@@ -1410,19 +1552,14 @@ impl NoteCanvas {
                             visible_strokes += page.items.len();
                             for item in &page.items {
                                 let ItemKind::Stroke(stroke) = &item.kind;
-                                let is_selected_drag = st.selection.is_dragging
-                                    && st.selection.selected_ids.contains(&item.id);
-                                if is_selected_drag {
-                                    let _ = cr.save();
-                                    cr.translate(
-                                        st.selection.drag_offset.0,
-                                        st.selection.drag_offset.1,
-                                    );
-                                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                    let _ = cr.restore();
-                                } else {
-                                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                }
+                                Self::draw_stroke_with_selection(
+                                    cr,
+                                    stroke,
+                                    item.id,
+                                    &st.selection,
+                                    current_mode,
+                                    is_dark,
+                                );
                             }
                         }
                         let _ = cr.restore();
@@ -1489,19 +1626,14 @@ impl NoteCanvas {
 
                                 if let Some(item) = item_opt {
                                     let ItemKind::Stroke(stroke) = &item.kind;
-                                    let is_selected_drag = st.selection.is_dragging
-                                        && st.selection.selected_ids.contains(&item.id);
-                                    if is_selected_drag {
-                                        let _ = cr.save();
-                                        cr.translate(
-                                            st.selection.drag_offset.0,
-                                            st.selection.drag_offset.1,
-                                        );
-                                        Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                        let _ = cr.restore();
-                                    } else {
-                                        Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                    }
+                                    Self::draw_stroke_with_selection(
+                                        cr,
+                                        stroke,
+                                        item.id,
+                                        &st.selection,
+                                        current_mode,
+                                        is_dark,
+                                    );
                                 }
                             }
 
@@ -1513,13 +1645,14 @@ impl NoteCanvas {
                                         {
                                             visible_strokes += 1;
                                             let ItemKind::Stroke(stroke) = &item.kind;
-                                            let _ = cr.save();
-                                            cr.translate(
-                                                st.selection.drag_offset.0,
-                                                st.selection.drag_offset.1,
+                                            Self::draw_stroke_with_selection(
+                                                cr,
+                                                stroke,
+                                                item.id,
+                                                &st.selection,
+                                                current_mode,
+                                                is_dark,
                                             );
-                                            Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                            let _ = cr.restore();
                                         }
                                     }
                                 }
@@ -1546,19 +1679,14 @@ impl NoteCanvas {
                                     }
                                 }
                                 visible_strokes += 1;
-                                let is_selected_drag = st.selection.is_dragging
-                                    && st.selection.selected_ids.contains(&item.id);
-                                if is_selected_drag {
-                                    let _ = cr.save();
-                                    cr.translate(
-                                        st.selection.drag_offset.0,
-                                        st.selection.drag_offset.1,
-                                    );
-                                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                    let _ = cr.restore();
-                                } else {
-                                    Self::draw_stroke(cr, stroke, current_mode, is_dark);
-                                }
+                                Self::draw_stroke_with_selection(
+                                    cr,
+                                    stroke,
+                                    item.id,
+                                    &st.selection,
+                                    current_mode,
+                                    is_dark,
+                                );
                             }
                         }
                     }
@@ -1599,6 +1727,38 @@ impl NoteCanvas {
                 hud_clone.update_view();
             }
         });
+    }
+
+    #[inline]
+    pub fn draw_stroke_with_selection(
+        cr: &gtk4::cairo::Context,
+        stroke: &Stroke,
+        item_id: u64,
+        selection: &SelectionState,
+        mode: PipelineMode,
+        is_dark: bool,
+    ) {
+        let is_selected_drag = selection.is_dragging && selection.selected_ids.contains(&item_id);
+        if is_selected_drag {
+            let _ = cr.save();
+            match selection.drag_kind {
+                SelectionDragKind::Translate => {
+                    cr.translate(selection.drag_offset.0, selection.drag_offset.1);
+                }
+                SelectionDragKind::ScaleHandle(_) => {
+                    let (ox, oy) = selection.scale_anchor;
+                    let (sx, sy) = selection.scale_factors;
+                    cr.translate(ox, oy);
+                    cr.scale(sx, sy);
+                    cr.translate(-ox, -oy);
+                }
+                SelectionDragKind::None => {}
+            }
+            Self::draw_stroke(cr, stroke, mode, is_dark);
+            let _ = cr.restore();
+        } else {
+            Self::draw_stroke(cr, stroke, mode, is_dark);
+        }
     }
 
     pub fn draw_stroke(
@@ -1791,25 +1951,10 @@ impl NoteCanvas {
 
             // Gestione Strumento Selezione (Stylus Down)
             if st.active_tool == ActiveTool::Select {
-                let hit = st
-                    .selection
-                    .hit_test_handle_or_bbox((doc_x, doc_y), 12.0 / st.viewport.zoom);
-                if hit {
-                    st.selection.is_dragging = true;
-                    st.selection.drag_start_doc = Some((doc_x, doc_y));
-                    st.selection.drag_offset = (0.0, 0.0);
-                } else {
-                    st.selection.clear();
-                    match st.selection.mode {
-                        SelectionMode::Lasso => {
-                            st.selection.active_lasso.push((doc_x, doc_y));
-                        }
-                        SelectionMode::Rectangle => {
-                            st.selection.active_rect_start = Some((doc_x, doc_y));
-                            st.selection.active_rect_current = Some((doc_x, doc_y));
-                        }
-                    }
-                }
+                let is_shift = gesture
+                    .current_event()
+                    .is_some_and(|ev| ev.modifier_state().contains(gdk::ModifierType::SHIFT_MASK));
+                Self::handle_selection_down(&mut st, (doc_x, doc_y), is_shift);
                 drop(st);
                 area.queue_draw();
                 return;
@@ -1911,27 +2056,14 @@ impl NoteCanvas {
 
             // Gestione Strumento Selezione (Stylus Motion)
             if st.active_tool == ActiveTool::Select {
-                if st.selection.is_dragging {
-                    if let Some(start) = st.selection.drag_start_doc {
-                        st.selection.drag_offset = (doc_x - start.0, doc_y - start.1);
-                    }
-                    drop(st_guard);
-                    area.queue_draw();
-                    return;
-                } else if st.selection.is_selecting() {
-                    match st.selection.mode {
-                        SelectionMode::Lasso => {
-                            st.selection.active_lasso.push((doc_x, doc_y));
-                        }
-                        SelectionMode::Rectangle => {
-                            st.selection.active_rect_current = Some((doc_x, doc_y));
-                        }
-                    }
-                    drop(st_guard);
-                    area.queue_draw();
-                    return;
-                }
+                let is_shift = gesture
+                    .current_event()
+                    .is_some_and(|ev| ev.modifier_state().contains(gdk::ModifierType::SHIFT_MASK));
+                let redraw = Self::handle_selection_motion(st, (doc_x, doc_y), is_shift);
                 drop(st_guard);
+                if redraw {
+                    area.queue_draw();
+                }
                 return;
             }
 
@@ -2098,37 +2230,7 @@ impl NoteCanvas {
 
             // Gestione Strumento Selezione (Stylus Up)
             if st.active_tool == ActiveTool::Select {
-                if st.selection.is_dragging {
-                    let (dx, dy) = st.selection.drag_offset;
-                    st.selection.is_dragging = false;
-                    st.selection.drag_start_doc = None;
-                    st.selection.drag_offset = (0.0, 0.0);
-
-                    if (dx.abs() > 0.001 || dy.abs() > 0.001)
-                        && !st.selection.selected_ids.is_empty()
-                    {
-                        if let Some(page_idx) = st.selection.page_index {
-                            if let Some(page) = st.document.pages.get(page_idx) {
-                                let page_id = page.id;
-                                let item_ids = st.selection.selected_ids.clone();
-                                let cmd = DocCommand::MoveItems {
-                                    page_id,
-                                    item_ids,
-                                    delta_x: dx,
-                                    delta_y: dy,
-                                };
-                                let st = &mut *st;
-                                st.history.execute(cmd, &mut st.document);
-                                st.persist_changes();
-                                if let Some(bbox) = st.selection.bbox.as_mut() {
-                                    *bbox = bbox.translate(dx, dy);
-                                }
-                            }
-                        }
-                    }
-                } else if st.selection.is_selecting() {
-                    Self::finalize_selection_gesture(&mut st);
-                }
+                Self::handle_selection_up(&mut st);
                 drop(st);
                 area.queue_draw();
                 return;
@@ -2249,25 +2351,10 @@ impl NoteCanvas {
 
                 // Gestione Strumento Selezione (Mouse Drag Begin)
                 if st.active_tool == ActiveTool::Select {
-                    let hit = st
-                        .selection
-                        .hit_test_handle_or_bbox((doc_x, doc_y), 12.0 / st.viewport.zoom);
-                    if hit {
-                        st.selection.is_dragging = true;
-                        st.selection.drag_start_doc = Some((doc_x, doc_y));
-                        st.selection.drag_offset = (0.0, 0.0);
-                    } else {
-                        st.selection.clear();
-                        match st.selection.mode {
-                            SelectionMode::Lasso => {
-                                st.selection.active_lasso.push((doc_x, doc_y));
-                            }
-                            SelectionMode::Rectangle => {
-                                st.selection.active_rect_start = Some((doc_x, doc_y));
-                                st.selection.active_rect_current = Some((doc_x, doc_y));
-                            }
-                        }
-                    }
+                    let is_shift = gesture.current_event().is_some_and(|ev| {
+                        ev.modifier_state().contains(gdk::ModifierType::SHIFT_MASK)
+                    });
+                    Self::handle_selection_down(&mut st, (doc_x, doc_y), is_shift);
                     drop(st);
                     area.queue_draw();
                     return;
@@ -2358,27 +2445,14 @@ impl NoteCanvas {
 
                 // Gestione Strumento Selezione (Mouse Drag Update)
                 if st.active_tool == ActiveTool::Select {
-                    if st.selection.is_dragging {
-                        if let Some(start) = st.selection.drag_start_doc {
-                            st.selection.drag_offset = (doc_x - start.0, doc_y - start.1);
-                        }
-                        drop(st_guard);
-                        area.queue_draw();
-                        return;
-                    } else if st.selection.is_selecting() {
-                        match st.selection.mode {
-                            SelectionMode::Lasso => {
-                                st.selection.active_lasso.push((doc_x, doc_y));
-                            }
-                            SelectionMode::Rectangle => {
-                                st.selection.active_rect_current = Some((doc_x, doc_y));
-                            }
-                        }
-                        drop(st_guard);
-                        area.queue_draw();
-                        return;
-                    }
+                    let is_shift = gesture.current_event().is_some_and(|ev| {
+                        ev.modifier_state().contains(gdk::ModifierType::SHIFT_MASK)
+                    });
+                    let redraw = Self::handle_selection_motion(st, (doc_x, doc_y), is_shift);
                     drop(st_guard);
+                    if redraw {
+                        area.queue_draw();
+                    }
                     return;
                 }
 
@@ -2442,37 +2516,7 @@ impl NoteCanvas {
 
                 // Gestione Strumento Selezione (Mouse Drag End)
                 if st.active_tool == ActiveTool::Select {
-                    if st.selection.is_dragging {
-                        let (dx, dy) = st.selection.drag_offset;
-                        st.selection.is_dragging = false;
-                        st.selection.drag_start_doc = None;
-                        st.selection.drag_offset = (0.0, 0.0);
-
-                        if (dx.abs() > 0.001 || dy.abs() > 0.001)
-                            && !st.selection.selected_ids.is_empty()
-                        {
-                            if let Some(page_idx) = st.selection.page_index {
-                                if let Some(page) = st.document.pages.get(page_idx) {
-                                    let page_id = page.id;
-                                    let item_ids = st.selection.selected_ids.clone();
-                                    let cmd = DocCommand::MoveItems {
-                                        page_id,
-                                        item_ids,
-                                        delta_x: dx,
-                                        delta_y: dy,
-                                    };
-                                    let st = &mut *st;
-                                    st.history.execute(cmd, &mut st.document);
-                                    st.persist_changes();
-                                    if let Some(bbox) = st.selection.bbox.as_mut() {
-                                        *bbox = bbox.translate(dx, dy);
-                                    }
-                                }
-                            }
-                        }
-                    } else if st.selection.is_selecting() {
-                        Self::finalize_selection_gesture(&mut st);
-                    }
+                    Self::handle_selection_up(&mut st);
                     drop(st);
                     area.queue_draw();
                     return;
@@ -2671,39 +2715,88 @@ impl NoteCanvas {
 
             // 2. Controllo geometrico puntuale dettagliato ESCLUSIVAMENTE sui candidati (K << N)
             let page_id = page.id;
-            let mut erased = Vec::new();
 
-            if candidates.len() == 1 {
-                let target_id = candidates[0].item_id;
-                if let Some(item) = page.items.iter().find(|it| it.id == target_id) {
-                    let ItemKind::Stroke(ref s) = item.kind;
-                    if s.intersects_point(doc_pt, radius) {
-                        erased.push(item.clone());
-                    }
-                }
-            } else {
-                let candidate_ids: std::collections::HashSet<u64> =
-                    candidates.iter().map(|c| c.item_id).collect();
-                for item in &page.items {
-                    if candidate_ids.contains(&item.id) {
-                        let ItemKind::Stroke(ref s) = item.kind;
-                        if s.intersects_point(doc_pt, radius) {
-                            erased.push(item.clone());
+            match st.eraser_mode {
+                EraserMode::WholeStroke => {
+                    let mut erased = Vec::new();
+
+                    if candidates.len() == 1 {
+                        let target_id = candidates[0].item_id;
+                        if let Some(item) = page.items.iter().find(|it| it.id == target_id) {
+                            let ItemKind::Stroke(ref s) = item.kind;
+                            if s.intersects_point(doc_pt, radius) {
+                                erased.push(item.clone());
+                            }
+                        }
+                    } else {
+                        let candidate_ids: std::collections::HashSet<u64> =
+                            candidates.iter().map(|c| c.item_id).collect();
+                        for item in &page.items {
+                            if candidate_ids.contains(&item.id) {
+                                let ItemKind::Stroke(ref s) = item.kind;
+                                if s.intersects_point(doc_pt, radius) {
+                                    erased.push(item.clone());
+                                }
+                            }
                         }
                     }
-                }
-            }
 
-            // 3. Esecuzione comando atomico EraseItems (aggiorna history, document e spatial_index)
-            if !erased.is_empty() {
-                st.history.execute(
-                    DocCommand::EraseItems {
-                        page_id,
-                        erased_items: erased,
-                    },
-                    &mut st.document,
-                );
-                st.persist_changes();
+                    // 3. Esecuzione comando atomico EraseItems (aggiorna history, document e spatial_index)
+                    if !erased.is_empty() {
+                        st.history.execute(
+                            DocCommand::EraseItems {
+                                page_id,
+                                erased_items: erased,
+                            },
+                            &mut st.document,
+                        );
+                        st.persist_changes();
+                    }
+                }
+                EraserMode::Segment => {
+                    let candidate_ids: std::collections::HashSet<u64> =
+                        candidates.iter().map(|c| c.item_id).collect();
+                    let mut to_slice = Vec::new();
+
+                    for item in &page.items {
+                        if candidate_ids.contains(&item.id) {
+                            let ItemKind::Stroke(ref s) = item.kind;
+                            if s.intersects_point(doc_pt, radius) {
+                                let fragments = s.slice_with_circle(doc_pt, radius);
+                                let is_unchanged = fragments.len() == 1
+                                    && fragments[0].id == s.id
+                                    && fragments[0].points.len() == s.points.len();
+                                if !is_unchanged {
+                                    to_slice.push((item.clone(), fragments));
+                                }
+                            }
+                        }
+                    }
+
+                    if !to_slice.is_empty() {
+                        for (orig_item, fragments) in to_slice {
+                            let mut new_items = Vec::with_capacity(fragments.len());
+                            for mut frag in fragments {
+                                let new_id = st.alloc_item_id();
+                                frag.id = new_id;
+                                new_items.push(Item {
+                                    id: new_id,
+                                    z_index: orig_item.z_index,
+                                    kind: ItemKind::Stroke(frag),
+                                });
+                            }
+                            st.history.execute(
+                                DocCommand::SliceStroke {
+                                    page_id,
+                                    original_stroke: orig_item,
+                                    new_strokes: new_items,
+                                },
+                                &mut st.document,
+                            );
+                        }
+                        st.persist_changes();
+                    }
+                }
             }
         }
     }
@@ -2885,8 +2978,169 @@ impl NoteCanvas {
         }
     }
 
+    /// Gestisce l'inizio del contatto (Down) per lo strumento di selezione.
+    pub fn handle_selection_down(st: &mut CanvasState, doc_pt: (f64, f64), is_shift: bool) {
+        let hit_res = st.selection.hit_test(doc_pt, &st.viewport);
+        match hit_res {
+            SelectionHitTestResult::Handle(handle_id) => {
+                if let Some(ref bbox) = st.selection.bbox {
+                    let (ox, oy) = handle_id.anchor_point(bbox);
+                    st.selection.is_dragging = true;
+                    st.selection.drag_kind = SelectionDragKind::ScaleHandle(handle_id);
+                    st.selection.scale_anchor = (ox, oy);
+                    st.selection.scale_factors = (1.0, 1.0);
+                    st.selection.lock_aspect_ratio = !is_shift;
+                    st.selection.drag_start_doc = Some(doc_pt);
+                }
+            }
+            SelectionHitTestResult::Body => {
+                st.selection.is_dragging = true;
+                st.selection.drag_kind = SelectionDragKind::Translate;
+                st.selection.drag_start_doc = Some(doc_pt);
+                st.selection.drag_offset = (0.0, 0.0);
+            }
+            SelectionHitTestResult::None => {
+                st.selection.clear();
+                match st.selection.mode {
+                    SelectionMode::Lasso => {
+                        st.selection.active_lasso.push(doc_pt);
+                    }
+                    SelectionMode::Rectangle => {
+                        st.selection.active_rect_start = Some(doc_pt);
+                        st.selection.active_rect_current = Some(doc_pt);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Gestisce il movimento del contatto (Motion / Drag Update) per lo strumento di selezione.
+    pub fn handle_selection_motion(
+        st: &mut CanvasState,
+        doc_pt: (f64, f64),
+        is_shift: bool,
+    ) -> bool {
+        if st.selection.is_dragging {
+            match st.selection.drag_kind {
+                SelectionDragKind::Translate => {
+                    if let Some(start) = st.selection.drag_start_doc {
+                        st.selection.drag_offset = (doc_pt.0 - start.0, doc_pt.1 - start.1);
+                    }
+                }
+                SelectionDragKind::ScaleHandle(handle) => {
+                    if let Some(ref bbox) = st.selection.bbox {
+                        st.selection.lock_aspect_ratio = !is_shift;
+                        let (anchor, factors) = SelectionState::compute_scale_factors(
+                            handle,
+                            bbox,
+                            doc_pt,
+                            st.selection.lock_aspect_ratio,
+                        );
+                        st.selection.scale_anchor = anchor;
+                        st.selection.scale_factors = factors;
+                    }
+                }
+                SelectionDragKind::None => {}
+            }
+            true
+        } else if st.selection.is_selecting() {
+            match st.selection.mode {
+                SelectionMode::Lasso => {
+                    st.selection.active_lasso.push(doc_pt);
+                }
+                SelectionMode::Rectangle => {
+                    st.selection.active_rect_current = Some(doc_pt);
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Gestisce il rilascio del contatto (Up / Drag End) per lo strumento di selezione.
+    pub fn handle_selection_up(st: &mut CanvasState) {
+        if st.selection.is_dragging {
+            match st.selection.drag_kind {
+                SelectionDragKind::Translate => {
+                    let (dx, dy) = st.selection.drag_offset;
+                    st.selection.is_dragging = false;
+                    st.selection.drag_kind = SelectionDragKind::None;
+                    st.selection.drag_start_doc = None;
+                    st.selection.drag_offset = (0.0, 0.0);
+
+                    if (dx.abs() > 0.001 || dy.abs() > 0.001)
+                        && !st.selection.selected_ids.is_empty()
+                    {
+                        if let Some(page_idx) = st.selection.page_index {
+                            if let Some(page) = st.document.pages.get(page_idx) {
+                                let page_id = page.id;
+                                let item_ids = st.selection.selected_ids.clone();
+                                let cmd = DocCommand::MoveItems {
+                                    page_id,
+                                    item_ids,
+                                    delta_x: dx,
+                                    delta_y: dy,
+                                };
+                                st.history.execute(cmd, &mut st.document);
+                                st.persist_changes();
+                                if let Some(bbox) = st.selection.bbox.as_mut() {
+                                    *bbox = bbox.translate(dx, dy);
+                                }
+                            }
+                        }
+                    }
+                }
+                SelectionDragKind::ScaleHandle(_handle) => {
+                    let (ox, oy) = st.selection.scale_anchor;
+                    let (sx, sy) = st.selection.scale_factors;
+                    st.selection.is_dragging = false;
+                    st.selection.drag_kind = SelectionDragKind::None;
+                    st.selection.drag_start_doc = None;
+                    st.selection.scale_factors = (1.0, 1.0);
+
+                    if ((sx - 1.0).abs() > 0.001 || (sy - 1.0).abs() > 0.001)
+                        && !st.selection.selected_ids.is_empty()
+                    {
+                        if let Some(page_idx) = st.selection.page_index {
+                            if let Some(page) = st.document.pages.get(page_idx) {
+                                let page_id = page.id;
+                                let item_ids = st.selection.selected_ids.clone();
+                                let cmd = DocCommand::TransformItems {
+                                    page_id,
+                                    item_ids,
+                                    origin_x: ox,
+                                    origin_y: oy,
+                                    scale_x: sx,
+                                    scale_y: sy,
+                                    rotation_rad: 0.0,
+                                };
+                                st.history.execute(cmd, &mut st.document);
+                                st.persist_changes();
+                                if let Some(bbox) = st.selection.bbox.as_mut() {
+                                    *bbox = Rect::new(
+                                        ox + (bbox.min_x - ox) * sx,
+                                        oy + (bbox.min_y - oy) * sy,
+                                        ox + (bbox.max_x - ox) * sx,
+                                        oy + (bbox.max_y - oy) * sy,
+                                    )
+                                    .normalized();
+                                }
+                            }
+                        }
+                    }
+                }
+                SelectionDragKind::None => {
+                    st.selection.is_dragging = false;
+                }
+            }
+        } else if st.selection.is_selecting() {
+            Self::finalize_selection_gesture(st);
+        }
+    }
+
     /// Conclude il gesto di selezione poligonale o rettangolare e rileva i tratti selezionati.
-    fn finalize_selection_gesture(st: &mut CanvasState) {
+    pub fn finalize_selection_gesture(st: &mut CanvasState) {
         if st.document.pages.is_empty() {
             st.selection.clear();
             return;
@@ -3059,14 +3313,26 @@ impl NoteCanvas {
             }
         }
 
-        // 2. Bounding box tratteggiato #6DD2FF con maniglia centrale
+        // 2. Bounding box e 8 maniglie perimetrali DMS
         if let Some(ref base_bbox) = selection.bbox {
-            let (dx, dy) = if selection.is_dragging {
-                selection.drag_offset
-            } else {
-                (0.0, 0.0)
+            // Calcola l'AABB live trasformato durante il drag
+            let live_bbox = match selection.drag_kind {
+                SelectionDragKind::Translate => {
+                    base_bbox.translate(selection.drag_offset.0, selection.drag_offset.1)
+                }
+                SelectionDragKind::ScaleHandle(_) => {
+                    let (ox, oy) = selection.scale_anchor;
+                    let (sx, sy) = selection.scale_factors;
+                    Rect::new(
+                        ox + (base_bbox.min_x - ox) * sx,
+                        oy + (base_bbox.min_y - oy) * sy,
+                        ox + (base_bbox.max_x - ox) * sx,
+                        oy + (base_bbox.max_y - oy) * sy,
+                    )
+                    .normalized()
+                }
+                SelectionDragKind::None => *base_bbox,
             };
-            let live_bbox = base_bbox.translate(dx, dy);
 
             let (s_min_x, s_min_y) = vp.document_to_screen((live_bbox.min_x, live_bbox.min_y));
             let (s_max_x, s_max_y) = vp.document_to_screen((live_bbox.max_x, live_bbox.max_y));
@@ -3074,10 +3340,13 @@ impl NoteCanvas {
             let sh = (s_max_y - s_min_y).max(1.0);
 
             let _ = cr.save();
+
+            // 2.1 Riempimento ciano trasparente
             cr.set_source_rgba(cyan.0, cyan.1, cyan.2, 0.05);
             cr.rectangle(s_min_x, s_min_y, sw, sh);
             let _ = cr.fill();
 
+            // 2.2 Bordo tratteggiato Electric Cyan
             cr.set_source_rgba(cyan.0, cyan.1, cyan.2, 0.95);
             cr.set_line_width(1.8);
             cr.set_dash(&[6.0, 4.0], 0.0);
@@ -3085,29 +3354,23 @@ impl NoteCanvas {
             let _ = cr.stroke();
             cr.set_dash(&[], 0.0);
 
-            // Maniglia centrale
+            // 2.3 Grip centrale per la presa di spostamento
             let center_x = s_min_x + sw / 2.0;
             let center_y = s_min_y + sh / 2.0;
-            let handle_radius = 8.0;
+            let grip_r = 7.5;
 
-            cr.set_source_rgba(0.0, 0.0, 0.0, 0.25);
+            cr.set_source_rgba(0.0, 0.0, 0.0, 0.28);
             cr.arc(
                 center_x,
                 center_y + 1.0,
-                handle_radius + 1.0,
+                grip_r + 1.0,
                 0.0,
                 2.0 * std::f64::consts::PI,
             );
             let _ = cr.fill();
 
             cr.set_source_rgb(cyan.0, cyan.1, cyan.2);
-            cr.arc(
-                center_x,
-                center_y,
-                handle_radius,
-                0.0,
-                2.0 * std::f64::consts::PI,
-            );
+            cr.arc(center_x, center_y, grip_r, 0.0, 2.0 * std::f64::consts::PI);
             let _ = cr.fill();
 
             if is_dark {
@@ -3116,21 +3379,126 @@ impl NoteCanvas {
                 cr.set_source_rgb(1.0, 1.0, 1.0);
             }
             cr.set_line_width(2.0);
-            cr.arc(
-                center_x,
-                center_y,
-                handle_radius,
-                0.0,
-                2.0 * std::f64::consts::PI,
-            );
+            cr.arc(center_x, center_y, grip_r, 0.0, 2.0 * std::f64::consts::PI);
             let _ = cr.stroke();
 
-            cr.arc(center_x, center_y, 2.5, 0.0, 2.0 * std::f64::consts::PI);
+            cr.arc(center_x, center_y, 2.2, 0.0, 2.0 * std::f64::consts::PI);
             let _ = cr.fill();
+
+            // 2.4 Le 4 Maniglie d'Angolo (Nodi Circolari DMS con Pinpoint)
+            let corner_radius = 5.5;
+            let corners = [
+                (s_min_x, s_min_y),
+                (s_max_x, s_min_y),
+                (s_max_x, s_max_y),
+                (s_min_x, s_max_y),
+            ];
+
+            for (cx, cy) in corners {
+                // Ombra sottile
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.30);
+                cr.arc(
+                    cx,
+                    cy + 1.0,
+                    corner_radius + 0.8,
+                    0.0,
+                    2.0 * std::f64::consts::PI,
+                );
+                let _ = cr.fill();
+
+                // Riempimento a contrasto
+                if is_dark {
+                    cr.set_source_rgb(0.92, 0.95, 0.98);
+                } else {
+                    cr.set_source_rgb(1.0, 1.0, 1.0);
+                }
+                cr.arc(cx, cy, corner_radius, 0.0, 2.0 * std::f64::consts::PI);
+                let _ = cr.fill();
+
+                // Anello Electric Cyan
+                cr.set_source_rgb(cyan.0, cyan.1, cyan.2);
+                cr.set_line_width(1.8);
+                cr.arc(cx, cy, corner_radius, 0.0, 2.0 * std::f64::consts::PI);
+                let _ = cr.stroke();
+
+                // Punto centrale
+                cr.arc(cx, cy, 1.5, 0.0, 2.0 * std::f64::consts::PI);
+                let _ = cr.fill();
+            }
+
+            // 2.5 I 4 Punti Mediani (Pillole Arrotondate DMS) se lo spazio è >= 32 px
+            if sw >= 32.0 && sh >= 32.0 {
+                let mid_x = s_min_x + sw / 2.0;
+                let mid_y = s_min_y + sh / 2.0;
+
+                // Pillola orizzontale (Top e Bottom): 14x6 px
+                draw_dms_pill(cr, mid_x, s_min_y, 14.0, 6.0, cyan, is_dark);
+                draw_dms_pill(cr, mid_x, s_max_y, 14.0, 6.0, cyan, is_dark);
+
+                // Pillola verticale (Left e Right): 6x14 px
+                draw_dms_pill(cr, s_min_x, mid_y, 6.0, 14.0, cyan, is_dark);
+                draw_dms_pill(cr, s_max_x, mid_y, 6.0, 14.0, cyan, is_dark);
+            }
 
             let _ = cr.restore();
         }
     }
+}
+
+/// Helper per il disegno di pillole/squircle arrotondati con Cairo.
+fn draw_dms_pill(
+    cr: &gtk4::cairo::Context,
+    cx: f64,
+    cy: f64,
+    w: f64,
+    h: f64,
+    cyan: (f64, f64, f64),
+    is_dark: bool,
+) {
+    let r = (w.min(h)) / 2.0;
+    let x = cx - w / 2.0;
+    let y = cy - h / 2.0;
+
+    // Ombra
+    cr.set_source_rgba(0.0, 0.0, 0.0, 0.25);
+    draw_rounded_rect_path(cr, x, y + 1.0, w, h, r);
+    let _ = cr.fill();
+
+    // Riempimento
+    if is_dark {
+        cr.set_source_rgb(0.92, 0.95, 0.98);
+    } else {
+        cr.set_source_rgb(1.0, 1.0, 1.0);
+    }
+    draw_rounded_rect_path(cr, x, y, w, h, r);
+    let _ = cr.fill();
+
+    // Bordo Electric Cyan
+    cr.set_source_rgb(cyan.0, cyan.1, cyan.2);
+    cr.set_line_width(1.5);
+    draw_rounded_rect_path(cr, x, y, w, h, r);
+    let _ = cr.stroke();
+}
+
+fn draw_rounded_rect_path(cr: &gtk4::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
+    cr.new_sub_path();
+    cr.arc(x + w - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
+    cr.arc(x + w - r, y + h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
+    cr.arc(
+        x + r,
+        y + h - r,
+        r,
+        std::f64::consts::FRAC_PI_2,
+        std::f64::consts::PI,
+    );
+    cr.arc(
+        x + r,
+        y + r,
+        r,
+        std::f64::consts::PI,
+        3.0 * std::f64::consts::FRAC_PI_2,
+    );
+    cr.close_path();
 }
 
 #[cfg(test)]

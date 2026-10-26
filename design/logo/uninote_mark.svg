@@ -1,10 +1,100 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <title>uninote_mark</title>
-  <g id="U_BrushStroke">
-    <path id="U_BrushStroke-2" data-name="U_BrushStroke" d="M315.09 189.66 C299.24 197.72 294.78 288.37 290.29 338.27 C285.81 388.17 285.05 439.05 288.17 489.05 C291.29 539.05 297.47 589.68 309.01 638.29 C320.54 686.9 331.43 740.44 357.38 780.72 C383.32 821.01 422.67 866.61 464.68 880 C506.7 893.39 571.45 884.37 609.46 861.03 C647.47 837.69 674.56 784.88 692.74 739.96 C710.93 695.05 712.4 641.36 718.57 591.55 C724.74 541.75 727.09 491.33 729.75 441.13 C732.4 390.93 733.47 340.55 734.49 290.36 C735.5 240.17 744.5 147.82 735.83 140 C727.16 132.18 693.78 201.17 682.47 243.43 C671.15 285.69 673.96 343.67 667.93 393.58 C661.91 443.48 656.62 493.78 646.31 542.84 C636 591.9 631.28 657.33 606.08 687.93 C580.88 718.52 522.79 743.33 495.09 726.42 C467.4 709.51 454.16 634.43 439.91 586.49 C425.66 538.54 418.66 488.2 409.57 438.77 C400.49 389.33 401.14 331.41 385.39 289.89 C369.64 248.37 330.93 181.59 315.09 189.66 Z" fill="#6dd2ff"/>
-  </g>
-  <g id="Ink_Dot">
-    <path id="Ink_Dot-2" data-name="Ink_Dot" d="M723.6 119.2 C723.6 112.02 729.42 106.2 736.6 106.2 C743.78 106.2 749.6 112.02 749.6 119.2 C749.6 126.38 743.78 132.2 736.6 132.2 C729.42 132.2 723.6 126.38 723.6 119.2 Z" fill="#ffd875"/>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="512" height="512" viewBox="0 0 36 36">
+  <title>UniNote</title>
+
+  <defs>
+    <linearGradient id="bg"
+                    x1="0" y1="0" x2="36" y2="36"
+                    gradientUnits="userSpaceOnUse">
+      <stop stop-color="#004D65"/>
+      <stop offset="1" stop-color="#00222E"/>
+    </linearGradient>
+
+    <linearGradient id="body"
+                    x1="-1.8" y1="0" x2="1.8" y2="0"
+                    gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38A9D5"/>
+      <stop offset=".38" stop-color="#9CE5FF"/>
+      <stop offset=".68" stop-color="#6DD2FF"/>
+      <stop offset="1" stop-color="#339FC8"/>
+    </linearGradient>
+
+    <linearGradient id="metal"
+                    x1="-1.5" y1="0" x2="1.5" y2="0"
+                    gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8FAFBD"/>
+      <stop offset=".45" stop-color="#F0FAFF"/>
+      <stop offset="1" stop-color="#A0C3D3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Sfondo -->
+  <rect width="36" height="36" rx="8.5"
+        fill="url(#bg)"
+        stroke="#6DD2FF" stroke-opacity=".22"/>
+
+  <!-- U -->
+  <path d="M10.5 9.5V20c0 5.5 4 8.5 7.5 8.5"
+        fill="none"
+        stroke="#ECEFF4"
+        stroke-width="3.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+
+  <!-- Penna a sfera -->
+  <g transform="translate(18 28.5) rotate(25)"
+     stroke-linecap="round"
+     stroke-linejoin="round">
+
+    <rect x="-.85" y="-21.2"
+          width="1.7" height="1.8" rx=".5"
+          fill="url(#metal)"/>
+
+    <rect x="-1.75" y="-19.8"
+          width="3.5" height="13.7" rx="1.35"
+          fill="url(#body)"
+          stroke="#B2EAFF" stroke-width=".35"/>
+
+    <path d="M-.85-18.1V-10.3"
+          fill="none"
+          stroke="#DCFAFF"
+          stroke-opacity=".65"
+          stroke-width=".4"/>
+
+    <path d="M.85-18.8
+             H2
+             Q2.55-18.8 2.55-18.15
+             V-13.5
+             Q2.55-12.9 2.05-12.9"
+          fill="none"
+          stroke="#D8F3FF"
+          stroke-width=".65"/>
+
+    <path d="M-1.75-8.8H1.75
+             L1.5-4.7
+             H-1.5Z"
+          fill="#176782"
+          stroke="#70CDEC"
+          stroke-width=".35"/>
+
+    <path d="M-1.38-7.8H1.38
+             M-1.34-6.8H1.34
+             M-1.28-5.8H1.28"
+          fill="none"
+          stroke="#78CBE5"
+          stroke-opacity=".65"
+          stroke-width=".35"/>
+
+    <path d="M-1.5-4.7H1.5
+             L.38-.7
+             H-.38Z"
+          fill="url(#metal)"
+          stroke="#BADCEB"
+          stroke-width=".3"/>
+
+    <path d="M0-.8V0"
+          fill="none"
+          stroke="#DFF6FF"
+          stroke-width=".65"/>
   </g>
 </svg>

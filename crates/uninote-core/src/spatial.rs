@@ -157,6 +157,25 @@ impl PageSpatialIndex {
         }
     }
 
+    /// Rimuove un `Item` dall'indice spaziale estraendo automaticamente il suo bounding box.
+    /// Include fallback lineare se il bounding box è nullo o degenere.
+    pub fn remove_item(&mut self, item: &Item) -> bool {
+        match &item.kind {
+            ItemKind::Stroke(stroke) => {
+                if let Some(bbox) = stroke.bounding_box() {
+                    self.remove(item.id, &bbox)
+                } else {
+                    let target = self.tree.iter().find(|it| it.item_id == item.id).copied();
+                    if let Some(target_item) = target {
+                        self.tree.remove(&target_item).is_some()
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
+    }
+
     /// Query spaziale su un inviluppo rettangolare (min_x, min_y, max_x, max_y).
     /// Restituisce tutti gli elementi intersecanti ordinati rigorosamente per `z_index` crescente,
     /// garantendo il corretto ordine pittorico naturale durante il rendering.

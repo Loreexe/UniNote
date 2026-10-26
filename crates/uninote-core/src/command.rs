@@ -50,6 +50,12 @@ pub enum DocCommand {
             uninote_stroke::StrokeStyle,
         )>,
     },
+    /// Sostituzione atomica di un tratto originale con N frammenti (taglio analitico con gomma a segmento).
+    SliceStroke {
+        page_id: Uuid,
+        original_stroke: Item,
+        new_strokes: Vec<Item>,
+    },
 }
 
 /// Gestore della cronologia dei comandi per Undo / Redo e tracciamento delle revisioni monotone.
@@ -291,6 +297,35 @@ impl CommandHistory {
                     }
                 }
             }
+            DocCommand::SliceStroke {
+                page_id,
+                original_stroke,
+                new_strokes,
+            } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    // 1. Rimuove original_stroke dall'indice spaziale
+                    page.spatial_index.remove_item(original_stroke);
+
+                    // 2. Rimuove original_stroke da page.items preservando la posizione di inserimento
+                    let orig_pos = page.items.iter().position(|it| it.id == original_stroke.id);
+                    if let Some(pos) = orig_pos {
+                        page.items.remove(pos);
+                        // 3. Inserisce i nuovi frammenti nella pagina e nell'indice spaziale
+                        for (idx, new_item) in new_strokes.iter().enumerate() {
+                            page.spatial_index.insert(new_item);
+                            page.items.insert(pos + idx, new_item.clone());
+                        }
+                    } else {
+                        // Fallback difensivo nel caso improbabile in cui l'ID non sia all'indice previsto
+                        page.items.retain(|it| it.id != original_stroke.id);
+                        for new_item in new_strokes {
+                            page.spatial_index.insert(new_item);
+                            page.items.push(new_item.clone());
+                        }
+                        page.items.sort_by_key(|it| it.z_index);
+                    }
+                }
+            }
         }
     }
 
@@ -439,6 +474,41 @@ impl CommandHistory {
                             page.spatial_index.insert(item);
                         }
                     }
+                }
+            }
+            DocCommand::SliceStroke {
+                page_id,
+                original_stroke,
+                new_strokes,
+            } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    // 1. Rimuove tutti i frammenti new_strokes dall'indice spaziale
+                    for new_item in new_strokes {
+                        page.spatial_index.remove_item(new_item);
+                    }
+
+                    // 2. Rimuove i frammenti da page.items, individuando la posizione del primo per il reinserimento in-place
+                    let restore_pos = if !new_strokes.is_empty() {
+                        page.items.iter().position(|it| it.id == new_strokes[0].id)
+                    } else {
+                        None
+                    };
+
+                    let new_ids: HashSet<u64> = new_strokes.iter().map(|it| it.id).collect();
+                    page.items.retain(|it| !new_ids.contains(&it.id));
+
+                    // 3. Ripristina original_stroke in page.items
+                    if let Some(pos) = restore_pos {
+                        page.items
+                            .insert(pos.min(page.items.len()), original_stroke.clone());
+                    } else {
+                        // Caso cancellazione completa (new_strokes vuoto o non trovato): riordina per z_index
+                        page.items.push(original_stroke.clone());
+                        page.items.sort_by_key(|it| it.z_index);
+                    }
+
+                    // 4. Ripristina original_stroke nell'indice spaziale
+                    page.spatial_index.insert(original_stroke);
                 }
             }
         }

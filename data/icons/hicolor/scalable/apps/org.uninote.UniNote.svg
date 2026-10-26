@@ -1,15 +1,100 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="512" height="512" viewBox="0 0 512 512">
-<defs>
-<linearGradient id="linear-pattern-0" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="512" y2="512">
-<stop offset="0" stop-color="rgb(0%, 30.2%, 39.6%)" stop-opacity="1"/>
-<stop offset="1" stop-color="rgb(0%, 13.3%, 18%)" stop-opacity="1"/>
-</linearGradient>
-</defs>
-<path fill-rule="nonzero" fill="url(#linear-pattern-0)" stroke-width="14.222222" stroke-linecap="butt" stroke-linejoin="miter" stroke="rgb(42.7%, 82.4%, 100%)" stroke-opacity="0.22" stroke-miterlimit="10" d="M 391.109375 0 C 457.875 0 512 54.125 512 120.890625 L 512 391.109375 C 512 457.875 457.875 512 391.109375 512 L 120.890625 512 C 54.125 512 0 457.875 0 391.109375 L 0 120.890625 C 0 54.125 54.125 0 120.890625 0 Z M 391.109375 0 "/>
-<path fill="none" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" stroke="rgb(92.5%, 93.7%, 95.7%)" stroke-opacity="1" stroke-miterlimit="10" d="M 10.499908 9.499878 L 10.499908 20.000061 C 10.499908 25.500092 14.500031 28.499908 18 28.499908 " transform="matrix(14.222222, 0, 0, 14.222222, 0, 0)"/>
-<path fill-rule="nonzero" fill="rgb(42.7%, 82.4%, 100%)" fill-opacity="0.25" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke="rgb(42.7%, 82.4%, 100%)" stroke-opacity="1" stroke-miterlimit="10" d="M 23.500031 9.499878 L 27.499878 9.499878 L 28.000031 17.500122 L 18 28.499908 L 20.499939 19.499908 Z M 23.500031 9.499878 " transform="matrix(14.222222, 0, 0, 14.222222, 0, 0)"/>
-<path fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" stroke="rgb(42.7%, 82.4%, 100%)" stroke-opacity="1" stroke-miterlimit="10" d="M 18 28.499908 L 22.999878 19.000031 " transform="matrix(14.222222, 0, 0, 14.222222, 0, 0)"/>
-<path fill-rule="nonzero" fill="rgb(92.5%, 93.7%, 95.7%)" fill-opacity="1" d="M 344.179688 270.222656 C 344.179688 279.648438 336.535156 287.289062 327.109375 287.289062 C 317.683594 287.289062 310.042969 279.648438 310.042969 270.222656 C 310.042969 260.796875 317.683594 253.15625 327.109375 253.15625 C 336.535156 253.15625 344.179688 260.796875 344.179688 270.222656 "/>
-<path fill-rule="nonzero" fill="rgb(47.5%, 85.1%, 64.7%)" fill-opacity="1" d="M 264.535156 423.820312 C 264.535156 434.820312 255.617188 443.734375 244.621094 443.734375 C 233.625 443.734375 224.710938 434.820312 224.710938 423.820312 C 224.710938 412.824219 233.625 403.910156 244.621094 403.910156 C 255.617188 403.910156 264.535156 412.824219 264.535156 423.820312 "/>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="512" height="512" viewBox="0 0 36 36">
+  <title>UniNote</title>
+
+  <defs>
+    <linearGradient id="bg"
+                    x1="0" y1="0" x2="36" y2="36"
+                    gradientUnits="userSpaceOnUse">
+      <stop stop-color="#004D65"/>
+      <stop offset="1" stop-color="#00222E"/>
+    </linearGradient>
+
+    <linearGradient id="body"
+                    x1="-1.8" y1="0" x2="1.8" y2="0"
+                    gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38A9D5"/>
+      <stop offset=".38" stop-color="#9CE5FF"/>
+      <stop offset=".68" stop-color="#6DD2FF"/>
+      <stop offset="1" stop-color="#339FC8"/>
+    </linearGradient>
+
+    <linearGradient id="metal"
+                    x1="-1.5" y1="0" x2="1.5" y2="0"
+                    gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8FAFBD"/>
+      <stop offset=".45" stop-color="#F0FAFF"/>
+      <stop offset="1" stop-color="#A0C3D3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Sfondo -->
+  <rect width="36" height="36" rx="8.5"
+        fill="url(#bg)"
+        stroke="#6DD2FF" stroke-opacity=".22"/>
+
+  <!-- U -->
+  <path d="M10.5 9.5V20c0 5.5 4 8.5 7.5 8.5"
+        fill="none"
+        stroke="#ECEFF4"
+        stroke-width="3.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+
+  <!-- Penna a sfera -->
+  <g transform="translate(18 28.5) rotate(25)"
+     stroke-linecap="round"
+     stroke-linejoin="round">
+
+    <rect x="-.85" y="-21.2"
+          width="1.7" height="1.8" rx=".5"
+          fill="url(#metal)"/>
+
+    <rect x="-1.75" y="-19.8"
+          width="3.5" height="13.7" rx="1.35"
+          fill="url(#body)"
+          stroke="#B2EAFF" stroke-width=".35"/>
+
+    <path d="M-.85-18.1V-10.3"
+          fill="none"
+          stroke="#DCFAFF"
+          stroke-opacity=".65"
+          stroke-width=".4"/>
+
+    <path d="M.85-18.8
+             H2
+             Q2.55-18.8 2.55-18.15
+             V-13.5
+             Q2.55-12.9 2.05-12.9"
+          fill="none"
+          stroke="#D8F3FF"
+          stroke-width=".65"/>
+
+    <path d="M-1.75-8.8H1.75
+             L1.5-4.7
+             H-1.5Z"
+          fill="#176782"
+          stroke="#70CDEC"
+          stroke-width=".35"/>
+
+    <path d="M-1.38-7.8H1.38
+             M-1.34-6.8H1.34
+             M-1.28-5.8H1.28"
+          fill="none"
+          stroke="#78CBE5"
+          stroke-opacity=".65"
+          stroke-width=".35"/>
+
+    <path d="M-1.5-4.7H1.5
+             L.38-.7
+             H-.38Z"
+          fill="url(#metal)"
+          stroke="#BADCEB"
+          stroke-width=".3"/>
+
+    <path d="M0-.8V0"
+          fill="none"
+          stroke="#DFF6FF"
+          stroke-width=".65"/>
+  </g>
 </svg>

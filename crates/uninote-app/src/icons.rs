@@ -571,35 +571,98 @@ fn draw_app_logo(cr: &cairo::Context, w: f64, h: f64) {
     cr.curve_to(10.5, 25.5, 14.5, 28.5, 18.0, 28.5);
     let _ = cr.stroke();
 
-    // 3. Pennino Stilografico angolato (Braccio destro della 'U' in Ciano #6DD2FF)
-    // Orientato verso il centro in basso dello squircle (x=18.0, y ≈ 28.5)
-    cr.move_to(23.5, 9.5);
-    cr.line_to(27.5, 9.5);
-    cr.line_to(28.0, 17.5); // Spalla esterna del pennino
-    cr.line_to(18.0, 28.5); // Punta del pennino orientata al centro inferiore
-    cr.line_to(20.5, 19.5); // Spalla interna del pennino
-    cr.close_path();
+    // 3. Penna a sfera inclinata di 25 gradi ancorata a (18.0, 28.5)
+    cr.save().expect("cairo save pen");
+    cr.translate(18.0, 28.5);
+    cr.rotate(25.0 * PI / 180.0);
 
-    cr.set_source_rgba(0.427, 0.824, 1.0, 0.25);
+    // Gradienti locali della penna
+    let body_pat = cairo::LinearGradient::new(-1.8, 0.0, 1.8, 0.0);
+    body_pat.add_color_stop_rgb(0.0, 0.220, 0.663, 0.835); // #38A9D5
+    body_pat.add_color_stop_rgb(0.38, 0.612, 0.898, 1.0); // #9CE5FF
+    body_pat.add_color_stop_rgb(0.68, 0.427, 0.824, 1.0); // #6DD2FF
+    body_pat.add_color_stop_rgb(1.0, 0.200, 0.624, 0.784); // #339FC8
+
+    let metal_pat = cairo::LinearGradient::new(-1.5, 0.0, 1.5, 0.0);
+    metal_pat.add_color_stop_rgb(0.0, 0.561, 0.686, 0.741); // #8FAFBD
+    metal_pat.add_color_stop_rgb(0.45, 0.941, 0.980, 1.0); // #F0FAFF
+    metal_pat.add_color_stop_rgb(1.0, 0.627, 0.765, 0.827); // #A0C3D3
+
+    // Tappino superiore in metallo: rect x="-.85" y="-21.2" width="1.7" height="1.8" rx=".5"
+    draw_rounded_rect(cr, -0.85, -21.2, 1.7, 1.8, 0.5);
+    cr.set_source(&metal_pat).expect("metal pattern");
+    let _ = cr.fill();
+
+    // Fusto penna: rect x="-1.75" y="-19.8" width="3.5" height="13.7" rx="1.35"
+    draw_rounded_rect(cr, -1.75, -19.8, 3.5, 13.7, 1.35);
+    cr.set_source(&body_pat).expect("body pattern");
     let _ = cr.fill_preserve();
-    cr.set_source_rgb(0.427, 0.824, 1.0); // Ciano Elettrico UniNote
-    cr.set_line_width(2.0);
+    cr.set_source_rgb(0.698, 0.918, 1.0); // #B2EAFF
+    cr.set_line_width(0.35);
     let _ = cr.stroke();
 
-    // Fessura d'inchiostro (Ink Slit) e Foro di sfiato (Breather Hole)
-    cr.move_to(18.0, 28.5);
-    cr.line_to(23.0, 19.0);
-    cr.set_line_width(1.4);
+    // Riflesso fusto: path d="M-.85-18.1V-10.3"
+    cr.move_to(-0.85, -18.1);
+    cr.line_to(-0.85, -10.3);
+    cr.set_source_rgba(0.863, 0.980, 1.0, 0.65); // #DCFAFF a 0.65
+    cr.set_line_width(0.4);
     let _ = cr.stroke();
 
-    cr.arc(23.0, 19.0, 1.2, 0.0, 2.0 * PI);
-    cr.set_source_rgb(0.925, 0.937, 0.957);
-    let _ = cr.fill();
+    // Clip penna: path d="M.85-18.8 H2 Q2.55-18.8 2.55-18.15 V-13.5 Q2.55-12.9 2.05-12.9"
+    cr.move_to(0.85, -18.8);
+    cr.line_to(2.0, -18.8);
+    cr.curve_to(2.37, -18.8, 2.55, -18.5, 2.55, -18.15);
+    cr.line_to(2.55, -13.5);
+    cr.curve_to(2.55, -13.1, 2.3, -12.9, 2.05, -12.9);
+    cr.set_source_rgb(0.847, 0.953, 1.0); // #D8F3FF
+    cr.set_line_width(0.65);
+    let _ = cr.stroke();
 
-    // 4. Accento Verde Menta DMS (#79D9A5) all'apice del pennino
-    cr.arc(17.2, 29.8, 1.4, 0.0, 2.0 * PI);
-    cr.set_source_rgb(0.475, 0.851, 0.647);
-    let _ = cr.fill();
+    // Impugnatura scanalata (Grip): M-1.75-8.8H1.75 L1.5-4.7 H-1.5Z
+    cr.move_to(-1.75, -8.8);
+    cr.line_to(1.75, -8.8);
+    cr.line_to(1.5, -4.7);
+    cr.line_to(-1.5, -4.7);
+    cr.close_path();
+    cr.set_source_rgb(0.090, 0.404, 0.510); // #176782
+    let _ = cr.fill_preserve();
+    cr.set_source_rgb(0.439, 0.804, 0.925); // #70CDEC
+    cr.set_line_width(0.35);
+    let _ = cr.stroke();
+
+    // Scanalature grip
+    cr.set_source_rgba(0.471, 0.796, 0.898, 0.65); // #78CBE5 a 0.65
+    cr.set_line_width(0.35);
+    cr.move_to(-1.38, -7.8);
+    cr.line_to(1.38, -7.8);
+    let _ = cr.stroke();
+    cr.move_to(-1.34, -6.8);
+    cr.line_to(1.34, -6.8);
+    let _ = cr.stroke();
+    cr.move_to(-1.28, -5.8);
+    cr.line_to(1.28, -5.8);
+    let _ = cr.stroke();
+
+    // Cono metallico punta: M-1.5-4.7H1.5 L.38-.7 H-.38Z
+    cr.move_to(-1.5, -4.7);
+    cr.line_to(1.5, -4.7);
+    cr.line_to(0.38, -0.7);
+    cr.line_to(-0.38, -0.7);
+    cr.close_path();
+    cr.set_source(&metal_pat).expect("metal pattern");
+    let _ = cr.fill_preserve();
+    cr.set_source_rgb(0.729, 0.863, 0.922); // #BADCEB
+    cr.set_line_width(0.3);
+    let _ = cr.stroke();
+
+    // Sfera/Punta finale: M0-.8V0
+    cr.move_to(0.0, -0.8);
+    cr.line_to(0.0, 0.0);
+    cr.set_source_rgb(0.875, 0.965, 1.0); // #DFF6FF
+    cr.set_line_width(0.65);
+    let _ = cr.stroke();
+
+    cr.restore().expect("cairo restore pen");
 
     cr.restore().expect("cairo restore");
 }

@@ -5,7 +5,7 @@
 //! - Dynamic theme switching: `StyleManager::connect_dark_notify` synchronization across window and 4 popovers.
 //! - Dock drag at 120Hz: height caching, pure arithmetic in drag_update, clamp bounds safety.
 //! - UniNote logo Cairo rendering: 3.6 pt monogram 'U', nib positioned at bottom center (x=18.0, y=28.5) in ciano #6DD2FF with mint accent #79D9A5.
-//! - SemVer 0.4.6 badge: dynamic binding to CARGO_PKG_VERSION in window.rs.
+//! - SemVer 0.4.7 badge: dynamic binding to CARGO_PKG_VERSION in window.rs.
 
 #![allow(dead_code, unused_variables)]
 
@@ -395,18 +395,18 @@ fn test_logo_zero_and_negative_dimensions_safe() {
 }
 
 // ============================================================================
-// 5. SEMVER 0.4.6 BADGE DYNAMIC BINDING
+// 5. SEMVER 0.4.7 BADGE DYNAMIC BINDING
 // ============================================================================
 
 #[test]
 fn test_semver_version_badge_dynamic_binding() {
     let pkg_ver = env!("CARGO_PKG_VERSION");
-    assert_eq!(pkg_ver, "0.4.6", "CARGO_PKG_VERSION must be exactly 0.4.6");
+    assert_eq!(pkg_ver, "0.4.7", "CARGO_PKG_VERSION must be exactly 0.4.7");
 
     let badge_text = concat!("v", env!("CARGO_PKG_VERSION"));
     assert_eq!(
-        badge_text, "v0.4.6",
-        "Badge text in window.rs must evaluate to 'v0.4.6'"
+        badge_text, "v0.4.7",
+        "Badge text in window.rs must evaluate to 'v0.4.7'"
     );
 
     // Verify root Cargo.toml workspace version
@@ -420,7 +420,7 @@ fn test_semver_version_badge_dynamic_binding() {
         .unwrap_or_else(|e| panic!("Read {:?}: {:?}", root_cargo_path, e));
 
     assert!(
-        root_cargo.contains("version = \"0.4.6\""),
-        "Root Cargo.toml must declare version = \"0.4.6\""
+        root_cargo.contains("version = \"0.4.7\""),
+        "Root Cargo.toml must declare version = \"0.4.7\""
     );
 }

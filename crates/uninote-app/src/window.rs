@@ -1,4 +1,4 @@
-use crate::canvas::{ActiveTool, NoteCanvas};
+use crate::canvas::{ActiveTool, EraserMode, NoteCanvas};
 use crate::hud::DiagnosticHud;
 use crate::icons::{create_icon, IconKind};
 use crate::preferences::{AppPreferences, PenSlotConfig};
@@ -490,6 +490,18 @@ impl UniNoteWindow {
                         }
                     };
                     c_tool.set_selection_mode(new_mode);
+                } else if tool_kind == ActiveTool::Eraser && is_already_active {
+                    let cur_mode = c_tool.eraser_mode();
+                    let new_mode = match cur_mode {
+                        EraserMode::WholeStroke => EraserMode::Segment,
+                        EraserMode::Segment => EraserMode::WholeStroke,
+                    };
+                    c_tool.set_eraser_mode(new_mode);
+                    let tip = match new_mode {
+                        EraserMode::WholeStroke => "Gomma (Tratto Intero)",
+                        EraserMode::Segment => "Gomma (Per Segmento)",
+                    };
+                    btn_self.set_tooltip_text(Some(tip));
                 } else {
                     c_tool.set_active_tool(tool_kind);
                 }

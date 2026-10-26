@@ -444,11 +444,11 @@ fn test_m3_github_tab_shows_current_version_badge() {
         let win = UniNoteSettingsWindow::with_settings(settings);
         let root: gtk4::Widget = win.window().clone().upcast();
 
-        assert_eq!(uninote_app::APP_VERSION, "0.4.6");
-        assert_eq!(uninote_app::APP_VERSION_LABEL, "v0.4.6");
+        assert_eq!(uninote_app::APP_VERSION, "0.4.7");
+        assert_eq!(uninote_app::APP_VERSION_LABEL, "v0.4.7");
         assert!(
-            tree_contains_label(&root, "v0.4.6"),
-            "Il badge di versione v0.4.6 deve essere presente nella scheda GitHub"
+            tree_contains_label(&root, "v0.4.7"),
+            "Il badge di versione v0.4.7 deve essere presente nella scheda GitHub"
         );
     });
 }
