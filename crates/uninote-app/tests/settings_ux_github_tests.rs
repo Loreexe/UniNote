@@ -108,19 +108,32 @@ fn collect_widgets(root: &gtk4::Widget) -> Vec<gtk4::Widget> {
     collected
 }
 
+/// Normalizza il markup di un titolo Adwaita confrontabile tra versioni di libadwaita.
+/// Alcune versioni restituiscono il titolo grezzo (`&amp;`), altre quello già decodificato (`&`).
+fn normalized_title(title: &str) -> String {
+    title
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+}
+
 /// Cerca un `PreferencesGroup` tramite il proprio titolo.
 fn find_group_by_title(root: &gtk4::Widget, title: &str) -> Option<libadwaita::PreferencesGroup> {
+    let target = normalized_title(title);
     collect_widgets(root).into_iter().find_map(|widget| {
         widget
             .clone()
             .downcast::<libadwaita::PreferencesGroup>()
             .ok()
-            .filter(|group| group.title().as_str() == title)
+            .filter(|group| normalized_title(group.title().as_str()) == target)
     })
 }
 
 /// Cerca tutte le righe `SwitchRow` con il titolo indicato.
 fn find_switch_rows_by_title(root: &gtk4::Widget, title: &str) -> Vec<libadwaita::SwitchRow> {
+    let target = normalized_title(title);
     collect_widgets(root)
         .into_iter()
         .filter_map(|widget| {
@@ -128,13 +141,14 @@ fn find_switch_rows_by_title(root: &gtk4::Widget, title: &str) -> Vec<libadwaita
                 .clone()
                 .downcast::<libadwaita::SwitchRow>()
                 .ok()
-                .filter(|row| row.title().as_str() == title)
+                .filter(|row| normalized_title(row.title().as_str()) == target)
         })
         .collect()
 }
 
 /// Cerca tutte le righe `ActionRow` con il titolo indicato.
 fn find_action_rows_by_title(root: &gtk4::Widget, title: &str) -> Vec<libadwaita::ActionRow> {
+    let target = normalized_title(title);
     collect_widgets(root)
         .into_iter()
         .filter_map(|widget| {
@@ -142,7 +156,7 @@ fn find_action_rows_by_title(root: &gtk4::Widget, title: &str) -> Vec<libadwaita
                 .clone()
                 .downcast::<libadwaita::ActionRow>()
                 .ok()
-                .filter(|row| row.title().as_str() == title)
+                .filter(|row| normalized_title(row.title().as_str()) == target)
         })
         .collect()
 }
