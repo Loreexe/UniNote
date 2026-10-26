@@ -151,21 +151,19 @@ jobs:
       - name: Build package with makepkg
         run: |
           set -euo pipefail
-          # makepkg rifiuta di girare come root: build come utente non privilegiato
-          useradd -m builder
-          cp -a "$PWD" /home/builder/build
-          cd /home/builder/build
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory '*'
 
-          # La ricetta pubblica punta all'archivio del tag su GitHub, il cui sha256 è
-          # calcolabile solo dopo il push del tag (e quindi non può essere già committato
-          # in questo stesso commit). In CI usiamo quindi un archivio generato dal checkout.
           VERSION="$(sed -n 's/^pkgver=//p' packaging/aur/uninote/PKGBUILD | head -n1)"
           git archive --format=tar.gz --prefix="UniNote-${VERSION}/" \
             -o "/tmp/uninote-${VERSION}.tar.gz" HEAD
           SUM="$(sha256sum "/tmp/uninote-${VERSION}.tar.gz" | cut -d' ' -f1)"
 
-          cp packaging/aur/uninote/PKGBUILD .
-          cp "/tmp/uninote-${VERSION}.tar.gz" .
+          useradd -m builder
+          mkdir -p /home/builder/build
+          cp packaging/aur/uninote/PKGBUILD /home/builder/build/
+          cp "/tmp/uninote-${VERSION}.tar.gz" /home/builder/build/
+          cd /home/builder/build
           sed -i 's|^source=.*|source=("uninote-$pkgver.tar.gz")|' PKGBUILD
           sed -i "s|^sha256sums=.*|sha256sums=('${SUM}')|" PKGBUILD
 
