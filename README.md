@@ -6,7 +6,7 @@
 
 **An Academic Freehand Note-Taking & Vector PDF Slide Annotation Suite for Linux**
 
-![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)![Rust](https://img.shields.io/badge/Rust-2021_Edition_\(MSRV_1.80+\)-orange.svg?logo=rust)![GUI](https://img.shields.io/badge/GUI-GTK4_%26_Libadwaita-4a90e2.svg?logo=gnome)![Version](https://img.shields.io/badge/Version-0.4.5-teal.svg)![Arch Linux](https://img.shields.io/badge/Arch_Linux-uninote-blue.svg?logo=archlinux)![Flatpak](https://img.shields.io/badge/Flatpak-org.uninote.UniNote-2b7bb9.svg?logo=flatpak)![CI](https://github.com/Loreexe/UniNote/actions/workflows/ci.yml/badge.svg)![Wayland](https://img.shields.io/badge/Display-Wayland_Native-purple.svg)![Architecture](https://img.shields.io/badge/Architecture-4_Decoupled_Crates-success.svg)
+![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)![Rust](https://img.shields.io/badge/Rust-2021_Edition_\(MSRV_1.80+\)-orange.svg?logo=rust)![GUI](https://img.shields.io/badge/GUI-GTK4_%26_Libadwaita-4a90e2.svg?logo=gnome)![Version](https://img.shields.io/badge/Version-0.4.7-teal.svg)![Arch Linux](https://img.shields.io/badge/Arch_Linux-uninote-blue.svg?logo=archlinux)![Flatpak](https://img.shields.io/badge/Flatpak-org.uninote.UniNote-2b7bb9.svg?logo=flatpak)![CI](https://github.com/Loreexe/UniNote/actions/workflows/ci.yml/badge.svg)![Wayland](https://img.shields.io/badge/Display-Wayland_Native-purple.svg)![Architecture](https://img.shields.io/badge/Architecture-4_Decoupled_Crates-success.svg)
 
 [Screenshots](#-screenshots--interface-showcase) •
 [Packaging & Install](#-packaging--quick-install) •
@@ -207,13 +207,13 @@ UniNote/
 Installa direttamente il pacchetto binario `.pkg.tar.zst` precompilato scaricato dalle [Releases](https://github.com/Loreexe/UniNote/releases):
 
 ```bash
-sudo pacman -U uninote-0.3.0-1-x86_64.pkg.tar.zst
+sudo pacman -U uninote-0.4.7-1-x86_64.pkg.tar.zst
 ```
 
 Oppure compila e installa in locale dal repository tramite `makepkg`:
 
 ```bash
-# Versione stabile (v0.3.0):
+# Versione stabile (v0.4.7):
 cd packaging/aur/uninote && makepkg -si
 
 # Oppure versione di sviluppo (branch main):
@@ -466,7 +466,7 @@ If you use UniNote in your university coursework, academic research, or software
 @software{uninote2026,
   author       = {{UniNote Developers}},
   title        = {{UniNote: An Academic Freehand Note-Taking and Vector PDF Annotation Suite for Linux}},
-  version      = {0.3.0},
+  version      = {0.4.7},
   year         = {2026},
   url          = {https://github.com/Loreexe/UniNote},
   license      = {GPL-3.0}

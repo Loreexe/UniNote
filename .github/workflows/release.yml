@@ -7,9 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag di rilascio (es. v0.3.0)'
+        description: 'Tag di rilascio (es. v0.4.7)'
         required: true
-        default: 'v0.3.0'
 
 permissions:
   contents: write
@@ -116,13 +115,80 @@ jobs:
           name: flatpak-bundle
           path: org.uninote.UniNote.flatpak
 
+  build-arch:
+    name: Build Arch Package (.pkg.tar.zst)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          if command -v gpg >/dev/null 2>&1; then
+            pacman-key --init
+            pacman-key --populate archlinux
+          fi
+          pacman -Syu --noconfirm --needed \
+            git rust pkgconf gtk4 libadwaita poppler-glib cairo \
+            hicolor-icon-theme shared-mime-info
+
+      - name: Verify PKGBUILD version matches release tag
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG="${RAW_TAG#refs/tags/}"
+          TAG="${TAG#v}"
+          PKGVER="$(sed -n 's/^pkgver=//p' packaging/aur/uninote/PKGBUILD | head -n1)"
+          if [ "${PKGVER}" != "${TAG}" ]; then
+            echo "::error::pkgver della ricetta AUR (${PKGVER}) diverso dal tag di release (${TAG}). Aggiorna packaging/aur/uninote/PKGBUILD e .SRCINFO prima del tag."
+            exit 1
+          fi
+
+      - name: Build package with makepkg
+        run: |
+          set -euo pipefail
+          # makepkg rifiuta di girare come root: build come utente non privilegiato
+          useradd -m builder
+          cp -a "$PWD" /home/builder/build
+          cd /home/builder/build
+
+          # La ricetta pubblica punta all'archivio del tag su GitHub, il cui sha256 è
+          # calcolabile solo dopo il push del tag (e quindi non può essere già committato
+          # in questo stesso commit). In CI usiamo quindi un archivio generato dal checkout.
+          VERSION="$(sed -n 's/^pkgver=//p' packaging/aur/uninote/PKGBUILD | head -n1)"
+          git archive --format=tar.gz --prefix="UniNote-${VERSION}/" \
+            -o "/tmp/uninote-${VERSION}.tar.gz" HEAD
+          SUM="$(sha256sum "/tmp/uninote-${VERSION}.tar.gz" | cut -d' ' -f1)"
+
+          cp packaging/aur/uninote/PKGBUILD .
+          cp "/tmp/uninote-${VERSION}.tar.gz" .
+          sed -i 's|^source=.*|source=("uninote-$pkgver.tar.gz")|' PKGBUILD
+          sed -i "s|^sha256sums=.*|sha256sums=('${SUM}')|" PKGBUILD
+
+          chown -R builder:builder /home/builder/build
+          su - builder -c 'cd /home/builder/build && makepkg --noconfirm --nodeps --nocheck'
+          cp /home/builder/build/*.pkg.tar.zst "$GITHUB_WORKSPACE/"
+
+      - name: Upload Arch Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: "*.pkg.tar.zst"
+          if-no-files-found: error
+
   create-release:
     name: Publish GitHub Release
-    needs: [build-tarball, build-flatpak]
+    needs: [build-tarball, build-flatpak, build-arch]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -135,13 +201,82 @@ jobs:
           find release-assets/ -type f -exec cp -v {} dist/ \;
           ls -la dist/
 
+      - name: Compose release body
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG="${RAW_TAG#refs/tags/}"
+          TAG="${TAG#v}"
+          NOTES_FILE="packaging/release-notes/v${TAG}.md"
+
+          if [ -f "${NOTES_FILE}" ]; then
+            cp "${NOTES_FILE}" release-body.md
+            echo "Note di rilascio caricate da ${NOTES_FILE}"
+          else
+            echo "::warning::${NOTES_FILE} non trovato: generazione automatica del corpo release da git log."
+            PREV="$(git describe --tags --abbrev=0 "v${TAG}^" 2>/dev/null || true)"
+            if [ -n "${PREV}" ]; then
+              RANGE="${PREV}..v${TAG}"
+            else
+              RANGE="v${TAG}"
+            fi
+            COMMITS="$(git log --no-merges --pretty='- %s' "${RANGE}" | head -n 20 || true)"
+            {
+              echo "## 🚀 UniNote v${TAG} — Release"
+              echo
+              echo "Nuova release di UniNote v${TAG}. I pacchetti precompilati sono allegati a questa release."
+              echo "La suite di test Rust del progetto è eseguita localmente prima del tag; il workflow di release compila e impacchetta gli artefatti."
+              echo
+              echo "---"
+              echo
+              echo "### 🌟 Punti Chiave dell'Aggiornamento"
+              echo
+              echo "${COMMITS}"
+              echo
+              echo "---"
+              echo
+              echo "### 📦 Come Installare o Aggiornare"
+              echo
+              echo "#### 🐧 Flatpak (Consigliato per tutte le distribuzioni Linux)"
+              echo '```bash'
+              echo "flatpak install --user ./org.uninote.UniNote.flatpak"
+              echo '```'
+              echo
+              echo "#### 📁 Pacchetto Tarball Portatile (Linux x86_64)"
+              echo '```bash'
+              echo "tar -xzf uninote-v${TAG}-linux-x86_64.tar.gz"
+              echo "cd uninote-v${TAG}-linux-x86_64 && ./install.sh"
+              echo '```'
+              echo
+              echo "#### 🏗️ Arch Linux / CachyOS (Pacchetto precompilato)"
+              echo '```bash'
+              echo "sudo pacman -U uninote-${TAG}-1-x86_64.pkg.tar.zst"
+              echo '```'
+              echo
+              echo "---"
+              echo
+              echo "### 🛡️ Affidabilità e Retrocompatibilità"
+              echo
+              echo "- Formato file .uninote retrocompatibile con le release precedenti."
+              echo "- Nessuna cache persistita su disco tra le sessioni."
+              echo
+              echo "---"
+              echo
+              echo "**Changelog Dettagliato dei Commit:** https://github.com/Loreexe/UniNote/commits/v${TAG}"
+            } > release-body.md
+          fi
+          echo "Anteprima del corpo release:"
+          head -n 10 release-body.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
           name: UniNote ${{ github.event.inputs.tag_name || github.ref_name }}
+          body_path: release-body.md
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
           files: |
             dist/*

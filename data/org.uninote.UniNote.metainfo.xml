@@ -47,6 +47,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.7" date="2026-10-26">
+      <description>
+        <p>Release v0.4.7: Material 3 settings redesign with a GitHub panel and update check, clipboard selection, folder dashboard and sidebar navigation, affine stroke transformations with fully reversible editing commands, per-segment eraser, interactive AABB resize handles and the new vector brand identity.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-10-16">
       <description>
         <p>Release v0.3.0: official Linux packaging support with Arch Linux (AUR) package, Flathub-compatible Flatpak bundle, desktop integration, and vector iconography.</p>

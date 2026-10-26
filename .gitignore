@@ -47,6 +47,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# --- GTK Generated Icon Cache ---
+**/icon-theme.cache
+
 # --- IDE Directories ---
 .idea/
 .vscode/
