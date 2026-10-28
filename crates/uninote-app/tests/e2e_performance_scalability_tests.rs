@@ -553,7 +553,7 @@ mod tier1_feature_coverage {
         history.execute(move_cmd, &mut doc);
 
         // Verify applied position
-        let ItemKind::Stroke(s) = &doc.pages[0].items[0].kind;
+        let s = doc.pages[0].items[0].as_stroke().unwrap();
         assert!((s.points[0].x - 150.0).abs() < 1e-9);
         assert!((s.points[0].y - 70.0).abs() < 1e-9);
 
@@ -561,7 +561,7 @@ mod tier1_feature_coverage {
         assert!(history.can_undo());
         history.undo(&mut doc);
 
-        let ItemKind::Stroke(s_undone) = &doc.pages[0].items[0].kind;
+        let s_undone = doc.pages[0].items[0].as_stroke().unwrap();
         assert!((s_undone.points[0].x - 100.0).abs() < 1e-9);
         assert!((s_undone.points[0].y - 100.0).abs() < 1e-9);
     }
@@ -639,15 +639,16 @@ mod tier1_feature_coverage {
         let mut matched_ids = Vec::new();
 
         for item in &page.items {
-            let ItemKind::Stroke(s) = &item.kind;
-            if stroke_intersects_envelope(
-                s,
-                query_envelope.0,
-                query_envelope.1,
-                query_envelope.2,
-                query_envelope.3,
-            ) {
-                matched_ids.push(item.id);
+            if let Some(s) = item.as_stroke() {
+                if stroke_intersects_envelope(
+                    s,
+                    query_envelope.0,
+                    query_envelope.1,
+                    query_envelope.2,
+                    query_envelope.3,
+                ) {
+                    matched_ids.push(item.id);
+                }
             }
         }
 
@@ -779,9 +780,10 @@ mod tier1_feature_coverage {
         let mut visible_count = 0;
 
         for item in &page.items {
-            let ItemKind::Stroke(s) = &item.kind;
-            if stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3) {
-                visible_count += 1;
+            if let Some(s) = item.as_stroke() {
+                if stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3) {
+                    visible_count += 1;
+                }
             }
         }
 
@@ -815,12 +817,18 @@ mod tier1_feature_coverage {
 
         let mut candidate_ids = Vec::new();
         for item in &page.items {
-            let ItemKind::Stroke(s) = &item.kind;
-            if stroke_intersects_envelope(s, eraser_env.0, eraser_env.1, eraser_env.2, eraser_env.3)
-            {
-                // Refine with exact stroke intersection
-                if s.intersects_point(eraser_pos, eraser_radius) {
-                    candidate_ids.push(item.id);
+            if let Some(s) = item.as_stroke() {
+                if stroke_intersects_envelope(
+                    s,
+                    eraser_env.0,
+                    eraser_env.1,
+                    eraser_env.2,
+                    eraser_env.3,
+                ) {
+                    // Refine with exact stroke intersection
+                    if s.intersects_point(eraser_pos, eraser_radius) {
+                        candidate_ids.push(item.id);
+                    }
                 }
             }
         }
@@ -840,15 +848,16 @@ mod tier1_feature_coverage {
         let mut selected_candidates = Vec::new();
 
         for item in &page.items {
-            let ItemKind::Stroke(s) = &item.kind;
-            if stroke_intersects_envelope(
-                s,
-                selection_box.0,
-                selection_box.1,
-                selection_box.2,
-                selection_box.3,
-            ) {
-                selected_candidates.push(item.id);
+            if let Some(s) = item.as_stroke() {
+                if stroke_intersects_envelope(
+                    s,
+                    selection_box.0,
+                    selection_box.1,
+                    selection_box.2,
+                    selection_box.3,
+                ) {
+                    selected_candidates.push(item.id);
+                }
             }
         }
 
@@ -927,8 +936,8 @@ mod tier1_feature_coverage {
             assert_eq!(p_a.items.len(), p_b.items.len());
 
             for i in 0..p_a.items.len() {
-                let ItemKind::Stroke(s_a) = &p_a.items[i].kind;
-                let ItemKind::Stroke(s_b) = &p_b.items[i].kind;
+                let s_a = p_a.items[i].as_stroke().unwrap();
+                let s_b = p_b.items[i].as_stroke().unwrap();
                 assert_eq!(s_a.id, s_b.id);
                 assert_eq!(s_a.points.len(), s_b.points.len());
                 for pt in 0..s_a.points.len() {
@@ -947,13 +956,7 @@ mod tier1_feature_coverage {
         let surface =
             ImageSurface::create(Format::ARgb32, 400, 400).expect("Surface creation failed");
 
-        let stroke_refs: Vec<&Stroke> = doc.pages[0]
-            .items
-            .iter()
-            .map(|it| match &it.kind {
-                ItemKind::Stroke(s) => s,
-            })
-            .collect();
+        let stroke_refs: Vec<&Stroke> = doc.pages[0].strokes().collect();
 
         let (rendered, micros) =
             render_strokes_headless_cairo(&surface, &stroke_refs, (0.0, 0.0), 1.0);
@@ -968,13 +971,7 @@ mod tier1_feature_coverage {
         let doc = generate_synthetic_notebook(1, 200, 121);
         let surface = ImageSurface::create(Format::ARgb32, 300, 300).expect("Surface failed");
 
-        let stroke_refs: Vec<&Stroke> = doc.pages[0]
-            .items
-            .iter()
-            .map(|it| match &it.kind {
-                ItemKind::Stroke(s) => s,
-            })
-            .collect();
+        let stroke_refs: Vec<&Stroke> = doc.pages[0].strokes().collect();
 
         // Simulate 20 continuous navigation frames with varying pan and zoom
         for frame in 0..20 {
@@ -1201,7 +1198,7 @@ mod tier2_boundary_corner_cases {
         );
 
         // Coordinates must remain exactly finite and uncorrupted
-        let ItemKind::Stroke(s) = &doc.pages[0].items[0].kind;
+        let s = doc.pages[0].items[0].as_stroke().unwrap();
         assert!((s.points[0].x - 100.0).abs() < 1e-9);
         assert!((s.points[0].y - 100.0).abs() < 1e-9);
     }
@@ -1264,8 +1261,9 @@ mod tier3_cross_feature_combinations {
         let initial_visible = doc.pages[0]
             .items
             .iter()
-            .filter(|it| match &it.kind {
-                ItemKind::Stroke(s) => stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3),
+            .filter(|it| {
+                it.as_stroke()
+                    .is_some_and(|s| stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3))
             })
             .count();
         assert_eq!(initial_visible, 0);
@@ -1286,8 +1284,9 @@ mod tier3_cross_feature_combinations {
         let visible_after_move = doc.pages[0]
             .items
             .iter()
-            .filter(|it| match &it.kind {
-                ItemKind::Stroke(s) => stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3),
+            .filter(|it| {
+                it.as_stroke()
+                    .is_some_and(|s| stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3))
             })
             .count();
         assert_eq!(visible_after_move, 20);
@@ -1297,8 +1296,9 @@ mod tier3_cross_feature_combinations {
         let visible_after_undo = doc.pages[0]
             .items
             .iter()
-            .filter(|it| match &it.kind {
-                ItemKind::Stroke(s) => stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3),
+            .filter(|it| {
+                it.as_stroke()
+                    .is_some_and(|s| stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3))
             })
             .count();
         assert_eq!(visible_after_undo, 0);
@@ -1379,7 +1379,7 @@ mod tier3_cross_feature_combinations {
         let loaded = store.load_document().unwrap();
         assert_eq!(loaded.pages[0].items.len(), 100);
 
-        let ItemKind::Stroke(s) = &loaded.pages[0].items[0].kind;
+        let s = loaded.pages[0].items[0].as_stroke().unwrap();
         let bbox = s.bounding_box().unwrap();
         assert!(
             bbox.min_x >= 280.0,
@@ -1404,8 +1404,9 @@ mod tier3_cross_feature_combinations {
             let visible = page
                 .items
                 .iter()
-                .filter(|it| match &it.kind {
-                    ItemKind::Stroke(s) => stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3),
+                .filter(|it| {
+                    it.as_stroke()
+                        .is_some_and(|s| stroke_intersects_envelope(s, vp.0, vp.1, vp.2, vp.3))
                 })
                 .count();
 
@@ -1475,13 +1476,7 @@ mod tier4_real_world_application_scenarios {
 
         for page_idx in [0, 12, 25, 49] {
             let active_page = &doc.pages[page_idx];
-            let stroke_refs: Vec<&Stroke> = active_page
-                .items
-                .iter()
-                .map(|it| match &it.kind {
-                    ItemKind::Stroke(s) => s,
-                })
-                .collect();
+            let stroke_refs: Vec<&Stroke> = active_page.strokes().collect();
 
             let (rendered, frame_us) =
                 render_strokes_headless_cairo(&surface, &stroke_refs, (0.0, 0.0), 1.0);
@@ -1576,14 +1571,16 @@ mod tier4_real_world_application_scenarios {
         let visible_c1 = page
             .items
             .iter()
-            .filter(|it| match &it.kind {
-                ItemKind::Stroke(s) => stroke_intersects_envelope(
-                    s,
-                    vp_cluster1.0,
-                    vp_cluster1.1,
-                    vp_cluster1.2,
-                    vp_cluster1.3,
-                ),
+            .filter(|it| {
+                it.as_stroke().is_some_and(|s| {
+                    stroke_intersects_envelope(
+                        s,
+                        vp_cluster1.0,
+                        vp_cluster1.1,
+                        vp_cluster1.2,
+                        vp_cluster1.3,
+                    )
+                })
             })
             .count();
 
@@ -1604,14 +1601,16 @@ mod tier4_real_world_application_scenarios {
         let c2_item_ids: Vec<ItemId> = doc.pages[0]
             .items
             .iter()
-            .filter(|it| match &it.kind {
-                ItemKind::Stroke(s) => stroke_intersects_envelope(
-                    s,
-                    selection_c2.0,
-                    selection_c2.1,
-                    selection_c2.2,
-                    selection_c2.3,
-                ),
+            .filter(|it| {
+                it.as_stroke().is_some_and(|s| {
+                    stroke_intersects_envelope(
+                        s,
+                        selection_c2.0,
+                        selection_c2.1,
+                        selection_c2.2,
+                        selection_c2.3,
+                    )
+                })
             })
             .map(|it| it.id)
             .collect();
@@ -1634,14 +1633,16 @@ mod tier4_real_world_application_scenarios {
         let visible_merged = doc.pages[0]
             .items
             .iter()
-            .filter(|it| match &it.kind {
-                ItemKind::Stroke(s) => stroke_intersects_envelope(
-                    s,
-                    vp_cluster1.0,
-                    vp_cluster1.1,
-                    vp_cluster1.2,
-                    vp_cluster1.3,
-                ),
+            .filter(|it| {
+                it.as_stroke().is_some_and(|s| {
+                    stroke_intersects_envelope(
+                        s,
+                        vp_cluster1.0,
+                        vp_cluster1.1,
+                        vp_cluster1.2,
+                        vp_cluster1.3,
+                    )
+                })
             })
             .count();
         assert!(visible_merged >= 1800);

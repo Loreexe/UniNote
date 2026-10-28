@@ -176,7 +176,7 @@ fn test_1a_cross_page_paste_0_to_3_with_deselect() {
             assert_eq!(st.document.pages[3].spatial_index.len(), 1);
 
             let p3_item = &st.document.pages[3].items[0];
-            let ItemKind::Stroke(ref s) = p3_item.kind;
+            let s = p3_item.as_stroke().unwrap();
             let bbox = s.bounding_box().unwrap();
             let p3_rect = Viewport::page_rect(3);
 
@@ -324,7 +324,7 @@ fn test_1c_notebook_to_whiteboard_negative_infinite_coordinates() {
             assert_eq!(st.document.pages[0].spatial_index.len(), 1);
 
             let item = &st.document.pages[0].items[0];
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().unwrap();
             let bbox = s.bounding_box().expect("Bbox must exist");
 
             // Verifica che il bounding box sia posizionato nelle coordinate negative
@@ -400,7 +400,7 @@ fn test_1d_notebook_to_whiteboard_positive_infinite_coordinates() {
             let state_rc = wb_canvas.state();
             let st = state_rc.borrow();
             let item = &st.document.pages[0].items[0];
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().unwrap();
             let bbox = s.bounding_box().expect("Bbox must exist");
 
             assert!(
@@ -471,7 +471,7 @@ fn test_1e_whiteboard_to_notebook_centering() {
             assert_eq!(st.document.pages[0].items.len(), 1);
 
             let item = &st.document.pages[0].items[0];
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().unwrap();
             let bbox = s.bounding_box().expect("Bbox must exist");
 
             // Verifica che l'elemento incollato sia atterrato all'interno del foglio A4 (larghezza ~595pt, altezza ~842pt)
@@ -680,7 +680,7 @@ fn test_2b_drag_newly_pasted_selection_accuracy_and_spatial_sync() {
                 .iter()
                 .find(|it| it.id == pasted_id)
                 .expect("Pasted item must exist");
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().unwrap();
             let cur_bbox = s.bounding_box().expect("Current bbox must exist");
 
             let expected_bbox = pasted_bbox_before_drag.translate(drag_delta.0, drag_delta.1);
@@ -785,7 +785,7 @@ fn test_2c_undo_redo_of_drag_on_pasted_items() {
                 .iter()
                 .find(|it| it.id == pasted_id)
                 .unwrap();
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().unwrap();
             let bbox = s.bounding_box().unwrap();
             assert!((bbox.min_x - (orig_bbox.min_x + 25.0)).abs() < 1e-3);
             assert!((bbox.min_y - (orig_bbox.min_y + 25.0)).abs() < 1e-3);
@@ -827,7 +827,7 @@ fn test_2c_undo_redo_of_drag_on_pasted_items() {
                 .iter()
                 .find(|it| it.id == pasted_id)
                 .unwrap();
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().unwrap();
             let bbox = s.bounding_box().unwrap();
             assert!((bbox.min_x - (orig_bbox.min_x + 125.0)).abs() < 1e-3);
             assert!((bbox.min_y - (orig_bbox.min_y + 125.0)).abs() < 1e-3);
@@ -876,7 +876,7 @@ fn test_3a_extreme_coordinates_serialization_roundtrip() {
         assert_eq!(deserialized.items.len(), 1);
         assert_eq!(deserialized.paste_count, 5);
 
-        let ItemKind::Stroke(des_stroke) = &deserialized.items[0].kind;
+        let des_stroke = deserialized.items[0].as_stroke().unwrap();
         assert_eq!(des_stroke.points.len(), 3);
         let diff_x = (des_stroke.points[0].x - val).abs();
         let rel_x = if val.abs() > 0.0 {

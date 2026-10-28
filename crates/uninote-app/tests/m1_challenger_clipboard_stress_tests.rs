@@ -185,8 +185,8 @@ fn test_stress_cascading_offset_10_cycles() {
             let pasted_it1 = &page.items[expected_count - 2];
             let pasted_it2 = &page.items[expected_count - 1];
 
-            let ItemKind::Stroke(ref s1) = pasted_it1.kind;
-            let ItemKind::Stroke(ref s2) = pasted_it2.kind;
+            let s1 = pasted_it1.as_stroke().unwrap();
+            let s2 = pasted_it2.as_stroke().unwrap();
 
             let b1 = s1.bounding_box().unwrap();
             let b2 = s2.bounding_box().unwrap();
@@ -385,19 +385,13 @@ fn test_stress_1000_pasted_items_unique_ids_and_sqlite_wal() {
                 page.items.push(item);
                 initial_ids.push(id);
             }
-            let union_b = page
-                .items
-                .iter()
-                .filter_map(|it| match &it.kind {
-                    ItemKind::Stroke(s) => s.bounding_box(),
-                })
-                .fold(
-                    None,
-                    |acc: Option<uninote_stroke::types::Rect>, b| match acc {
-                        Some(prev) => Some(prev.union(&b)),
-                        None => Some(b),
-                    },
-                );
+            let union_b = page.items.iter().filter_map(|it| it.bounding_box()).fold(
+                None,
+                |acc: Option<uninote_stroke::types::Rect>, b| match acc {
+                    Some(prev) => Some(prev.union(&b)),
+                    None => Some(b),
+                },
+            );
 
             st.next_stroke_id = (orig_count as u64) + 1;
             st.selection.page_index = Some(0);
@@ -693,7 +687,7 @@ fn test_adversarial_cascade_reset_and_pan_centering() {
             let st = state_rc.borrow();
             let page = &st.document.pages[0];
             let last_item = page.items.last().unwrap();
-            let ItemKind::Stroke(ref stroke) = last_item.kind;
+            let stroke = last_item.as_stroke().unwrap();
             let bbox = stroke.bounding_box().unwrap();
             let dx = bbox.min_x - orig_bbox.min_x;
             assert!(
@@ -722,7 +716,7 @@ fn test_adversarial_cascade_reset_and_pan_centering() {
             let st = state_rc.borrow();
             let page = &st.document.pages[0];
             let last_item = page.items.last().unwrap();
-            let ItemKind::Stroke(ref stroke) = last_item.kind;
+            let stroke = last_item.as_stroke().unwrap();
             let bbox = stroke.bounding_box().unwrap();
             let dx = bbox.min_x - orig_bbox.min_x;
             assert!(
@@ -745,7 +739,7 @@ fn test_adversarial_cascade_reset_and_pan_centering() {
             let st = state_rc.borrow();
             let page = &st.document.pages[0];
             let last_item = page.items.last().unwrap();
-            let ItemKind::Stroke(ref stroke) = last_item.kind;
+            let stroke = last_item.as_stroke().unwrap();
             let bbox = stroke.bounding_box().unwrap();
             // Poiché ci siamo mossi di pan, l'offset non deve essere +50.0 fisso dall'originale,
             // bensì centrato rispetto alla nuova coordinata viewport
@@ -787,19 +781,13 @@ fn test_adversarial_random_walk_undo_redo_invariance() {
                 orig_ids.push(id);
             }
 
-            let union_b = page
-                .items
-                .iter()
-                .filter_map(|it| match &it.kind {
-                    ItemKind::Stroke(s) => s.bounding_box(),
-                })
-                .fold(
-                    None,
-                    |acc: Option<uninote_stroke::types::Rect>, b| match acc {
-                        Some(prev) => Some(prev.union(&b)),
-                        None => Some(b),
-                    },
-                );
+            let union_b = page.items.iter().filter_map(|it| it.bounding_box()).fold(
+                None,
+                |acc: Option<uninote_stroke::types::Rect>, b| match acc {
+                    Some(prev) => Some(prev.union(&b)),
+                    None => Some(b),
+                },
+            );
 
             st.next_stroke_id = 506;
             st.selection.page_index = Some(0);
@@ -919,19 +907,13 @@ fn test_adversarial_multi_page_cross_paste_1000_items_sqlite_wal() {
                 page0.items.push(it);
             }
 
-            let union_b = page0
-                .items
-                .iter()
-                .filter_map(|it| match &it.kind {
-                    ItemKind::Stroke(s) => s.bounding_box(),
-                })
-                .fold(
-                    None,
-                    |acc: Option<uninote_stroke::types::Rect>, b| match acc {
-                        Some(prev) => Some(prev.union(&b)),
-                        None => Some(b),
-                    },
-                );
+            let union_b = page0.items.iter().filter_map(|it| it.bounding_box()).fold(
+                None,
+                |acc: Option<uninote_stroke::types::Rect>, b| match acc {
+                    Some(prev) => Some(prev.union(&b)),
+                    None => Some(b),
+                },
+            );
 
             st.next_stroke_id = 11;
             st.selection.page_index = Some(0);

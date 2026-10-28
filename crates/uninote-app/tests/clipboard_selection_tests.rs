@@ -185,7 +185,7 @@ fn test_copy_paste_offset_25pt() {
             "Pasted item z_index must be above original"
         );
 
-        let ItemKind::Stroke(ref pasted_stroke) = pasted_item.kind;
+        let pasted_stroke = pasted_item.as_stroke().unwrap();
         let pasted_bbox = pasted_stroke
             .bounding_box()
             .expect("Pasted bbox must exist");
@@ -254,7 +254,7 @@ fn test_multiple_consecutive_pastes_cascading() {
         let expected_offsets = [25.0, 50.0, 75.0];
         for (i, &expected_delta) in expected_offsets.iter().enumerate() {
             let item = &page.items[i + 1];
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().unwrap();
             let bbox = s.bounding_box().unwrap();
 
             let dx = bbox.min_x - orig_bbox.min_x;
@@ -592,7 +592,7 @@ fn test_cross_page_paste() {
         assert_eq!(st.document.pages[1].spatial_index.len(), 1);
 
         let p1_item = &st.document.pages[1].items[0];
-        let ItemKind::Stroke(ref s) = p1_item.kind;
+        let s = p1_item.as_stroke().unwrap();
         let p1_bbox = s.bounding_box().unwrap();
 
         // Le coordinate della Pagina 1 partono dopo la Pagina 0

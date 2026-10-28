@@ -122,8 +122,7 @@ fn linear_scan_oracle(
     let mut matches = Vec::new();
 
     for item in items {
-        let ItemKind::Stroke(stroke) = &item.kind;
-        if let Some(bbox) = stroke.bounding_box() {
+        if let Some(bbox) = item.bounding_box() {
             let aabb = rect_to_aabb(&bbox);
             let item_min = aabb.lower();
             let item_max = aabb.upper();
@@ -613,8 +612,7 @@ fn test_adversarial_dynamic_mutations_and_fallback_removal() {
 
     // Remove 250 items using exact bbox
     for item in items.iter().take(250) {
-        let ItemKind::Stroke(s) = &item.kind;
-        let bbox = s.bounding_box().unwrap();
+        let bbox = item.bounding_box().unwrap();
         assert!(
             index.remove(item.id, &bbox),
             "Failed exact removal for item {}",
@@ -636,8 +634,7 @@ fn test_adversarial_dynamic_mutations_and_fallback_removal() {
 
     // Removing already removed item must return false
     for item in items.iter().take(350) {
-        let ItemKind::Stroke(s) = &item.kind;
-        let bbox = s.bounding_box().unwrap();
+        let bbox = item.bounding_box().unwrap();
         assert!(
             !index.remove(item.id, &bbox),
             "Item {} should already be removed",
@@ -815,8 +812,7 @@ fn test_adversarial_boundary_crossing_comprehensive_matrix() {
 
     // Verify removal of boundary-crossing stroke using intersecting bbox
     let diag_item = &all_items[4];
-    let ItemKind::Stroke(diag_stroke) = &diag_item.kind;
-    let diag_bbox = diag_stroke.bounding_box().unwrap();
+    let diag_bbox = diag_item.bounding_box().unwrap();
     assert!(index.remove(5, &diag_bbox));
     assert_eq!(index.len(), 13);
 
@@ -904,8 +900,7 @@ fn test_adversarial_eraser_boundary_crossing_removal() {
     assert_eq!(eraser_hits[0].item_id, 555);
 
     // Now remove the stroke using the stroke's actual bounding box
-    let ItemKind::Stroke(s) = &long_stroke.kind;
-    let bbox = s.bounding_box().unwrap();
+    let bbox = long_stroke.bounding_box().unwrap();
     assert!(
         index.remove(555, &bbox),
         "Failed to remove stroke after eraser detection"

@@ -20,7 +20,7 @@ use uninote_core::coordinates::Viewport;
 use uninote_core::dataset::{
     AcademicDatasetGenerator, AcademicScale, DeterministicPrng, DEFAULT_ACADEMIC_SEED,
 };
-use uninote_core::model::{Document, DocumentFormat, ItemKind};
+use uninote_core::model::{Document, DocumentFormat};
 use uninote_storage::DocumentStore;
 use uninote_stroke::selection::{
     is_stroke_selected_by_lasso, is_stroke_selected_by_rect, SelectionEngine,
@@ -161,14 +161,15 @@ fn render_document_headless(
                                 .or_else(|| page.items.iter().find(|it| it.id == si.item_id));
 
                             if let Some(item) = item_opt {
-                                let ItemKind::Stroke(ref s) = item.kind;
-                                NoteCanvas::draw_stroke(
-                                    cr,
-                                    s,
-                                    PipelineMode::CatmullRomSpline,
-                                    false,
-                                );
-                                rendered_strokes += 1;
+                                if let Some(s) = item.as_stroke() {
+                                    NoteCanvas::draw_stroke(
+                                        cr,
+                                        s,
+                                        PipelineMode::CatmullRomSpline,
+                                        false,
+                                    );
+                                    rendered_strokes += 1;
+                                }
                             }
                         }
                         let _ = cr.restore();
@@ -177,9 +178,10 @@ fn render_document_headless(
                     let _ = cr.save();
                     cr.translate(doc_rect.x, doc_rect.y);
                     for item in &page.items {
-                        let ItemKind::Stroke(ref s) = item.kind;
-                        NoteCanvas::draw_stroke(cr, s, PipelineMode::CatmullRomSpline, false);
-                        rendered_strokes += 1;
+                        if let Some(s) = item.as_stroke() {
+                            NoteCanvas::draw_stroke(cr, s, PipelineMode::CatmullRomSpline, false);
+                            rendered_strokes += 1;
+                        }
                     }
                     let _ = cr.restore();
                 }
@@ -208,16 +210,23 @@ fn render_document_headless(
                             .or_else(|| page.items.iter().find(|it| it.id == si.item_id));
 
                         if let Some(item) = item_opt {
-                            let ItemKind::Stroke(ref s) = item.kind;
-                            NoteCanvas::draw_stroke(cr, s, PipelineMode::CatmullRomSpline, false);
-                            rendered_strokes += 1;
+                            if let Some(s) = item.as_stroke() {
+                                NoteCanvas::draw_stroke(
+                                    cr,
+                                    s,
+                                    PipelineMode::CatmullRomSpline,
+                                    false,
+                                );
+                                rendered_strokes += 1;
+                            }
                         }
                     }
                 } else {
                     for item in &page.items {
-                        let ItemKind::Stroke(ref s) = item.kind;
-                        NoteCanvas::draw_stroke(cr, s, PipelineMode::CatmullRomSpline, false);
-                        rendered_strokes += 1;
+                        if let Some(s) = item.as_stroke() {
+                            NoteCanvas::draw_stroke(cr, s, PipelineMode::CatmullRomSpline, false);
+                            rendered_strokes += 1;
+                        }
                     }
                 }
             }
@@ -441,10 +450,11 @@ fn bench_04_selection_latency_rect_and_lasso_10k_strokes() {
         let mut oracle_ids = Vec::new();
         let mut oracle_strokes = Vec::new();
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
-            if is_stroke_selected_by_rect(s, &norm_rect) {
-                oracle_ids.push(item.id);
-                oracle_strokes.push(s);
+            if let Some(s) = item.as_stroke() {
+                if is_stroke_selected_by_rect(s, &norm_rect) {
+                    oracle_ids.push(item.id);
+                    oracle_strokes.push(s);
+                }
             }
         }
         let oracle_bbox = SelectionEngine::compute_selection_bounding_box(oracle_strokes);
@@ -496,10 +506,11 @@ fn bench_04_selection_latency_rect_and_lasso_10k_strokes() {
         let mut oracle_ids = Vec::new();
         let mut oracle_strokes = Vec::new();
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
-            if is_stroke_selected_by_lasso(s, poly) {
-                oracle_ids.push(item.id);
-                oracle_strokes.push(s);
+            if let Some(s) = item.as_stroke() {
+                if is_stroke_selected_by_lasso(s, poly) {
+                    oracle_ids.push(item.id);
+                    oracle_strokes.push(s);
+                }
             }
         }
         let oracle_bbox = SelectionEngine::compute_selection_bounding_box(oracle_strokes);

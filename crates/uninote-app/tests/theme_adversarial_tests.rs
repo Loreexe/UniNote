@@ -466,17 +466,18 @@ fn test_zero_mutation_canvas_rendering_and_sqlite_roundtrip() {
         for page in &doc.pages {
             // Replicate drawing loop from canvas.rs setup_drawing()
             for item in &page.items {
-                let ItemKind::Stroke(stroke) = &item.kind;
-                // Directly call adapt_ink_color as canvas::draw_stroke does
-                let adapted = adapt_ink_color(stroke.style.color, is_dark);
-                cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
-                cr.set_line_width(stroke.style.base_width);
-                if !stroke.points.is_empty() {
-                    cr.move_to(stroke.points[0].x, stroke.points[0].y);
-                    for pt in &stroke.points[1..] {
-                        cr.line_to(pt.x, pt.y);
+                if let Some(stroke) = item.as_stroke() {
+                    // Directly call adapt_ink_color as canvas::draw_stroke does
+                    let adapted = adapt_ink_color(stroke.style.color, is_dark);
+                    cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
+                    cr.set_line_width(stroke.style.base_width);
+                    if !stroke.points.is_empty() {
+                        cr.move_to(stroke.points[0].x, stroke.points[0].y);
+                        for pt in &stroke.points[1..] {
+                            cr.line_to(pt.x, pt.y);
+                        }
+                        let _ = cr.stroke();
                     }
-                    let _ = cr.stroke();
                 }
             }
         }
@@ -493,8 +494,8 @@ fn test_zero_mutation_canvas_rendering_and_sqlite_roundtrip() {
             assert_eq!(item.id, snap_item.id);
             assert_eq!(item.z_index, snap_item.z_index);
 
-            let ItemKind::Stroke(current_stroke) = &item.kind;
-            let ItemKind::Stroke(snap_stroke) = &snap_item.kind;
+            let current_stroke = item.as_stroke().unwrap();
+            let snap_stroke = snap_item.as_stroke().unwrap();
 
             assert_eq!(
                 current_stroke.style.color, snap_stroke.style.color,
@@ -536,8 +537,8 @@ fn test_zero_mutation_canvas_rendering_and_sqlite_roundtrip() {
 
         for (item_idx, item) in page.items.iter().enumerate() {
             let snap_item = &snap_page.items[item_idx];
-            let ItemKind::Stroke(loaded_stroke) = &item.kind;
-            let ItemKind::Stroke(snap_stroke) = &snap_item.kind;
+            let loaded_stroke = item.as_stroke().unwrap();
+            let snap_stroke = snap_item.as_stroke().unwrap();
 
             assert_eq!(
                 loaded_stroke.style.color, snap_stroke.style.color,
@@ -669,16 +670,17 @@ fn test_rapid_theme_toggle_stability_1000_iterations() {
     for toggle in 0..1000 {
         let is_dark = toggle % 2 == 0;
         for item in &doc.pages[0].items {
-            let ItemKind::Stroke(stroke) = &item.kind;
-            let _adapted = adapt_ink_color(stroke.style.color, is_dark);
+            if let Some(stroke) = item.as_stroke() {
+                let _adapted = adapt_ink_color(stroke.style.color, is_dark);
+            }
         }
     }
 
     // Zero mutation check after 1000 toggles
     for (i, item) in doc.pages[0].items.iter().enumerate() {
         let snap_item = &initial_snapshot.items[i];
-        let ItemKind::Stroke(s1) = &item.kind;
-        let ItemKind::Stroke(s2) = &snap_item.kind;
+        let s1 = item.as_stroke().unwrap();
+        let s2 = snap_item.as_stroke().unwrap();
         assert_eq!(s1.style.color, s2.style.color);
     }
 }

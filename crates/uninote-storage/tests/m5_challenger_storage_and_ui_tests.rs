@@ -168,7 +168,6 @@ fn test_concurrent_multi_thread_schema_v2_migration() {
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("PRAGMA user_version");
     assert_eq!(user_ver, SCHEMA_VERSION);
-    assert_eq!(user_ver, 2);
 }
 
 // ============================================================================
@@ -220,7 +219,7 @@ fn test_migration_from_unversioned_raw_v0_database() {
         .connection()
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("PRAGMA user_version");
-    assert_eq!(user_ver, 2);
+    assert_eq!(user_ver, SCHEMA_VERSION);
 
     let doc = store.load_document().expect("Load migrated V0 doc");
     assert_eq!(doc.pages.len(), 1);

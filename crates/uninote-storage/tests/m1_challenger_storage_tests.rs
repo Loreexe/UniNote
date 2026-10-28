@@ -1,9 +1,7 @@
 use rusqlite::Connection;
 use std::f64::consts::{PI, SQRT_2};
 use tempfile::NamedTempFile;
-use uninote_core::{
-    CommandHistory, DocCommand, Document, DocumentFormat, ItemKind, PageBackground,
-};
+use uninote_core::{CommandHistory, DocCommand, Document, DocumentFormat, PageBackground};
 use uninote_storage::DocumentStore;
 use uninote_stroke::geometry::catmull_rom_to_bezier;
 use uninote_stroke::types::{
@@ -234,8 +232,8 @@ fn test_sqlite_raw_storage_omits_cached_fields() {
         assert_eq!(orig_item.id, loaded_item.id);
         assert_eq!(orig_item.z_index, loaded_item.z_index);
 
-        let ItemKind::Stroke(ref orig_s) = orig_item.kind;
-        let ItemKind::Stroke(ref loaded_s) = loaded_item.kind;
+        let orig_s = orig_item.as_stroke().expect("orig stroke");
+        let loaded_s = loaded_item.as_stroke().expect("loaded stroke");
 
         // Semantic equality passes
         assert_eq!(
@@ -335,7 +333,7 @@ fn test_sqlite_backward_compatibility_legacy_v1_payload() {
     assert_eq!(doc.format, DocumentFormat::Notebook);
     assert_eq!(doc.pages[0].items.len(), 1);
 
-    let ItemKind::Stroke(ref s) = doc.pages[0].items[0].kind;
+    let s = doc.pages[0].items[0].as_stroke().expect("stroke");
     assert_eq!(s.id, 999);
     assert_eq!(s.points.len(), 3);
     // In M3: load_document automatically rehydrates cache via ensure_cache()
@@ -419,7 +417,7 @@ fn test_move_items_1000_undo_redo_cycles_cache_synchronization_dyadic() {
         // Spot-check cache integrity every 200 cycles in undone state
         if cycle % 200 == 0 {
             for item in &doc.pages[0].items {
-                let ItemKind::Stroke(ref s) = item.kind;
+                let s = item.as_stroke().expect("stroke");
                 let cached = s.cached_bbox.unwrap();
                 let comp = s.compute_bounding_box().unwrap();
                 assert!((cached.min_x - comp.min_x).abs() < 1e-12);
@@ -456,7 +454,7 @@ fn test_move_items_1000_undo_redo_cycles_cache_synchronization_dyadic() {
     // Now in REDONE state: verify all items are at (orig + delta) with exact cached geometry
     {
         let it1 = &doc.pages[0].items[0];
-        let ItemKind::Stroke(ref s1_redone) = it1.kind;
+        let s1_redone = it1.as_stroke().expect("stroke");
         let expected_bbox1 = orig_bbox1.translate(dx, dy);
         assert!((s1_redone.cached_bbox.unwrap().min_x - expected_bbox1.min_x).abs() < 1e-13);
         assert!((s1_redone.cached_bbox.unwrap().max_x - expected_bbox1.max_x).abs() < 1e-13);
@@ -474,7 +472,7 @@ fn test_move_items_1000_undo_redo_cycles_cache_synchronization_dyadic() {
     // Now in UNDONE state: verify strictly zero drift (< 1e-13) against initial state
     {
         let it1 = &doc.pages[0].items[0];
-        let ItemKind::Stroke(ref s1_undone) = it1.kind;
+        let s1_undone = it1.as_stroke().expect("stroke");
         let bbox = s1_undone.cached_bbox.unwrap();
         assert!((bbox.min_x - orig_bbox1.min_x).abs() < 1e-13);
         assert!((bbox.max_x - orig_bbox1.max_x).abs() < 1e-13);
@@ -499,7 +497,7 @@ fn test_move_items_1000_undo_redo_cycles_cache_synchronization_dyadic() {
 
     {
         let it2 = &doc.pages[0].items[1];
-        let ItemKind::Stroke(ref s2_undone) = it2.kind;
+        let s2_undone = it2.as_stroke().expect("stroke");
         let bbox = s2_undone.cached_bbox.unwrap();
         assert!((bbox.min_x - orig_bbox2.min_x).abs() < 1e-13);
         for (curr_p, orig_p) in s2_undone.points.iter().zip(orig_pts2.iter()) {
@@ -510,7 +508,7 @@ fn test_move_items_1000_undo_redo_cycles_cache_synchronization_dyadic() {
 
     {
         let it3 = &doc.pages[0].items[2];
-        let ItemKind::Stroke(ref s3_undone) = it3.kind;
+        let s3_undone = it3.as_stroke().expect("stroke");
         let bbox = s3_undone.cached_bbox.unwrap();
         assert!((bbox.min_x - orig_bbox3.min_x).abs() < 1e-13);
         for (curr_p, orig_p) in s3_undone.points.iter().zip(orig_pts3.iter()) {
@@ -564,7 +562,7 @@ fn test_move_items_1000_undo_redo_cycles_transcendental_offsets() {
     // Return to undone state
     assert!(history.undo(&mut doc));
 
-    let ItemKind::Stroke(ref s) = doc.pages[0].items[0].kind;
+    let s = doc.pages[0].items[0].as_stroke().expect("stroke");
     let bbox = s.cached_bbox.unwrap();
 
     // Verify IEEE-754 precision bound (< 1e-11)
@@ -624,7 +622,7 @@ fn test_move_items_adversarial_inputs_no_cache_corruption() {
         &mut doc,
     );
 
-    let ItemKind::Stroke(ref s_nan) = doc.pages[0].items[0].kind;
+    let s_nan = doc.pages[0].items[0].as_stroke().expect("stroke");
     assert!(s_nan.points[0].x.is_finite());
     assert_eq!(s_nan.cached_bbox.unwrap(), orig_bbox);
     assert_eq!(s_nan.points, orig_pts);
@@ -640,7 +638,7 @@ fn test_move_items_adversarial_inputs_no_cache_corruption() {
         &mut doc,
     );
 
-    let ItemKind::Stroke(ref s_inf) = doc.pages[0].items[0].kind;
+    let s_inf = doc.pages[0].items[0].as_stroke().expect("stroke");
     assert!(s_inf.points[0].y.is_finite());
     assert_eq!(s_inf.cached_bbox.unwrap(), orig_bbox);
     assert_eq!(s_inf.points, orig_pts);
@@ -655,7 +653,7 @@ fn test_move_items_adversarial_inputs_no_cache_corruption() {
         },
         &mut doc,
     );
-    let ItemKind::Stroke(ref s_empty) = doc.pages[0].items[0].kind;
+    let s_empty = doc.pages[0].items[0].as_stroke().expect("stroke");
     assert_eq!(s_empty.cached_bbox.unwrap(), orig_bbox);
     assert_eq!(s_empty.points, orig_pts);
 
@@ -669,7 +667,7 @@ fn test_move_items_adversarial_inputs_no_cache_corruption() {
         },
         &mut doc,
     );
-    let ItemKind::Stroke(ref s_nonexistent) = doc.pages[0].items[0].kind;
+    let s_nonexistent = doc.pages[0].items[0].as_stroke().expect("stroke");
     assert_eq!(s_nonexistent.cached_bbox.unwrap(), orig_bbox);
     assert_eq!(s_nonexistent.points, orig_pts);
 }

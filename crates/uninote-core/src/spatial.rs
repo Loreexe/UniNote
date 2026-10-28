@@ -3,7 +3,7 @@
 //! Fornisce strutture leggere ad alte prestazioni per accelerare culling del viewport (120 FPS),
 //! cancellazione con gomma (O(log N + K)) e pre-filtraggio per strumenti di selezione.
 
-use crate::model::{Item, ItemKind};
+use crate::model::Item;
 use rstar::{RTree, RTreeObject, AABB};
 use serde::{Deserialize, Serialize};
 use uninote_stroke::Rect;
@@ -114,12 +114,8 @@ impl PageSpatialIndex {
     pub fn bulk_load(items: &[Item]) -> Self {
         let mut entries = Vec::with_capacity(items.len());
         for item in items {
-            match &item.kind {
-                ItemKind::Stroke(stroke) => {
-                    if let Some(bbox) = stroke.bounding_box() {
-                        entries.push(SpatialItem::from_rect(item.id, item.z_index, &bbox));
-                    }
-                }
+            if let Some(bbox) = item.bounding_box() {
+                entries.push(SpatialItem::from_rect(item.id, item.z_index, &bbox));
             }
         }
         Self {
@@ -129,13 +125,9 @@ impl PageSpatialIndex {
 
     /// Inserisce un elemento nell'indice spaziale in tempo O(log N).
     pub fn insert(&mut self, item: &Item) {
-        match &item.kind {
-            ItemKind::Stroke(stroke) => {
-                if let Some(bbox) = stroke.bounding_box() {
-                    let entry = SpatialItem::from_rect(item.id, item.z_index, &bbox);
-                    self.tree.insert(entry);
-                }
-            }
+        if let Some(bbox) = item.bounding_box() {
+            let entry = SpatialItem::from_rect(item.id, item.z_index, &bbox);
+            self.tree.insert(entry);
         }
     }
 
@@ -160,18 +152,14 @@ impl PageSpatialIndex {
     /// Rimuove un `Item` dall'indice spaziale estraendo automaticamente il suo bounding box.
     /// Include fallback lineare se il bounding box è nullo o degenere.
     pub fn remove_item(&mut self, item: &Item) -> bool {
-        match &item.kind {
-            ItemKind::Stroke(stroke) => {
-                if let Some(bbox) = stroke.bounding_box() {
-                    self.remove(item.id, &bbox)
-                } else {
-                    let target = self.tree.iter().find(|it| it.item_id == item.id).copied();
-                    if let Some(target_item) = target {
-                        self.tree.remove(&target_item).is_some()
-                    } else {
-                        false
-                    }
-                }
+        if let Some(bbox) = item.bounding_box() {
+            self.remove(item.id, &bbox)
+        } else {
+            let target = self.tree.iter().find(|it| it.item_id == item.id).copied();
+            if let Some(target_item) = target {
+                self.tree.remove(&target_item).is_some()
+            } else {
+                false
             }
         }
     }

@@ -1,5 +1,5 @@
 use tempfile::NamedTempFile;
-use uninote_core::{DocCommand, Document, DocumentFormat, ItemKind, PageBackground};
+use uninote_core::{DocCommand, Document, DocumentFormat, PageBackground};
 use uninote_storage::{export_portable_copy, DocumentStore, APPLICATION_ID, SCHEMA_VERSION};
 use uninote_stroke::{Stroke, StrokePoint, StrokeStyle};
 
@@ -97,7 +97,7 @@ fn test_save_and_reload_document_fidelity() {
         let p0 = &loaded_doc.pages[0];
         assert_eq!(p0.id, page_id_0);
         assert_eq!(p0.items.len(), 1);
-        let ItemKind::Stroke(ref s) = p0.items[0].kind;
+        let s = p0.items[0].as_stroke().expect("stroke");
         assert_eq!(s.id, 101);
         assert_eq!(s.points.len(), 2);
         assert_eq!(s.points[0].x, 100.0);
@@ -249,7 +249,7 @@ fn test_sqlite_v1_to_v2_migration_and_pdf_persistence() {
     let user_ver: u32 = conn
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(user_ver, 2);
+    assert_eq!(user_ver, 3);
 
     // Verifica che la colonna sia presente e che il record V1 sia intatto
     let (bg_type, bg_extra): (String, String) = conn

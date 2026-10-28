@@ -1797,9 +1797,10 @@ fn test_t3_r2_r3_r7_custom_slot_shape_creation_and_backup() {
     export_portable_copy(store.connection(), &bak_path).unwrap();
     let b_store = DocumentStore::open_or_create(&bak_path).unwrap();
     let b_doc = b_store.load_document().unwrap();
-    match &b_doc.pages[0].items[0].kind {
-        ItemKind::Stroke(s) => assert_eq!(s.style.color, mint),
-    }
+    assert_eq!(
+        b_doc.pages[0].items[0].as_stroke().unwrap().style.color,
+        mint
+    );
 
     let _ = fs::remove_file(doc_path);
     let _ = fs::remove_file(bak_path);
@@ -1966,12 +1967,12 @@ fn test_t4_scenario_full_document_lifecycle_and_portable_backup() {
     // 4. Toggle dark mode presentation (non-destructive)
     let is_dark_sheet = true;
     for item in &doc.pages[0].items {
-        let ItemKind::Stroke(ref s) = item.kind;
+        let s = item.as_stroke().expect("stroke");
         let _projected = oracle_adapt_ink_color(s.style.color, is_dark_sheet);
     }
     // Verify document in DB is unmutated
     let db_verify = store.load_document().unwrap();
-    let ItemKind::Stroke(ref s) = db_verify.pages[0].items[0].kind;
+    let s = db_verify.pages[0].items[0].as_stroke().expect("stroke");
     assert_eq!(s.style.color, (0.1, 0.1, 0.1, 1.0));
 
     // 5. Export portable copy

@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, Result, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::path::Path;
-use uninote_core::{Document, DocumentFormat, Item, ItemKind, Page, PageBackground};
+use uninote_core::{Document, DocumentFormat, ImageItem, Item, ItemKind, Page, PageBackground};
 use uninote_stroke::Stroke;
 use uuid::Uuid;
 
@@ -45,6 +45,33 @@ impl DocumentStore {
         let mut stmt = self.conn.prepare("PRAGMA integrity_check;")?;
         let result: String = stmt.query_row([], |row| row.get(0))?;
         Ok(result == "ok")
+    }
+
+    /// Salva un asset binario con deduplicazione automatica per contenuto (INSERT OR IGNORE).
+    pub fn save_asset(&self, hash: &str, mime_type: &str, data: &[u8]) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT OR IGNORE INTO assets (hash, mime_type, data, created_at) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        stmt.execute(params![hash, mime_type, data, now])?;
+        Ok(())
+    }
+
+    /// Carica i byte binari di un asset a partire dal suo digest SHA-256.
+    pub fn load_asset(&self, hash: &str) -> Result<Option<Vec<u8>>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT data FROM assets WHERE hash = ?1")?;
+        let mut rows = stmt.query(params![hash])?;
+        if let Some(row) = rows.next()? {
+            let data: Vec<u8> = row.get(0)?;
+            Ok(Some(data))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn save_document(&mut self, doc: &Document) -> Result<()> {
@@ -122,7 +149,7 @@ impl DocumentStore {
             ])?;
 
             for item in &page.items {
-                let (item_type, bbox_str, stroke_json) = match &item.kind {
+                let (item_type, bbox_str, item_json) = match &item.kind {
                     ItemKind::Stroke(stroke) => {
                         bbox_buf.clear();
                         let _ = serde_json::to_writer(&mut bbox_buf, &stroke.bounding_box());
@@ -134,6 +161,17 @@ impl DocumentStore {
 
                         ("stroke", b_str, s_str)
                     }
+                    ItemKind::Image(image) => {
+                        bbox_buf.clear();
+                        let _ = serde_json::to_writer(&mut bbox_buf, &image.bbox);
+                        let b_str = std::str::from_utf8(&bbox_buf).unwrap_or("{}");
+
+                        json_buf.clear();
+                        let _ = serde_json::to_writer(&mut json_buf, image);
+                        let s_str = std::str::from_utf8(&json_buf).unwrap_or("{}");
+
+                        ("image", b_str, s_str)
+                    }
                 };
 
                 item_stmt.execute(params![
@@ -142,7 +180,7 @@ impl DocumentStore {
                     item.z_index as i64,
                     item_type,
                     bbox_str,
-                    stroke_json,
+                    item_json,
                 ])?;
             }
         }
@@ -296,6 +334,15 @@ impl DocumentStore {
                             id: id as u64,
                             z_index: z_index as u64,
                             kind: ItemKind::Stroke(stroke),
+                        });
+                    }
+                } else if item_type == "image" {
+                    let data_json = row.get_ref(3)?.as_str()?;
+                    if let Ok(image) = serde_json::from_str::<ImageItem>(data_json) {
+                        items.push(Item {
+                            id: id as u64,
+                            z_index: z_index as u64,
+                            kind: ItemKind::Image(image),
                         });
                     }
                 }

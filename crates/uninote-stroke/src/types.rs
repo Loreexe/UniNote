@@ -309,17 +309,20 @@ impl Stroke {
         };
     }
 
-    /// Garantisce la presenza dei dati in cache ricalcolandoli se non ancora popolati.
+    /// Garantisce la presenza e la coerenza dei dati in cache ricalcolandoli se assenti o disallineati.
     pub fn ensure_cache(&mut self) {
-        if self.cached_bbox.is_none()
-            || (self.cached_bezier.is_empty()
-                && !self.is_dot
-                && self.points.len() >= 2
-                && matches!(
-                    self.mode,
-                    PipelineMode::CatmullRomSpline | PipelineMode::OneEuroFiltered
-                ))
-        {
+        let is_spline = matches!(
+            self.mode,
+            PipelineMode::CatmullRomSpline | PipelineMode::OneEuroFiltered
+        );
+        let bezier_invalid = is_spline
+            && !self.is_dot
+            && self.points.len() >= 2
+            && (self.cached_bezier.is_empty()
+                || self.cached_bezier.len() != self.points.len().saturating_sub(1)
+                || self.cached_bezier.iter().any(|s| !s.is_finite()));
+
+        if self.cached_bbox.is_none() || bezier_invalid {
             self.recompute_cache();
         }
     }

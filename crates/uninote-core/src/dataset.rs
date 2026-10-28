@@ -1078,8 +1078,12 @@ mod tests {
                 doc2.pages[p].spatial_index.len()
             );
             for i in 0..doc1.pages[p].items.len() {
-                let ItemKind::Stroke(s1) = &doc1.pages[p].items[i].kind;
-                let ItemKind::Stroke(s2) = &doc2.pages[p].items[i].kind;
+                let ItemKind::Stroke(s1) = &doc1.pages[p].items[i].kind else {
+                    panic!("expected Stroke")
+                };
+                let ItemKind::Stroke(s2) = &doc2.pages[p].items[i].kind else {
+                    panic!("expected Stroke")
+                };
                 assert_eq!(s1.id, s2.id);
                 assert_eq!(s1.points.len(), s2.points.len());
                 for pt in 0..s1.points.len() {
@@ -1099,7 +1103,9 @@ mod tests {
         for page in &doc.pages {
             assert_eq!(page.spatial_index.len(), page.items.len());
             for item in &page.items {
-                let ItemKind::Stroke(s) = &item.kind;
+                let ItemKind::Stroke(s) = &item.kind else {
+                    panic!("expected Stroke")
+                };
                 assert!(s.cached_bbox.is_some(), "cached_bbox must be pre-populated");
                 if !s.is_dot && s.points.len() >= 2 {
                     assert!(

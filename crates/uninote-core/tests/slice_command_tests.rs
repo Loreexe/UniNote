@@ -51,9 +51,7 @@ fn assert_spatial_index_invariant(page: &Page) {
     let items_with_bbox_count = page
         .items
         .iter()
-        .filter(|it| match &it.kind {
-            ItemKind::Stroke(s) => s.bounding_box().is_some(),
-        })
+        .filter(|it| it.bounding_box().is_some())
         .count();
 
     assert_eq!(
@@ -72,8 +70,7 @@ fn assert_spatial_index_invariant(page: &Page) {
             it.id
         );
 
-        let ItemKind::Stroke(s) = &it.kind;
-        if let Some(bbox) = s.bounding_box() {
+        if let Some(bbox) = it.bounding_box() {
             let found_in_tree = page
                 .spatial_index
                 .tree()
@@ -770,7 +767,9 @@ fn test_slice_stroke_spatial_index_lifecycle_1000_cycles() {
                     let num_frags = prng.next_range(4) as usize;
                     let mut new_strokes = Vec::with_capacity(num_frags);
 
-                    let ItemKind::Stroke(ref target_s) = target_item.kind;
+                    let ItemKind::Stroke(ref target_s) = target_item.kind else {
+                        panic!("expected Stroke")
+                    };
                     let bbox = target_s
                         .bounding_box()
                         .unwrap_or(Rect::new(0.0, 0.0, 10.0, 10.0));
@@ -879,7 +878,9 @@ fn test_slice_stroke_linear_exact_symmetry_cycles() {
         let num_frags = slice_type + 1;
         let mut new_strokes = Vec::with_capacity(num_frags);
 
-        let ItemKind::Stroke(ref s) = target_item.kind;
+        let ItemKind::Stroke(ref s) = target_item.kind else {
+            panic!("expected Stroke")
+        };
         let bbox = s.bounding_box().unwrap_or(Rect::new(0.0, 0.0, 10.0, 10.0));
 
         for f in 0..num_frags {

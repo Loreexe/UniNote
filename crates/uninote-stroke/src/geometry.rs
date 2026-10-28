@@ -143,6 +143,21 @@ impl CubicBezierSegment {
             + distance(self.cp2, self.p1);
         (chord + net) / 2.0
     }
+
+    /// Verifica se tutte le coordinate e gli spessori del segmento sono valori numerici finiti (non NaN né Inf).
+    #[inline]
+    pub fn is_finite(&self) -> bool {
+        self.p0.0.is_finite()
+            && self.p0.1.is_finite()
+            && self.cp1.0.is_finite()
+            && self.cp1.1.is_finite()
+            && self.cp2.0.is_finite()
+            && self.cp2.1.is_finite()
+            && self.p1.0.is_finite()
+            && self.p1.1.is_finite()
+            && self.width0.is_finite()
+            && self.width1.is_finite()
+    }
 }
 
 /// Converte una sequenza di punti del tratto in una serie di segmenti di Bézier cubici

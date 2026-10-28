@@ -147,7 +147,7 @@ fn test_scaling_commit_multi_item_uniform_undo_redo_exactness() {
     // Verify all 5 items have their vertices transformed correctly
     let page = &doc.pages[0];
     for (idx, orig_s) in original_strokes.iter().enumerate() {
-        let ItemKind::Stroke(ref transformed) = page.items[idx].kind;
+        let transformed = page.items[idx].as_stroke().unwrap();
         assert_eq!(transformed.points.len(), orig_s.points.len());
         for (p_trans, p_orig) in transformed.points.iter().zip(orig_s.points.iter()) {
             let exp_x = origin_x + (p_orig.x - origin_x) * scale_x;
@@ -184,7 +184,7 @@ fn test_scaling_commit_multi_item_uniform_undo_redo_exactness() {
     assert!(history.undo(&mut doc));
     let page = &doc.pages[0];
     for (idx, orig_s) in original_strokes.iter().enumerate() {
-        let ItemKind::Stroke(ref reverted) = page.items[idx].kind;
+        let reverted = page.items[idx].as_stroke().unwrap();
         for (p_rev, p_orig) in reverted.points.iter().zip(orig_s.points.iter()) {
             assert!(
                 (p_rev.x - p_orig.x).abs() < 1e-10,
@@ -218,7 +218,7 @@ fn test_scaling_commit_multi_item_uniform_undo_redo_exactness() {
     assert!(history.redo(&mut doc));
     let page = &doc.pages[0];
     for (idx, orig_s) in original_strokes.iter().enumerate() {
-        let ItemKind::Stroke(ref redone) = page.items[idx].kind;
+        let redone = page.items[idx].as_stroke().unwrap();
         let exp_x = origin_x + (orig_s.points[0].x - origin_x) * scale_x;
         let exp_y = origin_y + (orig_s.points[0].y - origin_y) * scale_y;
         assert!((redone.points[0].x - exp_x).abs() < 1e-10);
@@ -266,7 +266,7 @@ fn test_scaling_anisotropic_vertices_restore_and_width_drift_documented() {
 
     // Verify vertices scaled horizontally but not vertically
     let page = &doc.pages[0];
-    let ItemKind::Stroke(ref transformed) = page.items[0].kind;
+    let transformed = page.items[0].as_stroke().unwrap();
     assert_eq!(transformed.points[0].x, 100.0);
     assert_eq!(transformed.points[1].x, 300.0);
     assert_eq!(transformed.points[0].y, 100.0);
@@ -275,7 +275,7 @@ fn test_scaling_anisotropic_vertices_restore_and_width_drift_documented() {
     // Undo anisotropic scaling
     assert!(history.undo(&mut doc));
     let page = &doc.pages[0];
-    let ItemKind::Stroke(ref reverted) = page.items[0].kind;
+    let reverted = page.items[0].as_stroke().unwrap();
 
     // 1. Vertices (coordinates x, y) RESTORE EXACTLY:
     assert!((reverted.points[0].x - 100.0).abs() < 1e-10);
@@ -499,8 +499,8 @@ fn test_stress_150_undo_redo_cycles_spatial_index_parity() {
     assert!(history.undo(&mut doc));
     let page = &doc.pages[0];
     for (i, orig_it) in original_items.iter().enumerate() {
-        let ItemKind::Stroke(ref orig_s) = orig_it.kind;
-        let ItemKind::Stroke(ref cur_s) = page.items[i].kind;
+        let orig_s = orig_it.as_stroke().unwrap();
+        let cur_s = page.items[i].as_stroke().unwrap();
 
         for (p_cur, p_orig) in cur_s.points.iter().zip(orig_s.points.iter()) {
             assert!(
@@ -577,7 +577,7 @@ fn test_stress_mixed_command_chain_undo_redo_spatial_index() {
     );
 
     // Command 3: SliceStroke on item 3003
-    let ItemKind::Stroke(ref s3003) = doc.pages[0].items[3].kind;
+    let s3003 = doc.pages[0].items[3].as_stroke().unwrap();
     let frags = s3003.slice_with_circle((425.0, 100.0), 10.0);
     assert_eq!(frags.len(), 2);
     let frag_items = vec![
@@ -752,7 +752,7 @@ fn test_segment_eraser_varying_radii_and_spatial_index_synchronization() {
     assert_eq!(doc.pages[0].items.len(), 1);
     assert_eq!(doc.pages[0].spatial_index.len(), 1);
 
-    let ItemKind::Stroke(ref restored) = doc.pages[0].items[0].kind;
+    let restored = doc.pages[0].items[0].as_stroke().unwrap();
     assert_eq!(restored.id, orig_stroke.id);
     assert_eq!(restored.points.len(), orig_stroke.points.len());
     for (p_res, p_orig) in restored.points.iter().zip(orig_stroke.points.iter()) {
@@ -817,7 +817,7 @@ fn test_segment_eraser_recursive_slicing_and_sequential_restoration() {
     assert_eq!(doc.pages[0].spatial_index.len(), 2);
 
     // Step 2: Slice F1 at x=250, radius 15 -> splits into F1a, F1b
-    let ItemKind::Stroke(ref s_f1) = f1_item.kind;
+    let s_f1 = f1_item.as_stroke().unwrap();
     let frags2 = s_f1.slice_with_circle((250.0, 100.0), 15.0);
     assert_eq!(frags2.len(), 2);
     let f1a_item = make_test_item(
@@ -850,7 +850,7 @@ fn test_segment_eraser_recursive_slicing_and_sequential_restoration() {
     assert_eq!(doc.pages[0].spatial_index.len(), 3);
 
     // Step 3: Slice F2 at x=750, radius 15 -> splits into F2a, F2b
-    let ItemKind::Stroke(ref s_f2) = f2_item.kind;
+    let s_f2 = f2_item.as_stroke().unwrap();
     let frags3 = s_f2.slice_with_circle((750.0, 100.0), 15.0);
     assert_eq!(frags3.len(), 2);
     let f2a_item = make_test_item(
@@ -883,7 +883,7 @@ fn test_segment_eraser_recursive_slicing_and_sequential_restoration() {
     assert_eq!(doc.pages[0].spatial_index.len(), 4);
 
     // Step 4: Slice F1a at x=125, radius 15 -> splits into F1a1, F1a2
-    let ItemKind::Stroke(ref s_f1a) = f1a_item.kind;
+    let s_f1a = f1a_item.as_stroke().unwrap();
     let frags4 = s_f1a.slice_with_circle((125.0, 100.0), 15.0);
     assert_eq!(frags4.len(), 2);
     let f1a1_item = make_test_item(
@@ -915,7 +915,7 @@ fn test_segment_eraser_recursive_slicing_and_sequential_restoration() {
     assert_eq!(doc.pages[0].spatial_index.len(), 5);
 
     // Step 5: Completely erase F2b with large circle (radius 200 at 880, 100) -> 0 fragments
-    let ItemKind::Stroke(ref s_f2b) = f2b_item.kind;
+    let s_f2b = f2b_item.as_stroke().unwrap();
     let frags5 = s_f2b.slice_with_circle((880.0, 100.0), 200.0);
     assert_eq!(frags5.len(), 0);
     history.execute(
@@ -955,7 +955,7 @@ fn test_segment_eraser_recursive_slicing_and_sequential_restoration() {
     assert_eq!(doc.pages[0].items.len(), 1);
     assert_eq!(doc.pages[0].spatial_index.len(), 1);
 
-    let ItemKind::Stroke(ref restored) = doc.pages[0].items[0].kind;
+    let restored = doc.pages[0].items[0].as_stroke().unwrap();
     assert_eq!(restored.id, orig_stroke.id);
     assert_eq!(restored.points.len(), 101);
     assert_eq!(restored.points[0].x, 0.0);
@@ -1006,7 +1006,7 @@ fn test_segment_eraser_multi_stroke_simultaneous_slice() {
     let erase_radius = 15.0;
 
     for it in &items {
-        let ItemKind::Stroke(ref s) = it.kind;
+        let s = it.as_stroke().unwrap();
         let frags = s.slice_with_circle(erase_center, erase_radius);
         assert_eq!(frags.len(), 2, "Each intersecting stroke must split into 2");
 
@@ -1109,7 +1109,7 @@ fn test_numerical_stability_nan_inf_zero_division_resilience() {
     for bad_cmd in bad_cmds {
         history.execute(bad_cmd, &mut doc);
         // Geometry must remain unchanged
-        let ItemKind::Stroke(ref cur_s) = doc.pages[0].items[0].kind;
+        let cur_s = doc.pages[0].items[0].as_stroke().unwrap();
         assert_eq!(cur_s.points[0].x, 10.0);
         assert_eq!(cur_s.points[1].x, 50.0);
         assert_eq!(doc.pages[0].spatial_index.len(), 1);

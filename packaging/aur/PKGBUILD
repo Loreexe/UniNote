@@ -1,6 +1,6 @@
 # Maintainer: UniNote Developers <uninote@uninote.org>
 pkgname=uninote
-pkgver=0.4.8
+pkgver=0.4.9
 pkgrel=1
 pkgdesc="Suite accademica Linux nativa per prendere appunti a mano libera con stilo (MPP, Wacom)"
 arch=('x86_64')

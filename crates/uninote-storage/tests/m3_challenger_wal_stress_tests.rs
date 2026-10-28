@@ -217,7 +217,7 @@ fn test_empirical_wal_save_and_load_10k_realistic_strokes() {
     for (idx, item) in loaded.pages[0].items.iter().enumerate() {
         assert_eq!(item.id, idx as u64);
         assert_eq!(item.z_index, idx as u64);
-        let ItemKind::Stroke(ref s) = item.kind;
+        let s = item.as_stroke().expect("stroke");
         assert_eq!(s.id, idx as u64);
         assert_eq!(s.points.len(), 8);
         assert!(
@@ -517,7 +517,7 @@ fn test_stress_100_pages_distributed_10k_strokes() {
         assert_eq!(page.items.len(), 100);
         assert_eq!(page.spatial_index.len(), 100);
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().expect("stroke");
             assert!(s.cached_bbox.is_some());
             assert!(!s.cached_bezier.is_empty());
         }
@@ -694,7 +694,7 @@ fn test_boundary_empty_doc_and_giant_stroke() {
         );
 
         assert_eq!(loaded.pages[0].items.len(), 1);
-        let ItemKind::Stroke(ref s) = loaded.pages[0].items[0].kind;
+        let s = loaded.pages[0].items[0].as_stroke().expect("stroke");
         assert_eq!(s.points.len(), 5000);
         assert!(s.cached_bbox.is_some());
         assert_eq!(s.cached_bezier.len(), 4999);

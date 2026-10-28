@@ -179,18 +179,20 @@ fn execute_eraser_at(
     if candidates.len() == 1 {
         let target_id = candidates[0].item_id;
         if let Some(item) = page.items.iter().find(|it| it.id == target_id) {
-            let ItemKind::Stroke(ref s) = item.kind;
-            if s.intersects_point(doc_pt, radius) {
-                erased.push(item.clone());
+            if let Some(s) = item.as_stroke() {
+                if s.intersects_point(doc_pt, radius) {
+                    erased.push(item.clone());
+                }
             }
         }
     } else {
         let candidate_ids: HashSet<u64> = candidates.iter().map(|c| c.item_id).collect();
         for item in &page.items {
             if candidate_ids.contains(&item.id) {
-                let ItemKind::Stroke(ref s) = item.kind;
-                if s.intersects_point(doc_pt, radius) {
-                    erased.push(item.clone());
+                if let Some(s) = item.as_stroke() {
+                    if s.intersects_point(doc_pt, radius) {
+                        erased.push(item.clone());
+                    }
                 }
             }
         }
@@ -380,10 +382,11 @@ fn test_benchmark_selection_rect_10k_strokes_oracle_agreement() {
 
         if norm_rect.width() >= 2.0 || norm_rect.height() >= 2.0 {
             for item in &page.items {
-                let ItemKind::Stroke(ref s) = item.kind;
-                if is_stroke_selected_by_rect(s, &norm_rect) {
-                    oracle_ids.push(item.id);
-                    oracle_strokes.push(s);
+                if let Some(s) = item.as_stroke() {
+                    if is_stroke_selected_by_rect(s, &norm_rect) {
+                        oracle_ids.push(item.id);
+                        oracle_strokes.push(s);
+                    }
                 }
             }
         }
@@ -495,10 +498,11 @@ fn test_benchmark_selection_lasso_10k_strokes_oracle_agreement() {
 
         if poly.len() >= 3 {
             for item in &page.items {
-                let ItemKind::Stroke(ref s) = item.kind;
-                if is_stroke_selected_by_lasso(s, poly) {
-                    oracle_ids.push(item.id);
-                    oracle_strokes.push(s);
+                if let Some(s) = item.as_stroke() {
+                    if is_stroke_selected_by_lasso(s, poly) {
+                        oracle_ids.push(item.id);
+                        oracle_strokes.push(s);
+                    }
                 }
             }
         }
@@ -742,8 +746,7 @@ fn test_stress_command_history_1000_cycles_spatial_index_bijection_and_completen
             for _ in 0..5 {
                 let rand_idx = prng.range_usize(0, page.items.len() - 1);
                 let item = &page.items[rand_idx];
-                let ItemKind::Stroke(ref s) = item.kind;
-                if let Some(bbox) = s.bounding_box() {
+                if let Some(bbox) = item.bounding_box() {
                     let query_result = page.spatial_index.locate_in_envelope(
                         bbox.min_x - 1.0,
                         bbox.min_y - 1.0,

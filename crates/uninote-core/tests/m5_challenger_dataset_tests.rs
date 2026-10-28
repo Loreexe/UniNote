@@ -70,8 +70,12 @@ fn assert_documents_bitwise_equal(doc1: &Document, doc2: &Document, context: &st
                 "[{context}] Page {p_idx} Item {i_idx} z_index differs"
             );
 
-            let ItemKind::Stroke(ref s1) = it1.kind;
-            let ItemKind::Stroke(ref s2) = it2.kind;
+            let ItemKind::Stroke(ref s1) = it1.kind else {
+                panic!("expected stroke")
+            };
+            let ItemKind::Stroke(ref s2) = it2.kind else {
+                panic!("expected stroke")
+            };
 
             assert_eq!(
                 s1.id, s2.id,
@@ -393,7 +397,9 @@ fn test_challenger_distribution_proportions_structural_and_stroke() {
     for page in &doc_nb_10k.pages {
         let mut prev_type: Option<ContentType> = None;
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
+            let ItemKind::Stroke(ref s) = item.kind else {
+                panic!("expected stroke")
+            };
             let c_type = classify_stroke(s);
             match c_type {
                 ContentType::Handwriting => cursive_strokes += 1,
@@ -419,7 +425,9 @@ fn test_challenger_distribution_proportions_structural_and_stroke() {
     let mut detected_paragraphs = 0;
     for page in &doc_nb_10k.pages {
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
+            let ItemKind::Stroke(ref s) = item.kind else {
+                panic!("expected stroke")
+            };
             if classify_stroke(s) == ContentType::Handwriting
                 && !s.is_dot
                 && !s.points.is_empty()
@@ -514,7 +522,9 @@ fn test_challenger_cache_warmth_and_spatial_index_completeness_all_scales() {
             );
 
             for (i_idx, item) in page.items.iter().enumerate() {
-                let ItemKind::Stroke(ref s) = item.kind;
+                let ItemKind::Stroke(ref s) = item.kind else {
+                    panic!("[{desc}] Page {p_idx} item {i_idx} is not a stroke");
+                };
                 assert!(
                     s.cached_bbox.is_some(),
                     "[{desc}] Page {p_idx} Stroke {i_idx} (id={}) missing cached_bbox",
@@ -576,10 +586,10 @@ fn linear_scan_oracle(
 ) -> Vec<(u64, u64)> {
     let mut hits = Vec::new();
     for item in &page.items {
-        let ItemKind::Stroke(ref s) = item.kind;
-        let bbox = s.bounding_box().expect("cached bbox exists");
-        if manual_bbox_intersects_query(&bbox, min_x, min_y, max_x, max_y) {
-            hits.push((item.z_index, item.id));
+        if let Some(bbox) = item.bounding_box() {
+            if manual_bbox_intersects_query(&bbox, min_x, min_y, max_x, max_y) {
+                hits.push((item.z_index, item.id));
+            }
         }
     }
     hits.sort_unstable();
@@ -720,7 +730,9 @@ fn test_challenger_adversarial_bounding_box_tightness() {
 
     for page in &doc.pages {
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
+            let ItemKind::Stroke(ref s) = item.kind else {
+                panic!("expected stroke in dataset");
+            };
             let cached = s.cached_bbox.expect("cached_bbox must be Some");
 
             // Compute ground-truth bounding box manually from points
@@ -772,7 +784,9 @@ fn test_challenger_adversarial_catmull_rom_bezier_continuity() {
 
     for page in &doc.pages {
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
+            let ItemKind::Stroke(ref s) = item.kind else {
+                panic!("expected stroke in dataset");
+            };
             if s.is_dot || s.points.len() < 2 {
                 continue;
             }

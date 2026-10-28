@@ -574,7 +574,7 @@ fn test_10k_strokes_a4_notebook_spatial_culling_ratio_and_ground_truth() {
             .items
             .iter()
             .filter_map(|it| {
-                let ItemKind::Stroke(ref s) = it.kind;
+                let s = it.as_stroke()?;
                 if ground_truth_intersects(s, min_x, min_y, max_x, max_y) {
                     Some(it.id)
                 } else {
@@ -679,7 +679,7 @@ fn test_10k_strokes_whiteboard_spatial_culling_ratio_and_ground_truth() {
             .items
             .iter()
             .filter_map(|it| {
-                let ItemKind::Stroke(ref s) = it.kind;
+                let s = it.as_stroke()?;
                 if ground_truth_intersects(s, min_x, min_y, max_x, max_y) {
                     Some(it.id)
                 } else {
@@ -850,7 +850,7 @@ fn test_dynamic_mutations_and_spatial_index_synchronization_under_load() {
         .items
         .iter()
         .filter_map(|it| {
-            let ItemKind::Stroke(ref s) = it.kind;
+            let s = it.as_stroke()?;
             if ground_truth_intersects(s, query_box.0, query_box.1, query_box.2, query_box.3) {
                 Some(it.id)
             } else {
@@ -1034,9 +1034,7 @@ fn test_adversarial_boundary_conditions_and_numerical_extremes() {
     assert_eq!(page.spatial_index.len(), 2);
 
     // Tangent boundary query: query envelope touching dot bounding box exactly
-    let dot_bbox = match &page.items[0].kind {
-        ItemKind::Stroke(s) => s.bounding_box().unwrap(),
-    };
+    let dot_bbox = page.items[0].bounding_box().unwrap();
     let tangent_query = page.spatial_index.locate_in_envelope(
         dot_bbox.max_x,
         dot_bbox.max_y,

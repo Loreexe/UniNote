@@ -38,10 +38,11 @@ impl AppSelectionEngine {
                 if !candidate_set.contains(&item.id) {
                     continue;
                 }
-                let ItemKind::Stroke(ref s) = item.kind;
-                if is_stroke_selected_by_rect(s, &norm_rect) {
-                    selected_ids.push(item.id);
-                    selected_strokes.push(s);
+                if let ItemKind::Stroke(ref s) = item.kind {
+                    if is_stroke_selected_by_rect(s, &norm_rect) {
+                        selected_ids.push(item.id);
+                        selected_strokes.push(s);
+                    }
                 }
             }
 
@@ -53,10 +54,11 @@ impl AppSelectionEngine {
             let mut selected_strokes = Vec::new();
 
             for item in &page.items {
-                let ItemKind::Stroke(ref s) = item.kind;
-                if is_stroke_selected_by_rect(s, &norm_rect) {
-                    selected_ids.push(item.id);
-                    selected_strokes.push(s);
+                if let ItemKind::Stroke(ref s) = item.kind {
+                    if is_stroke_selected_by_rect(s, &norm_rect) {
+                        selected_ids.push(item.id);
+                        selected_strokes.push(s);
+                    }
                 }
             }
 
@@ -111,10 +113,11 @@ impl AppSelectionEngine {
                 if !candidate_set.contains(&item.id) {
                     continue;
                 }
-                let ItemKind::Stroke(ref s) = item.kind;
-                if is_stroke_selected_by_lasso(s, poly) {
-                    selected_ids.push(item.id);
-                    selected_strokes.push(s);
+                if let ItemKind::Stroke(ref s) = item.kind {
+                    if is_stroke_selected_by_lasso(s, poly) {
+                        selected_ids.push(item.id);
+                        selected_strokes.push(s);
+                    }
                 }
             }
 
@@ -126,10 +129,11 @@ impl AppSelectionEngine {
             let mut selected_strokes = Vec::new();
 
             for item in &page.items {
-                let ItemKind::Stroke(ref s) = item.kind;
-                if is_stroke_selected_by_lasso(s, poly) {
-                    selected_ids.push(item.id);
-                    selected_strokes.push(s);
+                if let ItemKind::Stroke(ref s) = item.kind {
+                    if is_stroke_selected_by_lasso(s, poly) {
+                        selected_ids.push(item.id);
+                        selected_strokes.push(s);
+                    }
                 }
             }
 

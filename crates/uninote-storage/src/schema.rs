@@ -1,9 +1,9 @@
 use rusqlite::{Connection, Result, TransactionBehavior};
 
 pub const APPLICATION_ID: u32 = 0x554E_494E; // "UNIN"
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
-/// Inizializza o aggiorna lo schema del database SQLite con migrazione V1 -> V2.
+/// Inizializza o aggiorna lo schema del database SQLite con migrazione V1/V2 -> V3.
 pub fn initialize_schema(conn: &mut Connection) -> Result<()> {
     conn.busy_timeout(std::time::Duration::from_millis(5000))?;
     conn.execute_batch(&format!(
@@ -84,6 +84,16 @@ pub fn initialize_schema(conn: &mut Connection) -> Result<()> {
 
     tx.execute(
         "CREATE INDEX IF NOT EXISTS idx_items_page ON items(page_id)",
+        [],
+    )?;
+
+    tx.execute(
+        "CREATE TABLE IF NOT EXISTS assets (
+            hash TEXT PRIMARY KEY,
+            mime_type TEXT NOT NULL,
+            data BLOB NOT NULL,
+            created_at INTEGER NOT NULL
+        )",
         [],
     )?;
 

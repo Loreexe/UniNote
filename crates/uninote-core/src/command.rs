@@ -1,4 +1,4 @@
-use crate::model::{Document, Item, ItemId, ItemKind, Page, PageBackground};
+use crate::model::{Document, ImageItem, Item, ItemId, ItemKind, Page, PageBackground};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use uninote_stroke::Stroke;
@@ -9,6 +9,8 @@ use uuid::Uuid;
 pub enum DocCommand {
     /// Aggiunta di un nuovo tratto a una pagina.
     AddStroke { page_id: Uuid, stroke: Stroke },
+    /// Aggiunta di una nuova immagine a una pagina.
+    AddImage { page_id: Uuid, item: Item },
     /// Cancellazione di uno o più elementi con preservazione per Undo.
     EraseItems {
         page_id: Uuid,
@@ -56,6 +58,18 @@ pub enum DocCommand {
         original_stroke: Item,
         new_strokes: Vec<Item>,
     },
+}
+
+impl DocCommand {
+    /// Costruisce un comando di aggiunta immagine incapsulando direttamente l'Item.
+    pub fn add_image(page_id: Uuid, item_id: ItemId, z_index: u64, mut image: ImageItem) -> Self {
+        image.page_id = page_id;
+        image.z_index = z_index as i64;
+        Self::AddImage {
+            page_id,
+            item: Item::new_image(item_id, z_index, image),
+        }
+    }
 }
 
 /// Gestore della cronologia dei comandi per Undo / Redo e tracciamento delle revisioni monotone.
@@ -173,6 +187,12 @@ impl CommandHistory {
                     page.items.push(item);
                 }
             }
+            DocCommand::AddImage { page_id, item } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    page.spatial_index.insert(item);
+                    page.items.push(item.clone());
+                }
+            }
             DocCommand::EraseItems {
                 page_id,
                 erased_items,
@@ -181,10 +201,7 @@ impl CommandHistory {
                     let ids_to_remove: std::collections::HashSet<u64> =
                         erased_items.iter().map(|it| it.id).collect();
                     for it in erased_items {
-                        let ItemKind::Stroke(s) = &it.kind;
-                        if let Some(bbox) = s.bounding_box() {
-                            page.spatial_index.remove(it.id, &bbox);
-                        }
+                        page.spatial_index.remove_item(it);
                     }
                     page.items.retain(|it| !ids_to_remove.contains(&it.id));
                 }
@@ -214,19 +231,17 @@ impl CommandHistory {
                     if item_ids.len() > REBUILD_THRESHOLD {
                         for item in &mut page.items {
                             if id_set.contains(&item.id) {
-                                let ItemKind::Stroke(stroke) = &mut item.kind;
-                                stroke.translate(*delta_x, *delta_y);
+                                item.translate(*delta_x, *delta_y);
                             }
                         }
                         page.rebuild_spatial_index();
                     } else {
                         for item in &mut page.items {
                             if id_set.contains(&item.id) {
-                                let ItemKind::Stroke(stroke) = &mut item.kind;
-                                if let Some(old_bbox) = stroke.bounding_box() {
+                                if let Some(old_bbox) = item.bounding_box() {
                                     page.spatial_index.remove(item.id, &old_bbox);
                                 }
-                                stroke.translate(*delta_x, *delta_y);
+                                item.translate(*delta_x, *delta_y);
                                 page.spatial_index.insert(item);
                             }
                         }
@@ -264,15 +279,27 @@ impl CommandHistory {
                     let id_set: HashSet<ItemId> = item_ids.iter().copied().collect();
                     for item in &mut page.items {
                         if id_set.contains(&item.id) {
-                            let ItemKind::Stroke(stroke) = &mut item.kind;
-                            if let Some(old_bbox) = stroke.bounding_box() {
+                            if let Some(old_bbox) = item.bounding_box() {
                                 page.spatial_index.remove(item.id, &old_bbox);
                             }
-                            if (*scale_x - 1.0).abs() > 1e-9 || (*scale_y - 1.0).abs() > 1e-9 {
-                                stroke.scale(*scale_x, *scale_y, *origin_x, *origin_y);
-                            }
-                            if rotation_rad.abs() > 1e-9 {
-                                stroke.rotate(*rotation_rad, *origin_x, *origin_y);
+                            match &mut item.kind {
+                                ItemKind::Stroke(stroke) => {
+                                    if (*scale_x - 1.0).abs() > 1e-9
+                                        || (*scale_y - 1.0).abs() > 1e-9
+                                    {
+                                        stroke.scale(*scale_x, *scale_y, *origin_x, *origin_y);
+                                    }
+                                    if rotation_rad.abs() > 1e-9 {
+                                        stroke.rotate(*rotation_rad, *origin_x, *origin_y);
+                                    }
+                                }
+                                ItemKind::Image(image) => {
+                                    if (*scale_x - 1.0).abs() > 1e-9
+                                        || (*scale_y - 1.0).abs() > 1e-9
+                                    {
+                                        image.scale(*scale_x, *scale_y, *origin_x, *origin_y);
+                                    }
+                                }
                             }
                             page.spatial_index.insert(item);
                         }
@@ -286,13 +313,15 @@ impl CommandHistory {
                 if let Some(page) = doc.get_page_mut(*page_id) {
                     for (id, _old_style, new_style) in items_style {
                         if let Some(item) = page.items.iter_mut().find(|it| it.id == *id) {
-                            let ItemKind::Stroke(stroke) = &mut item.kind;
-                            if let Some(old_bbox) = stroke.bounding_box() {
-                                page.spatial_index.remove(item.id, &old_bbox);
+                            let item_id = item.id;
+                            if let Some(stroke) = item.as_stroke_mut() {
+                                if let Some(old_bbox) = stroke.bounding_box() {
+                                    page.spatial_index.remove(item_id, &old_bbox);
+                                }
+                                stroke.style = new_style.clone();
+                                stroke.recompute_cache();
+                                page.spatial_index.insert(item);
                             }
-                            stroke.style = new_style.clone();
-                            stroke.recompute_cache();
-                            page.spatial_index.insert(item);
                         }
                     }
                 }
@@ -336,13 +365,17 @@ impl CommandHistory {
                     // Rimuove l'ultimo stroke corrispondente inserito
                     if let Some(pos) = page.items.iter().rposition(|it| match &it.kind {
                         ItemKind::Stroke(s) => s.id == stroke.id,
+                        _ => false,
                     }) {
                         let item = page.items.remove(pos);
-                        let ItemKind::Stroke(s) = &item.kind;
-                        if let Some(bbox) = s.bounding_box() {
-                            page.spatial_index.remove(item.id, &bbox);
-                        }
+                        page.spatial_index.remove_item(&item);
                     }
+                }
+            }
+            DocCommand::AddImage { page_id, item } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    page.spatial_index.remove_item(item);
+                    page.items.retain(|it| it.id != item.id);
                 }
             }
             DocCommand::EraseItems {
@@ -383,19 +416,17 @@ impl CommandHistory {
                     if item_ids.len() > REBUILD_THRESHOLD {
                         for item in &mut page.items {
                             if id_set.contains(&item.id) {
-                                let ItemKind::Stroke(stroke) = &mut item.kind;
-                                stroke.translate(-*delta_x, -*delta_y);
+                                item.translate(-*delta_x, -*delta_y);
                             }
                         }
                         page.rebuild_spatial_index();
                     } else {
                         for item in &mut page.items {
                             if id_set.contains(&item.id) {
-                                let ItemKind::Stroke(stroke) = &mut item.kind;
-                                if let Some(cur_bbox) = stroke.bounding_box() {
+                                if let Some(cur_bbox) = item.bounding_box() {
                                     page.spatial_index.remove(item.id, &cur_bbox);
                                 }
-                                stroke.translate(-*delta_x, -*delta_y);
+                                item.translate(-*delta_x, -*delta_y);
                                 page.spatial_index.insert(item);
                             }
                         }
@@ -406,10 +437,7 @@ impl CommandHistory {
                 if let Some(page) = doc.get_page_mut(*page_id) {
                     let ids_to_remove: HashSet<u64> = items.iter().map(|it| it.id).collect();
                     for it in items {
-                        let ItemKind::Stroke(s) = &it.kind;
-                        if let Some(bbox) = s.bounding_box() {
-                            page.spatial_index.remove(it.id, &bbox);
-                        }
+                        page.spatial_index.remove_item(it);
                     }
                     page.items.retain(|it| !ids_to_remove.contains(&it.id));
                 }
@@ -442,16 +470,24 @@ impl CommandHistory {
                     let id_set: HashSet<ItemId> = item_ids.iter().copied().collect();
                     for item in &mut page.items {
                         if id_set.contains(&item.id) {
-                            let ItemKind::Stroke(stroke) = &mut item.kind;
-                            if let Some(cur_bbox) = stroke.bounding_box() {
+                            if let Some(cur_bbox) = item.bounding_box() {
                                 page.spatial_index.remove(item.id, &cur_bbox);
                             }
-                            // Inverti rotazione prima e poi scala
-                            if inv_rot.abs() > 1e-9 {
-                                stroke.rotate(inv_rot, *origin_x, *origin_y);
-                            }
-                            if (inv_sx - 1.0).abs() > 1e-9 || (inv_sy - 1.0).abs() > 1e-9 {
-                                stroke.scale(inv_sx, inv_sy, *origin_x, *origin_y);
+                            match &mut item.kind {
+                                ItemKind::Stroke(stroke) => {
+                                    // Inverti rotazione prima e poi scala
+                                    if inv_rot.abs() > 1e-9 {
+                                        stroke.rotate(inv_rot, *origin_x, *origin_y);
+                                    }
+                                    if (inv_sx - 1.0).abs() > 1e-9 || (inv_sy - 1.0).abs() > 1e-9 {
+                                        stroke.scale(inv_sx, inv_sy, *origin_x, *origin_y);
+                                    }
+                                }
+                                ItemKind::Image(image) => {
+                                    if (inv_sx - 1.0).abs() > 1e-9 || (inv_sy - 1.0).abs() > 1e-9 {
+                                        image.scale(inv_sx, inv_sy, *origin_x, *origin_y);
+                                    }
+                                }
                             }
                             page.spatial_index.insert(item);
                         }
@@ -465,13 +501,15 @@ impl CommandHistory {
                 if let Some(page) = doc.get_page_mut(*page_id) {
                     for (id, old_style, _new_style) in items_style {
                         if let Some(item) = page.items.iter_mut().find(|it| it.id == *id) {
-                            let ItemKind::Stroke(stroke) = &mut item.kind;
-                            if let Some(cur_bbox) = stroke.bounding_box() {
-                                page.spatial_index.remove(item.id, &cur_bbox);
+                            let item_id = item.id;
+                            if let Some(stroke) = item.as_stroke_mut() {
+                                if let Some(cur_bbox) = stroke.bounding_box() {
+                                    page.spatial_index.remove(item_id, &cur_bbox);
+                                }
+                                stroke.style = old_style.clone();
+                                stroke.recompute_cache();
+                                page.spatial_index.insert(item);
                             }
-                            stroke.style = old_style.clone();
-                            stroke.recompute_cache();
-                            page.spatial_index.insert(item);
                         }
                     }
                 }

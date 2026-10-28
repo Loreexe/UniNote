@@ -676,3 +676,327 @@ fn test_slice_serde_json_roundtrip_and_cache_rehydration() {
         assert_eq!(deserialized.cached_bezier.len(), frag.cached_bezier.len());
     }
 }
+
+#[test]
+fn test_regression_slice_deduped_points_and_disaligned_bezier_no_panic() {
+    // 1. Direct simulation of disalignment (len is 39 but cached_bezier index/len is 42)
+    let mut coords = Vec::new();
+    for i in 0..39 {
+        coords.push((i as f64 * 10.0, 50.0));
+    }
+    let mut stroke = create_test_stroke(9901, &coords, 2.0);
+    assert_eq!(stroke.points.len(), 39);
+    assert_eq!(stroke.cached_bezier.len(), 38);
+
+    // Artificially inject 42 Bézier segments (disaligned with 39 points)
+    let mut disaligned_bezier = Vec::new();
+    for i in 0..42 {
+        disaligned_bezier.push(CubicBezierSegment {
+            p0: (i as f64 * 10.0, 50.0),
+            cp1: (i as f64 * 10.0 + 3.0, 50.0),
+            cp2: (i as f64 * 10.0 + 7.0, 50.0),
+            p1: ((i + 1) as f64 * 10.0, 50.0),
+            width0: 2.0,
+            width1: 2.0,
+        });
+    }
+    stroke.cached_bezier = disaligned_bezier.clone();
+    assert_eq!(stroke.cached_bezier.len(), 42);
+
+    // slice_stroke_with_circle must detect disalignment, recalculate Bézier segments, and not panic
+    let frags = stroke.slice_with_circle((200.0, 50.0), 15.0);
+    assert_eq!(frags.len(), 2);
+    for f in &frags {
+        assert_eq!(f.cached_bezier.len(), f.points.len().saturating_sub(1));
+    }
+
+    // Direct call to reconstruct_sub_stroke with mismatched segments (m = 42) and stroke (len = 39)
+    // Must not panic even when theta accesses seg_idx >= 39
+    let sub = reconstruct_sub_stroke(&stroke, &disaligned_bezier, 38.5, 41.5, 9902);
+    assert!(sub.is_some());
+    let s = sub.unwrap();
+    assert_eq!(s.cached_bezier.len(), s.points.len().saturating_sub(1));
+
+    // 2. Scenario with consecutive points spaced < 1e-3 px that trigger deduplication during slicing
+    let mut dedupe_coords = Vec::new();
+    for i in 0..45 {
+        dedupe_coords.push((i as f64 * 5.0, 100.0));
+        // Add duplicate / nearly identical point (< 1e-3 px apart)
+        if i == 10 || i == 20 || i == 30 {
+            dedupe_coords.push((i as f64 * 5.0 + 1e-4, 100.0));
+        }
+    }
+    let stroke2 = create_test_stroke(9903, &dedupe_coords, 2.0);
+    // Repeated cutting across the deduplication regions
+    let frags2 = stroke2.slice_with_circle((50.0, 100.0), 12.0);
+    assert!(!frags2.is_empty());
+    for f in &frags2 {
+        assert_eq!(f.cached_bezier.len(), f.points.len().saturating_sub(1));
+        // Re-slice the fragment repeatedly to simulate interactive eraser stroke
+        let sub_frags = f.slice_with_circle((100.0, 100.0), 10.0);
+        for sf in &sub_frags {
+            assert_eq!(sf.cached_bezier.len(), sf.points.len().saturating_sub(1));
+            let sub_frags2 = sf.slice_with_circle((150.0, 100.0), 8.0);
+            for sf2 in &sub_frags2 {
+                assert_eq!(sf2.cached_bezier.len(), sf2.points.len().saturating_sub(1));
+            }
+        }
+    }
+}
+
+#[test]
+fn test_slice_baseline_mode_preserves_empty_cached_bezier() {
+    let coords: Vec<(f64, f64)> = (0..20).map(|i| (i as f64 * 10.0, 50.0)).collect();
+    let pts: Vec<StrokePoint> = coords
+        .into_iter()
+        .map(|(x, y)| StrokePoint {
+            x,
+            y,
+            pressure: 0.5,
+            width: 2.0,
+            timestamp_ns: 0,
+        })
+        .collect();
+    let stroke =
+        Stroke::with_points_and_mode(9950, StrokeStyle::default(), PipelineMode::Baseline, pts);
+    assert!(stroke.cached_bezier.is_empty());
+
+    let frags = stroke.slice_with_circle((100.0, 50.0), 15.0);
+    assert!(!frags.is_empty());
+    for f in &frags {
+        assert_eq!(f.mode, PipelineMode::Baseline);
+        assert!(
+            f.cached_bezier.is_empty(),
+            "Baseline sub-stroke must have empty cached_bezier"
+        );
+    }
+}
+
+#[test]
+fn test_slice_recursive_scrubbing_self_intersecting_knot_no_panic() {
+    // 1. Trefoil knot self-intersecting figure
+    let mut coords = Vec::new();
+    for i in 0..120 {
+        let t = (i as f64) * 2.0 * std::f64::consts::PI / 120.0;
+        let x = 300.0 + 90.0 * t.sin() + 45.0 * (2.0 * t).sin();
+        let y = 300.0 + 90.0 * t.cos() - 45.0 * (2.0 * t).cos();
+        coords.push((x, y));
+    }
+    let stroke = create_test_stroke(9960, &coords, 2.5);
+
+    // Rapid back-and-forth scrubbing across the intersection core
+    let mut current_strokes = vec![stroke];
+    for step in 0..35 {
+        let offset_x = ((step as f64) * 0.4).sin() * 25.0;
+        let offset_y = ((step as f64) * 0.4).cos() * 20.0;
+        let center = (300.0 + offset_x, 300.0 + offset_y);
+        let radius = 14.0 + ((step % 5) as f64) * 2.0;
+
+        let mut next_generation = Vec::new();
+        for s in &current_strokes {
+            let frags = s.slice_with_circle(center, radius);
+            for f in frags {
+                assert_eq!(f.cached_bezier.len(), f.points.len().saturating_sub(1));
+                assert!(f.points.len() >= 2);
+                assert!(f.cached_bbox.is_some());
+                for p in &f.points {
+                    assert!(p.x.is_finite() && p.y.is_finite());
+                }
+                next_generation.push(f);
+            }
+        }
+        current_strokes = next_generation;
+    }
+
+    // 2. Figure-eight curve with deep scrub through the cross-point
+    let mut fig8_coords = Vec::new();
+    for i in 0..80 {
+        let t = (i as f64) * 2.0 * std::f64::consts::PI / 80.0;
+        let x = 200.0 + 70.0 * t.sin();
+        let y = 200.0 + 70.0 * t.sin() * t.cos();
+        fig8_coords.push((x, y));
+    }
+    let fig8 = create_test_stroke(9961, &fig8_coords, 3.0);
+    let mut fig8_strokes = vec![fig8];
+    for step in 0..25 {
+        let center = (200.0 + ((step as f64) - 12.0) * 2.0, 200.0);
+        let mut next_gen = Vec::new();
+        for s in &fig8_strokes {
+            let frags = s.slice_with_circle(center, 12.0);
+            for f in frags {
+                assert_eq!(f.cached_bezier.len(), f.points.len().saturating_sub(1));
+                next_gen.push(f);
+            }
+        }
+        fig8_strokes = next_gen;
+    }
+}
+
+#[test]
+fn test_reconstruct_sub_stroke_nan_inf_guards() {
+    let stroke = create_test_stroke(9970, &[(0.0, 0.0), (50.0, 50.0), (100.0, 100.0)], 2.0);
+    let segs = stroke.bezier_segments();
+
+    // NaN parameters must return None rather than generating NaN coordinates
+    assert!(reconstruct_sub_stroke(&stroke, segs, f64::NAN, 1.0, 9971).is_none());
+    assert!(reconstruct_sub_stroke(&stroke, segs, 0.0, f64::NAN, 9972).is_none());
+    assert!(reconstruct_sub_stroke(&stroke, segs, f64::NAN, f64::NAN, 9973).is_none());
+
+    // Infinite parameters must return None
+    assert!(reconstruct_sub_stroke(&stroke, segs, f64::NEG_INFINITY, 1.0, 9974).is_none());
+    assert!(reconstruct_sub_stroke(&stroke, segs, 0.0, f64::INFINITY, 9975).is_none());
+
+    // Non-finite points inside original_stroke must return None
+    let mut nan_stroke = stroke.clone();
+    nan_stroke.points[1].x = f64::NAN;
+    assert!(reconstruct_sub_stroke(&nan_stroke, segs, 0.0, 1.0, 9976).is_none());
+
+    // slice_stroke_with_circle on non-finite points returns stroke untouched without panic
+    let frags = nan_stroke.slice_with_circle((50.0, 50.0), 10.0);
+    assert_eq!(frags.len(), 1);
+}
+
+#[test]
+fn test_reconstruct_sub_stroke_disaligned_intermediate_continuity() {
+    // Original stroke with 39 points
+    let coords: Vec<(f64, f64)> = (0..39).map(|i| (i as f64 * 10.0, 50.0)).collect();
+    let stroke = create_test_stroke(9980, &coords, 2.0);
+    assert_eq!(stroke.points.len(), 39);
+
+    // Mismatched segments: 45 segments curved along y = sin(x)
+    let mut disaligned_segs = Vec::new();
+    for i in 0..45 {
+        let x0 = i as f64 * 10.0;
+        let x1 = (i + 1) as f64 * 10.0;
+        disaligned_segs.push(CubicBezierSegment {
+            p0: (x0, 50.0 + (x0 * 0.1).sin() * 20.0),
+            cp1: (x0 + 3.0, 50.0 + (x0 * 0.1).sin() * 20.0),
+            cp2: (x1 - 3.0, 50.0 + (x1 * 0.1).sin() * 20.0),
+            p1: (x1, 50.0 + (x1 * 0.1).sin() * 20.0),
+            width0: 2.0,
+            width1: 2.0,
+        });
+    }
+
+    // Interval spanning intermediate points where seg_idx crosses 39 (e.g. 5.5 to 42.5)
+    let sub = reconstruct_sub_stroke(&stroke, &disaligned_segs, 5.5, 42.5, 9981);
+    assert!(sub.is_some());
+    let s = sub.unwrap();
+
+    // Verify cache alignment and strict coordinate continuity with disaligned_segs
+    assert_eq!(s.cached_bezier.len(), s.points.len().saturating_sub(1));
+    for p in &s.points {
+        assert!(p.x.is_finite());
+        assert!(p.y.is_finite());
+    }
+
+    // Verify that every point sits close to the curve (y is within [30.0, 70.0], not jumping)
+    for p in &s.points {
+        assert!(
+            p.y >= 29.0 && p.y <= 71.0,
+            "Point y={} must follow curve, no jump",
+            p.y
+        );
+    }
+}
+
+#[test]
+fn test_reconstruct_sub_stroke_closed_loop_single_segment_preserved() {
+    // A single cubic Bezier segment forming a closed loop (p0 == p1)
+    let loop_seg = CubicBezierSegment {
+        p0: (100.0, 100.0),
+        cp1: (100.0, 200.0),
+        cp2: (200.0, 100.0),
+        p1: (100.0, 100.0),
+        width0: 2.0,
+        width1: 2.0,
+    };
+    let stroke = create_test_stroke(9990, &[(100.0, 100.0), (100.0, 100.0)], 2.0);
+    let segs = vec![loop_seg];
+
+    // Reconstructing the loop within the single segment (0.0 to 1.0)
+    let sub = reconstruct_sub_stroke(&stroke, &segs, 0.0, 1.0, 9991);
+    assert!(
+        sub.is_some(),
+        "Large closed loop in single segment must not be discarded"
+    );
+    let s = sub.unwrap();
+    assert!(
+        s.points.len() >= 3,
+        "Closed loop must include midpoint to preserve curvature"
+    );
+    assert_eq!(s.cached_bezier.len(), s.points.len().saturating_sub(1));
+}
+
+#[test]
+fn test_slice_extreme_radius_boundaries() {
+    let stroke = create_test_stroke(9995, &[(0.0, 0.0), (50.0, 0.0), (100.0, 0.0)], 2.0);
+
+    // 1. Tiny radius < 1e-6 (e.g. 1e-8)
+    let tiny_frags = stroke.slice_with_circle((50.0, 0.0), 1e-8);
+    // Sub-pixel dust should be discarded and original stroke either slightly trimmed or untouched
+    assert!(!tiny_frags.is_empty());
+
+    // 2. Huge radius > 1e6 (completely engulfs stroke)
+    let huge_frags = stroke.slice_with_circle((50.0, 0.0), 1e7);
+    assert!(
+        huge_frags.is_empty(),
+        "Huge eraser must erase entire stroke"
+    );
+}
+
+#[test]
+fn test_reconstruct_sub_stroke_with_nan_segments_returns_none() {
+    let stroke = create_test_stroke(9996, &[(0.0, 0.0), (50.0, 50.0), (100.0, 100.0)], 2.0);
+    let mut nan_segs = stroke.bezier_segments().to_vec();
+    nan_segs[0].cp1.0 = f64::NAN;
+
+    assert!(reconstruct_sub_stroke(&stroke, &nan_segs, 0.0, 1.0, 9997).is_none());
+
+    nan_segs[0].cp1.0 = 25.0;
+    nan_segs[0].width0 = f64::INFINITY;
+    assert!(reconstruct_sub_stroke(&stroke, &nan_segs, 0.0, 1.0, 9998).is_none());
+}
+
+#[test]
+fn test_slice_stroke_with_corrupt_nan_cached_bezier_recovers() {
+    let coords: Vec<(f64, f64)> = (0..10).map(|i| (i as f64 * 10.0, 50.0)).collect();
+    let mut stroke = create_test_stroke(9999, &coords, 2.0);
+    assert_eq!(stroke.cached_bezier.len(), 9);
+
+    // Corrupt one control point with NaN
+    stroke.cached_bezier[3].cp2.1 = f64::NAN;
+
+    // slice_with_circle must reject the NaN cache, recompute via Catmull-Rom, and slice successfully
+    let frags = stroke.slice_with_circle((50.0, 50.0), 10.0);
+    assert_eq!(frags.len(), 2);
+    for f in &frags {
+        assert_eq!(f.cached_bezier.len(), f.points.len().saturating_sub(1));
+        for seg in &f.cached_bezier {
+            assert!(seg.is_finite());
+        }
+    }
+}
+
+#[test]
+fn test_ensure_cache_repairs_disaligned_or_nan_cached_bezier() {
+    let coords: Vec<(f64, f64)> = (0..20).map(|i| (i as f64 * 10.0, 50.0)).collect();
+    let mut stroke = create_test_stroke(10000, &coords, 2.0);
+    assert_eq!(stroke.cached_bezier.len(), 19);
+
+    // 1. Truncate cached_bezier to simulate disalignment (e.g. 10 segments vs 20 points)
+    stroke.cached_bezier.truncate(10);
+    assert_eq!(stroke.cached_bezier.len(), 10);
+
+    // ensure_cache must detect length disalignment and repair
+    stroke.ensure_cache();
+    assert_eq!(stroke.cached_bezier.len(), 19);
+
+    // 2. Inject NaN into a segment
+    stroke.cached_bezier[5].p1.0 = f64::NAN;
+    stroke.ensure_cache();
+    assert_eq!(stroke.cached_bezier.len(), 19);
+    for seg in &stroke.cached_bezier {
+        assert!(seg.is_finite());
+    }
+}

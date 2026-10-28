@@ -270,7 +270,9 @@ fn test_move_items_1000_undo_redo_cycles_drift() {
             .iter()
             .find(|it| it.id == item_id)
             .unwrap();
-        let ItemKind::Stroke(ref s) = item.kind;
+        let ItemKind::Stroke(ref s) = item.kind else {
+            panic!("expected stroke");
+        };
         let diff_x = (s.points[0].x - orig_x).abs();
         let diff_y = (s.points[0].y - orig_y).abs();
         let raw_diff_x = (s.raw_samples[0].position.0 - orig_x).abs();
@@ -415,11 +417,15 @@ fn test_move_items_edge_cases() {
 
     let it0 = &doc.pages[0].items[0];
     let it1 = &doc.pages[0].items[1];
-    let ItemKind::Stroke(ref s0) = it0.kind;
+    let ItemKind::Stroke(ref s0) = it0.kind else {
+        panic!("expected stroke");
+    };
     assert_eq!(s0.points[0].x, 5.0);
     assert_eq!(s0.points[0].y, -5.0);
 
-    let ItemKind::Stroke(ref s1_item) = it1.kind;
+    let ItemKind::Stroke(ref s1_item) = it1.kind else {
+        panic!("expected stroke");
+    };
     assert_eq!(s1_item.points[0].x, 15.0);
     assert_eq!(s1_item.points[0].y, 5.0);
     assert_eq!(s1_item.points[1].x, 25.0);
@@ -429,11 +435,15 @@ fn test_move_items_edge_cases() {
     assert!(history.undo(&mut doc));
     let it0_undone = &doc.pages[0].items[0];
     let it1_undone = &doc.pages[0].items[1];
-    let ItemKind::Stroke(ref s0_undone) = it0_undone.kind;
+    let ItemKind::Stroke(ref s0_undone) = it0_undone.kind else {
+        panic!("expected stroke");
+    };
     assert_eq!(s0_undone.points[0].x, 0.0);
     assert_eq!(s0_undone.points[0].y, 0.0);
 
-    let ItemKind::Stroke(ref s1_undone) = it1_undone.kind;
+    let ItemKind::Stroke(ref s1_undone) = it1_undone.kind else {
+        panic!("expected stroke");
+    };
     assert_eq!(s1_undone.points[0].x, 10.0);
     assert_eq!(s1_undone.points[0].y, 10.0);
     assert_eq!(s1_undone.points[1].x, 20.0);
@@ -475,7 +485,9 @@ fn test_move_items_nan_delta_corrupts_coordinates() {
         &mut doc,
     );
 
-    let ItemKind::Stroke(ref s) = doc.pages[0].items[0].kind;
+    let ItemKind::Stroke(ref s) = doc.pages[0].items[0].kind else {
+        panic!("expected stroke");
+    };
     println!("Stroke point X after NaN MoveItems: {}", s.points[0].x);
     assert!(
         s.points[0].x.is_finite(),

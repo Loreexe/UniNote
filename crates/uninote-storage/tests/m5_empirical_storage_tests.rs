@@ -192,12 +192,12 @@ fn test_m5_v1_migration_full_fidelity_pages_and_items() {
         let store = DocumentStore::open_or_create(file_path).expect("Open store on V1 db");
         assert!(store.verify_integrity().expect("Integrity after migration"));
 
-        // Verifica user_version aggiornato a 2
+        // Verifica user_version aggiornato a 3
         let user_ver: u32 = store
             .connection()
             .query_row("PRAGMA user_version;", [], |r| r.get(0))
             .expect("PRAGMA user_version");
-        assert_eq!(user_ver, 2);
+        assert_eq!(user_ver, 3);
 
         // Carica documento e verifica fedeltà assoluta dei dati preesistenti
         let doc = store.load_document().expect("Load migrated document");
@@ -210,7 +210,7 @@ fn test_m5_v1_migration_full_fidelity_pages_and_items() {
         assert_eq!(doc.pages[0].id, page_id_1);
         assert_eq!(doc.pages[0].background, PageBackground::Blank);
         assert_eq!(doc.pages[0].items.len(), 1);
-        let ItemKind::Stroke(ref s) = doc.pages[0].items[0].kind;
+        let s = doc.pages[0].items[0].as_stroke().expect("stroke");
         assert_eq!(s.id, 1);
         assert_eq!(s.points.len(), 2);
 

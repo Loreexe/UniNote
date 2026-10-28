@@ -118,8 +118,8 @@ fn test_m3_wal_rapid_save_and_load_10_000_strokes() {
         assert_eq!(orig.id, reloaded.id);
         assert_eq!(orig.z_index, reloaded.z_index);
 
-        let ItemKind::Stroke(ref orig_s) = orig.kind;
-        let ItemKind::Stroke(ref reloaded_s) = reloaded.kind;
+        let orig_s = orig.as_stroke().expect("orig stroke");
+        let reloaded_s = reloaded.as_stroke().expect("reloaded stroke");
         assert_eq!(orig_s.id, reloaded_s.id);
         assert_eq!(orig_s.points.len(), reloaded_s.points.len());
         assert_eq!(orig_s.mode, reloaded_s.mode);
@@ -165,7 +165,7 @@ fn test_m3_cache_rehydration_ensure_cache_and_spatial_index_on_load() {
 
     // Verify all strokes have rehydrated cached_bbox and cached_bezier
     for item in &page.items {
-        let ItemKind::Stroke(ref stroke) = item.kind;
+        let stroke = item.as_stroke().expect("stroke");
         assert!(
             stroke.cached_bbox.is_some(),
             "Stroke {} must have cached_bbox rehydrated via ensure_cache()",
@@ -243,7 +243,7 @@ fn test_m3_db_cleanliness_no_cache_pollution_and_schema_version_2() {
     let user_version: u32 = conn
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("PRAGMA user_version");
-    assert_eq!(user_version, SCHEMA_VERSION, "SCHEMA_VERSION must remain 2");
+    assert_eq!(user_version, SCHEMA_VERSION, "SCHEMA_VERSION must remain 3");
 
     let app_id: u32 = conn
         .query_row("PRAGMA application_id;", [], |r| r.get(0))
@@ -349,7 +349,7 @@ fn test_m3_backward_compatibility_v1_and_v2_unmodified_schema() {
         assert_eq!(loaded.pages.len(), 1);
         assert_eq!(loaded.pages[0].items.len(), 1);
 
-        let ItemKind::Stroke(ref s) = loaded.pages[0].items[0].kind;
+        let s = loaded.pages[0].items[0].as_stroke().expect("stroke");
         assert_eq!(s.id, 1);
         assert_eq!(s.points.len(), 3);
         // Automatic cache rehydration on load

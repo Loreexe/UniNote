@@ -30,7 +30,6 @@ use uninote_app::canvas::{ActiveTool, CanvasState, EraserMode, NoteCanvas};
 use uninote_app::hud::DiagnosticHud;
 use uninote_app::preferences::AppPreferences;
 use uninote_core::command::DocCommand;
-use uninote_core::model::ItemKind;
 use uninote_stroke::types::{PipelineMode, Stroke, StrokePoint, StrokeStyle};
 
 // ============================================================================
@@ -586,7 +585,7 @@ fn test_eraser_segment_mode_produces_slice_stroke_and_undo_redo() {
 
     // Verify both fragments have valid geometry and valid spatial bounds
     for it in &st.document.pages[0].items {
-        let ItemKind::Stroke(ref s) = it.kind;
+        let s = it.as_stroke().unwrap();
         assert!(!s.points.is_empty(), "Fragment points must not be empty");
         assert!(
             s.cached_bbox.is_some(),

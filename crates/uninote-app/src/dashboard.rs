@@ -182,7 +182,10 @@ pub fn render_document_thumbnail(
                 cr.scale(scale, scale);
 
                 for item in &first_page.items {
-                    let uninote_core::ItemKind::Stroke(stroke) = &item.kind;
+                    let stroke = match &item.kind {
+                        uninote_core::ItemKind::Stroke(s) => s,
+                        _ => continue,
+                    };
                     if stroke.points.is_empty() {
                         continue;
                     }
@@ -247,7 +250,10 @@ pub fn render_document_thumbnail(
                     cr.translate(w as f64 / 2.0, h as f64 / 2.0);
                     cr.scale(0.3, 0.3);
                     for item in &first_page.items {
-                        let uninote_core::ItemKind::Stroke(stroke) = &item.kind;
+                        let stroke = match &item.kind {
+                            uninote_core::ItemKind::Stroke(s) => s,
+                            _ => continue,
+                        };
                         if stroke.points.is_empty() {
                             continue;
                         }

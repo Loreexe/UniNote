@@ -1,5 +1,5 @@
 use uninote_core::command::{CommandHistory, DocCommand};
-use uninote_core::model::{Document, ItemKind};
+use uninote_core::model::Document;
 use uninote_stroke::types::{PipelineMode, Stroke, StrokePoint, StrokeStyle};
 
 fn make_sample_stroke(id: u64, origin: (f64, f64)) -> Stroke {
@@ -38,9 +38,13 @@ fn test_doc_command_transform_items_undo_redo_symmetry() {
     );
 
     let item_id = doc.pages[0].items[0].id;
-    let initial_pts: Vec<(f64, f64)> = match &doc.pages[0].items[0].kind {
-        ItemKind::Stroke(s) => s.points.iter().map(|p| (p.x, p.y)).collect(),
-    };
+    let initial_pts: Vec<(f64, f64)> = doc.pages[0].items[0]
+        .as_stroke()
+        .unwrap()
+        .points
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
 
     // Esegui trasformazione: scala 1.5x e rotazione 90 deg (PI/2)
     let transform_cmd = DocCommand::TransformItems {
@@ -54,9 +58,13 @@ fn test_doc_command_transform_items_undo_redo_symmetry() {
     };
     history.execute(transform_cmd, &mut doc);
 
-    let transformed_pts: Vec<(f64, f64)> = match &doc.pages[0].items[0].kind {
-        ItemKind::Stroke(s) => s.points.iter().map(|p| (p.x, p.y)).collect(),
-    };
+    let transformed_pts: Vec<(f64, f64)> = doc.pages[0].items[0]
+        .as_stroke()
+        .unwrap()
+        .points
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
     assert_ne!(initial_pts, transformed_pts);
 
     // Verifica che l'indice spaziale sia coerente
@@ -64,9 +72,13 @@ fn test_doc_command_transform_items_undo_redo_symmetry() {
 
     // UNDO: deve ripristinare le coordinate iniziali
     assert!(history.undo(&mut doc));
-    let undone_pts: Vec<(f64, f64)> = match &doc.pages[0].items[0].kind {
-        ItemKind::Stroke(s) => s.points.iter().map(|p| (p.x, p.y)).collect(),
-    };
+    let undone_pts: Vec<(f64, f64)> = doc.pages[0].items[0]
+        .as_stroke()
+        .unwrap()
+        .points
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
     for (p1, p2) in initial_pts.iter().zip(undone_pts.iter()) {
         assert!((p1.0 - p2.0).abs() < 1e-4);
         assert!((p1.1 - p2.1).abs() < 1e-4);
@@ -74,9 +86,13 @@ fn test_doc_command_transform_items_undo_redo_symmetry() {
 
     // REDO: deve riapplicare la trasformazione
     assert!(history.redo(&mut doc));
-    let redone_pts: Vec<(f64, f64)> = match &doc.pages[0].items[0].kind {
-        ItemKind::Stroke(s) => s.points.iter().map(|p| (p.x, p.y)).collect(),
-    };
+    let redone_pts: Vec<(f64, f64)> = doc.pages[0].items[0]
+        .as_stroke()
+        .unwrap()
+        .points
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
     for (p1, p2) in transformed_pts.iter().zip(redone_pts.iter()) {
         assert!((p1.0 - p2.0).abs() < 1e-4);
         assert!((p1.1 - p2.1).abs() < 1e-4);
@@ -104,25 +120,19 @@ fn test_doc_command_modify_items_style_undo_redo() {
     };
 
     history.execute(modify_cmd, &mut doc);
-    let cur_style = match &doc.pages[0].items[0].kind {
-        ItemKind::Stroke(st) => st.style.clone(),
-    };
+    let cur_style = doc.pages[0].items[0].as_stroke().unwrap().style.clone();
     assert_eq!(cur_style.color, new_style.color);
     assert_eq!(cur_style.base_width, new_style.base_width);
 
     // UNDO: ripristina old_style
     assert!(history.undo(&mut doc));
-    let cur_style_undone = match &doc.pages[0].items[0].kind {
-        ItemKind::Stroke(st) => st.style.clone(),
-    };
+    let cur_style_undone = doc.pages[0].items[0].as_stroke().unwrap().style.clone();
     assert_eq!(cur_style_undone.color, old_style.color);
     assert_eq!(cur_style_undone.base_width, old_style.base_width);
 
     // REDO: ripristina new_style
     assert!(history.redo(&mut doc));
-    let cur_style_redone = match &doc.pages[0].items[0].kind {
-        ItemKind::Stroke(st) => st.style.clone(),
-    };
+    let cur_style_redone = doc.pages[0].items[0].as_stroke().unwrap().style.clone();
     assert_eq!(cur_style_redone.color, new_style.color);
     assert_eq!(cur_style_redone.base_width, new_style.base_width);
 }

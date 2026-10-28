@@ -5,7 +5,7 @@
 //! con interpolazione di spessori, pressioni, timestamp e cache geometrica a zero allocazioni.
 
 use crate::geometry::CubicBezierSegment;
-use crate::types::{DeviceKind, InputPhase, InputSample, Stroke, StrokePoint};
+use crate::types::{DeviceKind, InputPhase, InputSample, PipelineMode, Stroke, StrokePoint};
 
 /// Calcola la derivata vettoriale B'(t) di un segmento di Bézier cubico per t in [0.0, 1.0].
 ///
@@ -376,9 +376,27 @@ pub fn reconstruct_sub_stroke(
         return None;
     }
 
+    if !theta_start.is_finite() || !theta_end.is_finite() {
+        return None;
+    }
+
     if theta_end <= theta_start + 1e-6 {
         return None;
     }
+
+    if original_stroke
+        .points
+        .iter()
+        .any(|p| !p.x.is_finite() || !p.y.is_finite())
+    {
+        return None;
+    }
+
+    if segments.iter().any(|s| !s.is_finite()) {
+        return None;
+    }
+
+    let is_aligned = m == original_stroke.points.len().saturating_sub(1);
 
     theta_start = theta_start.clamp(0.0, m as f64);
     theta_end = theta_end.clamp(0.0, m as f64);
@@ -428,9 +446,13 @@ pub fn reconstruct_sub_stroke(
     // Helper per interpolare coordinate, spessore, pressione e timestamp
     let interpolate_point = |seg_idx: usize, t: f64| -> StrokePoint {
         let t = t.clamp(0.0, 1.0);
-        let pt = segments[seg_idx].evaluate(t);
-        let p_prev = &original_stroke.points[seg_idx];
-        let p_next = &original_stroke.points[(seg_idx + 1).min(original_stroke.points.len() - 1)];
+        let seg_idx_clamped = seg_idx.min(segments.len().saturating_sub(1));
+        let pt = segments[seg_idx_clamped].evaluate(t);
+        let max_pt_idx = original_stroke.points.len().saturating_sub(1);
+        let prev_idx = seg_idx.min(max_pt_idx);
+        let next_idx = (seg_idx + 1).min(max_pt_idx);
+        let p_prev = &original_stroke.points[prev_idx];
+        let p_next = &original_stroke.points[next_idx];
 
         let width = p_prev.width + t * (p_next.width - p_prev.width);
         let pressure = p_prev.pressure + t * (p_next.pressure - p_prev.pressure);
@@ -449,13 +471,13 @@ pub fn reconstruct_sub_stroke(
         }
     };
 
-    let start_pt = if theta_start < 1e-6 {
+    let start_pt = if theta_start < 1e-6 && is_aligned {
         original_stroke.points[0].clone()
     } else {
         interpolate_point(i_a, t_a)
     };
 
-    let end_pt = if (m as f64 - theta_end) < 1e-6 {
+    let end_pt = if (m as f64 - theta_end) < 1e-6 && is_aligned {
         original_stroke.points[original_stroke.points.len() - 1].clone()
     } else {
         interpolate_point(i_b, t_b)
@@ -474,7 +496,9 @@ pub fn reconstruct_sub_stroke(
             let d2 = (chord_dy * (s.cp2.0 - s.p0.0) - chord_dx * (s.cp2.1 - s.p0.1)).abs();
             d1.max(d2).powi(2) > 0.0625 * chord_len_sq
         } else {
-            false
+            let cp1_dist_sq = (s.cp1.0 - s.p0.0).powi(2) + (s.cp1.1 - s.p0.1).powi(2);
+            let cp2_dist_sq = (s.cp2.0 - s.p0.0).powi(2) + (s.cp2.1 - s.p0.1).powi(2);
+            cp1_dist_sq > 0.25 || cp2_dist_sq > 0.25
         };
 
         if is_curved {
@@ -495,7 +519,15 @@ pub fn reconstruct_sub_stroke(
         for k in 1..m {
             let theta_k = k as f64;
             if theta_k > theta_start + 1e-4 && theta_k < theta_end - 1e-4 {
-                points.push(original_stroke.points[k].clone());
+                if is_aligned {
+                    if let Some(pt) = original_stroke.points.get(k) {
+                        points.push(pt.clone());
+                    } else {
+                        points.push(interpolate_point(k, 0.0));
+                    }
+                } else {
+                    points.push(interpolate_point(k, 0.0));
+                }
             }
         }
         points.push(end_pt);
@@ -554,6 +586,12 @@ pub fn reconstruct_sub_stroke(
         }
     }
 
+    let cached_bezier = if original_stroke.mode == PipelineMode::Baseline || !is_aligned {
+        Vec::new()
+    } else {
+        sub_bezier
+    };
+
     let mut sub_stroke = Stroke {
         id: new_id,
         style: original_stroke.style.clone(),
@@ -562,9 +600,14 @@ pub fn reconstruct_sub_stroke(
         is_dot: false,
         mode: original_stroke.mode,
         cached_bbox: None,
-        cached_bezier: sub_bezier,
+        cached_bezier,
     };
     sub_stroke.cached_bbox = sub_stroke.compute_bounding_box();
+    if sub_stroke.mode != PipelineMode::Baseline
+        && sub_stroke.cached_bezier.len() != sub_stroke.points.len().saturating_sub(1)
+    {
+        sub_stroke.recompute_cache();
+    }
 
     Some(sub_stroke)
 }
@@ -583,6 +626,14 @@ pub fn slice_stroke_with_circle(stroke: &Stroke, center: (f64, f64), radius: f64
 
     if stroke.points.is_empty() {
         return Vec::new();
+    }
+
+    if stroke
+        .points
+        .iter()
+        .any(|p| !p.x.is_finite() || !p.y.is_finite())
+    {
+        return vec![stroke.clone()];
     }
 
     // Gestione punto isolato / dot stroke
@@ -608,8 +659,11 @@ pub fn slice_stroke_with_circle(stroke: &Stroke, center: (f64, f64), radius: f64
         }
     }
 
-    // Recupero segmenti Bézier (dalla cache a zero allocazioni, o calcolati da punti)
-    let segments = if !stroke.cached_bezier.is_empty() {
+    // Recupero segmenti Bézier (dalla cache a zero allocazioni se allineata ai punti e finita, o ricalcolati)
+    let segments = if !stroke.cached_bezier.is_empty()
+        && stroke.cached_bezier.len() == stroke.points.len().saturating_sub(1)
+        && stroke.cached_bezier.iter().all(|s| s.is_finite())
+    {
         stroke.cached_bezier.clone()
     } else {
         crate::geometry::catmull_rom_to_bezier(&stroke.points)

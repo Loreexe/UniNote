@@ -82,9 +82,7 @@ fn assert_spatial_index_invariant(page: &Page) {
     let items_with_bbox_count = page
         .items
         .iter()
-        .filter(|it| match &it.kind {
-            ItemKind::Stroke(s) => s.bounding_box().is_some(),
-        })
+        .filter(|it| it.bounding_box().is_some())
         .count();
 
     assert_eq!(
@@ -103,8 +101,7 @@ fn assert_spatial_index_invariant(page: &Page) {
             it.id
         );
 
-        let ItemKind::Stroke(s) = &it.kind;
-        if let Some(bbox) = s.bounding_box() {
+        if let Some(bbox) = it.bounding_box() {
             let found_in_tree = page
                 .spatial_index
                 .tree()

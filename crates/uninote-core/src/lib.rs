@@ -12,7 +12,7 @@ pub use dataset::{
     AcademicDatasetGenerator, AcademicScale, DeterministicPrng, DEFAULT_ACADEMIC_SEED,
 };
 pub use model::{
-    Document, DocumentFormat, Item, ItemId, ItemKind, Page, PageBackground, A4_HEIGHT_PT,
-    A4_WIDTH_PT,
+    Document, DocumentFormat, ImageItem, Item, ItemId, ItemKind, Page, PageBackground,
+    A4_HEIGHT_PT, A4_WIDTH_PT,
 };
 pub use spatial::{PageSpatialIndex, SpatialItem};

@@ -633,8 +633,9 @@ impl NoteCanvas {
         for item in &mut page.items {
             if id_set.contains(&item.id) {
                 let mut it_clone = item.clone();
-                let ItemKind::Stroke(ref mut s) = it_clone.kind;
-                s.ensure_cache();
+                if let ItemKind::Stroke(ref mut s) = it_clone.kind {
+                    s.ensure_cache();
+                }
                 copied_items.push(it_clone);
             }
         }
@@ -790,10 +791,18 @@ impl NoteCanvas {
             item_clone.id = new_id;
             item_clone.z_index = max_z + (idx as u64) + 1;
 
-            let ItemKind::Stroke(ref mut stroke) = item_clone.kind;
-            stroke.id = new_id;
-            stroke.translate(dx, dy);
-            if let Some(b) = stroke.bounding_box() {
+            match &mut item_clone.kind {
+                ItemKind::Stroke(ref mut stroke) => {
+                    stroke.id = new_id;
+                    stroke.translate(dx, dy);
+                }
+                ItemKind::Image(ref mut image) => {
+                    image.page_id = target_page_id;
+                    image.z_index = item_clone.z_index as i64;
+                    image.translate(dx, dy);
+                }
+            }
+            if let Some(b) = item_clone.bounding_box() {
                 union_bbox = Some(match union_bbox {
                     Some(existing) => existing.union(&b),
                     None => b,
@@ -870,8 +879,7 @@ impl NoteCanvas {
 
         for page in &doc.pages {
             for item in &page.items {
-                let ItemKind::Stroke(ref s) = item.kind;
-                if let Some(bbox) = s.bounding_box() {
+                if let Some(bbox) = item.bounding_box() {
                     min_x = min_x.min(bbox.min_x);
                     min_y = min_y.min(bbox.min_y);
                     max_x = max_x.max(bbox.max_x);
@@ -1543,15 +1551,16 @@ impl NoteCanvas {
                                         });
 
                                     if let Some(item) = item_opt {
-                                        let ItemKind::Stroke(stroke) = &item.kind;
-                                        Self::draw_stroke_with_selection(
-                                            cr,
-                                            stroke,
-                                            item.id,
-                                            &st.selection,
-                                            current_mode,
-                                            is_dark,
-                                        );
+                                        if let ItemKind::Stroke(stroke) = &item.kind {
+                                            Self::draw_stroke_with_selection(
+                                                cr,
+                                                stroke,
+                                                item.id,
+                                                &st.selection,
+                                                current_mode,
+                                                is_dark,
+                                            );
+                                        }
                                     }
                                 }
 
@@ -1564,15 +1573,16 @@ impl NoteCanvas {
                                                 page.items.iter().find(|it| it.id == sel_id)
                                             {
                                                 visible_strokes += 1;
-                                                let ItemKind::Stroke(stroke) = &item.kind;
-                                                Self::draw_stroke_with_selection(
-                                                    cr,
-                                                    stroke,
-                                                    item.id,
-                                                    &st.selection,
-                                                    current_mode,
-                                                    is_dark,
-                                                );
+                                                if let ItemKind::Stroke(stroke) = &item.kind {
+                                                    Self::draw_stroke_with_selection(
+                                                        cr,
+                                                        stroke,
+                                                        item.id,
+                                                        &st.selection,
+                                                        current_mode,
+                                                        is_dark,
+                                                    );
+                                                }
                                             }
                                         }
                                     }
@@ -1582,15 +1592,16 @@ impl NoteCanvas {
                             // Fallback sicuro su scansione lineare se l'indice non è ancora popolato
                             visible_strokes += page.items.len();
                             for item in &page.items {
-                                let ItemKind::Stroke(stroke) = &item.kind;
-                                Self::draw_stroke_with_selection(
-                                    cr,
-                                    stroke,
-                                    item.id,
-                                    &st.selection,
-                                    current_mode,
-                                    is_dark,
-                                );
+                                if let ItemKind::Stroke(stroke) = &item.kind {
+                                    Self::draw_stroke_with_selection(
+                                        cr,
+                                        stroke,
+                                        item.id,
+                                        &st.selection,
+                                        current_mode,
+                                        is_dark,
+                                    );
+                                }
                             }
                         }
                         let _ = cr.restore();
@@ -1656,15 +1667,16 @@ impl NoteCanvas {
                                     });
 
                                 if let Some(item) = item_opt {
-                                    let ItemKind::Stroke(stroke) = &item.kind;
-                                    Self::draw_stroke_with_selection(
-                                        cr,
-                                        stroke,
-                                        item.id,
-                                        &st.selection,
-                                        current_mode,
-                                        is_dark,
-                                    );
+                                    if let ItemKind::Stroke(stroke) = &item.kind {
+                                        Self::draw_stroke_with_selection(
+                                            cr,
+                                            stroke,
+                                            item.id,
+                                            &st.selection,
+                                            current_mode,
+                                            is_dark,
+                                        );
+                                    }
                                 }
                             }
 
@@ -1675,15 +1687,16 @@ impl NoteCanvas {
                                             page.items.iter().find(|it| it.id == sel_id)
                                         {
                                             visible_strokes += 1;
-                                            let ItemKind::Stroke(stroke) = &item.kind;
-                                            Self::draw_stroke_with_selection(
-                                                cr,
-                                                stroke,
-                                                item.id,
-                                                &st.selection,
-                                                current_mode,
-                                                is_dark,
-                                            );
+                                            if let ItemKind::Stroke(stroke) = &item.kind {
+                                                Self::draw_stroke_with_selection(
+                                                    cr,
+                                                    stroke,
+                                                    item.id,
+                                                    &st.selection,
+                                                    current_mode,
+                                                    is_dark,
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -1691,33 +1704,34 @@ impl NoteCanvas {
                         } else {
                             // Fallback sicuro su scansione lineare se l'indice è vuoto
                             for item in &page.items {
-                                let ItemKind::Stroke(stroke) = &item.kind;
-                                if let Some(bbox) = stroke.bounding_box() {
-                                    let stroke_rect = uninote_core::coordinates::Rect2D::new(
-                                        bbox.min_x,
-                                        bbox.min_y,
-                                        bbox.max_x - bbox.min_x,
-                                        bbox.max_y - bbox.min_y,
-                                    );
-                                    let vis_rect = uninote_core::coordinates::Rect2D::new(
-                                        doc_left,
-                                        doc_top,
-                                        doc_right - doc_left,
-                                        doc_bottom - doc_top,
-                                    );
-                                    if !vis_rect.intersects(&stroke_rect) {
-                                        continue;
+                                if let ItemKind::Stroke(stroke) = &item.kind {
+                                    if let Some(bbox) = stroke.bounding_box() {
+                                        let stroke_rect = uninote_core::coordinates::Rect2D::new(
+                                            bbox.min_x,
+                                            bbox.min_y,
+                                            bbox.max_x - bbox.min_x,
+                                            bbox.max_y - bbox.min_y,
+                                        );
+                                        let vis_rect = uninote_core::coordinates::Rect2D::new(
+                                            doc_left,
+                                            doc_top,
+                                            doc_right - doc_left,
+                                            doc_bottom - doc_top,
+                                        );
+                                        if !vis_rect.intersects(&stroke_rect) {
+                                            continue;
+                                        }
                                     }
+                                    visible_strokes += 1;
+                                    Self::draw_stroke_with_selection(
+                                        cr,
+                                        stroke,
+                                        item.id,
+                                        &st.selection,
+                                        current_mode,
+                                        is_dark,
+                                    );
                                 }
-                                visible_strokes += 1;
-                                Self::draw_stroke_with_selection(
-                                    cr,
-                                    stroke,
-                                    item.id,
-                                    &st.selection,
-                                    current_mode,
-                                    is_dark,
-                                );
                             }
                         }
                     }
@@ -2822,9 +2836,10 @@ impl NoteCanvas {
                     if candidates.len() == 1 {
                         let target_id = candidates[0].item_id;
                         if let Some(item) = page.items.iter().find(|it| it.id == target_id) {
-                            let ItemKind::Stroke(ref s) = item.kind;
-                            if s.intersects_point(doc_pt, radius) {
-                                erased.push(item.clone());
+                            if let ItemKind::Stroke(ref s) = item.kind {
+                                if s.intersects_point(doc_pt, radius) {
+                                    erased.push(item.clone());
+                                }
                             }
                         }
                     } else {
@@ -2832,9 +2847,10 @@ impl NoteCanvas {
                             candidates.iter().map(|c| c.item_id).collect();
                         for item in &page.items {
                             if candidate_ids.contains(&item.id) {
-                                let ItemKind::Stroke(ref s) = item.kind;
-                                if s.intersects_point(doc_pt, radius) {
-                                    erased.push(item.clone());
+                                if let ItemKind::Stroke(ref s) = item.kind {
+                                    if s.intersects_point(doc_pt, radius) {
+                                        erased.push(item.clone());
+                                    }
                                 }
                             }
                         }
@@ -2859,14 +2875,15 @@ impl NoteCanvas {
 
                     for item in &page.items {
                         if candidate_ids.contains(&item.id) {
-                            let ItemKind::Stroke(ref s) = item.kind;
-                            if s.intersects_point(doc_pt, radius) {
-                                let fragments = s.slice_with_circle(doc_pt, radius);
-                                let is_unchanged = fragments.len() == 1
-                                    && fragments[0].id == s.id
-                                    && fragments[0].points.len() == s.points.len();
-                                if !is_unchanged {
-                                    to_slice.push((item.clone(), fragments));
+                            if let ItemKind::Stroke(ref s) = item.kind {
+                                if s.intersects_point(doc_pt, radius) {
+                                    let fragments = s.slice_with_circle(doc_pt, radius);
+                                    let is_unchanged = fragments.len() == 1
+                                        && fragments[0].id == s.id
+                                        && fragments[0].points.len() == s.points.len();
+                                    if !is_unchanged {
+                                        to_slice.push((item.clone(), fragments));
+                                    }
                                 }
                             }
                         }

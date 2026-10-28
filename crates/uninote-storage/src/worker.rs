@@ -28,6 +28,18 @@ pub enum StorageRequest {
         target_path: PathBuf,
         responder: Sender<Result<(), String>>,
     },
+    /// Salva un asset binario con deduplicazione.
+    SaveAsset {
+        hash: String,
+        mime_type: String,
+        data: Vec<u8>,
+        responder: Option<Sender<Result<(), String>>>,
+    },
+    /// Carica i byte di un asset a partire dall'hash.
+    LoadAsset {
+        hash: String,
+        responder: Sender<Result<Option<Vec<u8>>, String>>,
+    },
     /// Arresta il thread worker.
     Shutdown,
 }
@@ -78,6 +90,23 @@ impl StorageWorker {
                             .map_err(|e| e.to_string());
                         let _ = responder.send(res);
                     }
+                    StorageRequest::SaveAsset {
+                        hash,
+                        mime_type,
+                        data,
+                        responder,
+                    } => {
+                        let res = store
+                            .save_asset(&hash, &mime_type, &data)
+                            .map_err(|e| e.to_string());
+                        if let Some(resp) = responder {
+                            let _ = resp.send(res);
+                        }
+                    }
+                    StorageRequest::LoadAsset { hash, responder } => {
+                        let res = store.load_asset(&hash).map_err(|e| e.to_string());
+                        let _ = responder.send(res);
+                    }
                     StorageRequest::Shutdown => {
                         break;
                     }
@@ -101,6 +130,30 @@ impl StorageWorker {
         let (tx, rx) = channel();
         let _ = self.sender.send(StorageRequest::ExportBackup {
             target_path,
+            responder: tx,
+        });
+        rx
+    }
+
+    pub fn save_asset(
+        &self,
+        hash: impl Into<String>,
+        mime_type: impl Into<String>,
+        data: Vec<u8>,
+        responder: Option<Sender<Result<(), String>>>,
+    ) {
+        let _ = self.sender.send(StorageRequest::SaveAsset {
+            hash: hash.into(),
+            mime_type: mime_type.into(),
+            data,
+            responder,
+        });
+    }
+
+    pub fn load_asset(&self, hash: impl Into<String>) -> Receiver<Result<Option<Vec<u8>>, String>> {
+        let (tx, rx) = channel();
+        let _ = self.sender.send(StorageRequest::LoadAsset {
+            hash: hash.into(),
             responder: tx,
         });
         rx

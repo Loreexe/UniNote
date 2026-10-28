@@ -271,15 +271,15 @@ fn test_adversarial_whiteboard_extreme_coordinates() {
         assert_eq!(p0.items.len(), 4);
 
         // Verifica fedeltà coordinate estreme
-        let ItemKind::Stroke(ref s1) = p0.items[0].kind;
+        let s1 = p0.items[0].as_stroke().expect("stroke");
         assert_eq!(s1.points[0].x, -2_000_000.0);
         assert_eq!(s1.points[0].y, -1_500_000.0);
 
-        let ItemKind::Stroke(ref s3) = p0.items[2].kind;
+        let s3 = p0.items[2].as_stroke().expect("stroke");
         assert_eq!(s3.points[0].x, 3_500_000.0);
         assert_eq!(s3.points[0].y, 4_000_000.0);
 
-        let ItemKind::Stroke(ref s4) = p0.items[3].kind;
+        let s4 = p0.items[3].as_stroke().expect("stroke");
         assert!(s4.is_dot);
     }
 }
@@ -359,7 +359,7 @@ fn test_adversarial_item_id_boundary_values() {
             "ItemId mismatch at index {idx}: expected {expected_id}, got {}",
             item.id
         );
-        let ItemKind::Stroke(ref s) = item.kind;
+        let s = item.as_stroke().expect("stroke");
         assert_eq!(
             s.id, expected_id,
             "Stroke ID mismatch at index {idx}: expected {expected_id}, got {}",
@@ -435,7 +435,7 @@ fn test_adversarial_stress_10_000_strokes() {
         for &idx in &sample_indices {
             let item = &loaded.pages[0].items[idx];
             assert_eq!(item.id, idx as u64);
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().expect("stroke");
             assert_eq!(s.id, idx as u64);
             assert_eq!(s.points.len(), 4);
         }

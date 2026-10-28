@@ -177,12 +177,18 @@ fn calculate_page_dimensions(page: &Page, format: DocumentFormat) -> (f64, f64, 
         let mut max_y = f64::NEG_INFINITY;
 
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
-            for p in &s.points {
-                min_x = min_x.min(p.x);
-                min_y = min_y.min(p.y);
-                max_x = max_x.max(p.x);
-                max_y = max_y.max(p.y);
+            if let ItemKind::Stroke(ref s) = item.kind {
+                for p in &s.points {
+                    min_x = min_x.min(p.x);
+                    min_y = min_y.min(p.y);
+                    max_x = max_x.max(p.x);
+                    max_y = max_y.max(p.y);
+                }
+            } else if let ItemKind::Image(ref img) = item.kind {
+                min_x = min_x.min(img.bbox.min_x);
+                min_y = min_y.min(img.bbox.min_y);
+                max_x = max_x.max(img.bbox.max_x);
+                max_y = max_y.max(img.bbox.max_y);
             }
         }
 
@@ -301,7 +307,10 @@ fn render_strokes(
     }
 
     for item in items {
-        let ItemKind::Stroke(ref stroke) = item.kind;
+        let stroke = match &item.kind {
+            ItemKind::Stroke(ref s) => s,
+            _ => continue,
+        };
         if stroke.points.is_empty() {
             continue;
         }

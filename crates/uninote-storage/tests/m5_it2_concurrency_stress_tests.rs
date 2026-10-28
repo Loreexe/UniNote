@@ -145,7 +145,6 @@ fn test_it2_concurrent_open_or_create_no_retries_busy_timeout() {
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("PRAGMA user_version");
     assert_eq!(user_ver, SCHEMA_VERSION);
-    assert_eq!(user_ver, 2);
 }
 
 // ============================================================================
@@ -590,7 +589,7 @@ fn test_it2_proof_of_concept_unmigrated_v1_concurrent_immediate() {
         .connection()
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("ver");
-    assert_eq!(ver, 2);
+    assert_eq!(ver, SCHEMA_VERSION);
 }
 
 #[test]
@@ -623,7 +622,7 @@ fn test_it2_concurrent_open_or_create_brand_new_file_no_retries() {
         .connection()
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("ver");
-    assert_eq!(ver, 2);
+    assert_eq!(ver, SCHEMA_VERSION);
 }
 
 #[test]
@@ -683,7 +682,7 @@ fn test_it2_concurrent_open_or_create_unversioned_v0_no_retries() {
         .connection()
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("ver");
-    assert_eq!(ver, 2);
+    assert_eq!(ver, SCHEMA_VERSION);
 }
 
 #[test]

@@ -79,9 +79,9 @@ fn test_challenger_sqlite_schema_master_purity_and_user_version() {
         .expect("PRAGMA user_version");
     assert_eq!(
         user_version, SCHEMA_VERSION,
-        "PRAGMA user_version must be exactly SCHEMA_VERSION (2)"
+        "PRAGMA user_version must be exactly SCHEMA_VERSION (3)"
     );
-    assert_eq!(user_version, 2, "SCHEMA_VERSION must strictly equal 2");
+    assert_eq!(user_version, 3, "SCHEMA_VERSION must strictly equal 3");
 
     let app_id: u32 = conn
         .query_row("PRAGMA application_id;", [], |r| r.get(0))
@@ -147,6 +147,7 @@ fn test_challenger_sqlite_schema_master_purity_and_user_version() {
     // Tables must be exactly: items, metadata, pages (ignoring sqlite_sequence if any)
     tables.retain(|t| !t.starts_with("sqlite_"));
     let mut expected_tables = vec![
+        "assets".to_string(),
         "items".to_string(),
         "metadata".to_string(),
         "pages".to_string(),
@@ -155,7 +156,7 @@ fn test_challenger_sqlite_schema_master_purity_and_user_version() {
     tables.sort();
     assert_eq!(
         tables, expected_tables,
-        "Tables must be exactly items, metadata, pages"
+        "Tables must be exactly assets, items, metadata, pages"
     );
 
     // Views and triggers must be empty
@@ -511,8 +512,8 @@ fn test_challenger_backward_compatibility_v1_synthetic_to_v2_migration() {
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("Check migrated user_version");
     assert_eq!(
-        migrated_user_version, 2,
-        "Migrated database user_version must be 2"
+        migrated_user_version, 3,
+        "Migrated database user_version must be 3"
     );
 
     // Verify background_extra column was dynamically added to pages table
@@ -548,7 +549,7 @@ fn test_challenger_backward_compatibility_v1_synthetic_to_v2_migration() {
     // Verify in-memory cache rehydration for every stroke on both pages
     for page in &loaded_doc.pages {
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().expect("stroke");
             assert!(
                 s.cached_bbox.is_some(),
                 "Stroke {} must have rehydrated cached_bbox",
@@ -659,8 +660,8 @@ fn test_challenger_backward_compatibility_unversioned_v0_database() {
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("Check user_version");
     assert_eq!(
-        user_version, 2,
-        "V0 database must be migrated to user_version 2"
+        user_version, 3,
+        "V0 database must be migrated to user_version 3"
     );
 
     let doc = store.load_document().expect("Load migrated V0 doc");
@@ -803,18 +804,18 @@ fn test_challenger_edge_cases_empty_and_degraded_strokes() {
         assert_eq!(loaded.pages[0].items.len(), 4);
 
         // s0 (0 points)
-        let ItemKind::Stroke(ref stroke0) = loaded.pages[0].items[0].kind;
+        let stroke0 = loaded.pages[0].items[0].as_stroke().expect("stroke");
         assert_eq!(stroke0.points.len(), 0);
         assert!(stroke0.cached_bezier.is_empty());
 
         // s1 (1 point)
-        let ItemKind::Stroke(ref stroke1) = loaded.pages[0].items[1].kind;
+        let stroke1 = loaded.pages[0].items[1].as_stroke().expect("stroke");
         assert_eq!(stroke1.points.len(), 1);
         assert!(stroke1.cached_bbox.is_some());
         assert!(stroke1.cached_bezier.is_empty()); // No bezier segments for 1 point
 
         // s2 (2 points Baseline)
-        let ItemKind::Stroke(ref stroke2) = loaded.pages[0].items[2].kind;
+        let stroke2 = loaded.pages[0].items[2].as_stroke().expect("stroke");
         assert_eq!(stroke2.points.len(), 2);
         assert!(stroke2.cached_bbox.is_some());
         assert!(
@@ -823,7 +824,7 @@ fn test_challenger_edge_cases_empty_and_degraded_strokes() {
         );
 
         // s3 (extreme coordinates OneEuroFiltered)
-        let ItemKind::Stroke(ref stroke3) = loaded.pages[0].items[3].kind;
+        let stroke3 = loaded.pages[0].items[3].as_stroke().expect("stroke");
         assert_eq!(stroke3.points.len(), 2);
         assert_eq!(
             stroke3.cached_bezier.len(),
@@ -877,7 +878,7 @@ fn test_challenger_multiple_save_cycles_idempotence_and_zero_drift() {
 
         // Mutate title and 1 stroke
         doc.title = format!("Idempotence Test Cycle {cycle}");
-        let ItemKind::Stroke(ref mut s) = doc.pages[0].items[0].kind;
+        let s = doc.pages[0].items[0].as_stroke_mut().expect("stroke");
         s.points[0].x += 1.0;
         s.ensure_cache();
 
@@ -892,14 +893,14 @@ fn test_challenger_multiple_save_cycles_idempotence_and_zero_drift() {
         assert_eq!(loaded.title, format!("Idempotence Test Cycle {cycle}"));
         assert_eq!(loaded.pages[0].items.len(), 20);
 
-        // Check user_version remains 2
+        // Check user_version remains 3
         let uver: u32 = store
             .connection()
             .query_row("PRAGMA user_version;", [], |r| r.get(0))
             .expect("PRAGMA user_version");
         assert_eq!(
-            uver, 2,
-            "Cycle {cycle}: user_version must remain strictly 2"
+            uver, 3,
+            "Cycle {cycle}: user_version must remain strictly 3"
         );
 
         assert!(
@@ -1046,7 +1047,7 @@ fn test_challenger_backward_compatibility_v2_synthetic_0_2_and_0_3_documents() {
         );
 
         for item in &page.items {
-            let ItemKind::Stroke(ref s) = item.kind;
+            let s = item.as_stroke().expect("stroke");
             assert!(
                 s.cached_bbox.is_some(),
                 "Stroke {} must have rehydrated cached_bbox",
@@ -1073,8 +1074,8 @@ fn test_challenger_backward_compatibility_v2_synthetic_0_2_and_0_3_documents() {
         .query_row("PRAGMA user_version;", [], |r| r.get(0))
         .expect("PRAGMA user_version");
     assert_eq!(
-        uver, 2,
-        "user_version must remain 2 after re-saving 0.2/0.3 doc"
+        uver, 3,
+        "user_version must remain 3 after re-saving 0.2/0.3 doc"
     );
 }
 

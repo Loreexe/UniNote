@@ -79,8 +79,9 @@ pub fn oracle_export_vector_pdf(doc: &Document, output_path: &Path) -> Result<()
 
         // 2. Render Items (Strokes)
         for item in &page.items {
-            let uninote_core::model::ItemKind::Stroke(ref stroke) = item.kind;
-            render_vector_stroke(&cr, stroke)?;
+            if let Some(stroke) = item.as_stroke() {
+                render_vector_stroke(&cr, stroke)?;
+            }
         }
 
         cr.show_page()

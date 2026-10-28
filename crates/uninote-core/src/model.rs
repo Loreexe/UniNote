@@ -1,7 +1,7 @@
 use crate::coordinates::Rect2D;
 use crate::spatial::PageSpatialIndex;
 use serde::{Deserialize, Serialize};
-use uninote_stroke::Stroke;
+use uninote_stroke::{Rect, Stroke};
 use uuid::Uuid;
 
 /// Dimensioni standard foglio A4 in punti tipografici (1 pt = 1/72 pollice).
@@ -116,6 +116,43 @@ impl Page {
         }
     }
 
+    /// Inserisce un nuovo elemento nella pagina e nel relativo indice spaziale R-Tree.
+    pub fn add_item(&mut self, item: Item) {
+        self.spatial_index.insert(&item);
+        self.items.push(item);
+    }
+
+    /// Rimuove un elemento dalla pagina tramite il suo ItemId, aggiornando l'indice spaziale.
+    pub fn remove_item(&mut self, id: ItemId) -> Option<Item> {
+        if let Some(pos) = self.items.iter().position(|it| it.id == id) {
+            let item = self.items.remove(pos);
+            self.spatial_index.remove_item(&item);
+            Some(item)
+        } else {
+            None
+        }
+    }
+
+    /// Trova un riferimento all'elemento con l'ID specificato.
+    pub fn item(&self, id: ItemId) -> Option<&Item> {
+        self.items.iter().find(|it| it.id == id)
+    }
+
+    /// Trova un riferimento mutabile all'elemento con l'ID specificato.
+    pub fn item_mut(&mut self, id: ItemId) -> Option<&mut Item> {
+        self.items.iter_mut().find(|it| it.id == id)
+    }
+
+    /// Itera su tutti i tratti presenti nella pagina.
+    pub fn strokes(&self) -> impl Iterator<Item = &Stroke> {
+        self.items.iter().filter_map(|it| it.as_stroke())
+    }
+
+    /// Itera su tutte le immagini presenti nella pagina.
+    pub fn images(&self) -> impl Iterator<Item = &ImageItem> {
+        self.items.iter().filter_map(|it| it.as_image())
+    }
+
     /// Ricostruisce l'indice spaziale 2D R-Tree a partire da tutti gli elementi della pagina.
     pub fn rebuild_spatial_index(&mut self) {
         self.spatial_index = PageSpatialIndex::bulk_load(&self.items);
@@ -125,18 +162,274 @@ impl Page {
 /// Identificatore univoco di un elemento grafico.
 pub type ItemId = u64;
 
+/// Rappresentazione di un'immagine raster posizionata su una pagina di UniNote.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageItem {
+    pub id: Uuid,
+    pub page_id: Uuid,
+    pub asset_hash: String,
+    pub bbox: Rect,
+    pub z_index: i64,
+    pub opacity: f64,
+    pub original_width: u32,
+    pub original_height: u32,
+}
+
+impl ImageItem {
+    /// Costruisce una nuova istanza con ID autogenerato, opacità predefinita (1.0) e z_index (0).
+    pub fn new(
+        page_id: Uuid,
+        asset_hash: impl Into<String>,
+        bbox: Rect,
+        original_width: u32,
+        original_height: u32,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            page_id,
+            asset_hash: asset_hash.into(),
+            bbox,
+            z_index: 0,
+            opacity: 1.0,
+            original_width,
+            original_height,
+        }
+    }
+
+    /// Costruttore completo con tutti i parametri espliciti.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_id(
+        id: Uuid,
+        page_id: Uuid,
+        asset_hash: impl Into<String>,
+        bbox: Rect,
+        z_index: i64,
+        opacity: f64,
+        original_width: u32,
+        original_height: u32,
+    ) -> Self {
+        let opacity = if opacity.is_finite() {
+            opacity.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        Self {
+            id,
+            page_id,
+            asset_hash: asset_hash.into(),
+            bbox,
+            z_index,
+            opacity,
+            original_width,
+            original_height,
+        }
+    }
+
+    /// Larghezza corrente in punti del bounding box.
+    #[inline]
+    pub fn width(&self) -> f64 {
+        self.bbox.width()
+    }
+
+    /// Altezza corrente in punti del bounding box.
+    #[inline]
+    pub fn height(&self) -> f64 {
+        self.bbox.height()
+    }
+
+    /// Rapporto d'aspetto originale (larghezza / altezza).
+    #[inline]
+    pub fn aspect_ratio(&self) -> f64 {
+        if self.original_width > 0 && self.original_height > 0 {
+            self.original_width as f64 / self.original_height as f64
+        } else {
+            let norm = self.bbox.normalized();
+            if norm.width() > 0.0 && norm.height() > 0.0 {
+                let ratio = norm.width() / norm.height();
+                if ratio > 0.0 && ratio.is_finite() {
+                    ratio
+                } else {
+                    1.0
+                }
+            } else {
+                1.0
+            }
+        }
+    }
+
+    /// Trasla il bounding box in-place con zero allocazioni heap.
+    #[inline]
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        if !dx.is_finite() || !dy.is_finite() {
+            return;
+        }
+        self.bbox = self.bbox.translate(dx, dy);
+    }
+
+    /// Scala il bounding box rispetto al perno (origin_x, origin_y).
+    pub fn scale(&mut self, sx: f64, sy: f64, origin_x: f64, origin_y: f64) {
+        if !sx.is_finite() || !sy.is_finite() || !origin_x.is_finite() || !origin_y.is_finite() {
+            return;
+        }
+        let x1 = origin_x + (self.bbox.min_x - origin_x) * sx;
+        let x2 = origin_x + (self.bbox.max_x - origin_x) * sx;
+        let y1 = origin_y + (self.bbox.min_y - origin_y) * sy;
+        let y2 = origin_y + (self.bbox.max_y - origin_y) * sy;
+        self.bbox = Rect::new(x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2));
+    }
+
+    /// Scala proporzionale uniforme attorno al perno preservando il rapporto d'aspetto.
+    #[inline]
+    pub fn scale_proportional(&mut self, scale: f64, origin_x: f64, origin_y: f64) {
+        self.scale(scale, scale, origin_x, origin_y);
+    }
+
+    /// Imposta l'opacità con saturazione sicura in [0.0, 1.0].
+    #[inline]
+    pub fn set_opacity(&mut self, opacity: f64) {
+        if opacity.is_finite() {
+            self.opacity = opacity.clamp(0.0, 1.0);
+        }
+    }
+}
+
 /// Elemento grafico presente su una pagina.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     pub id: ItemId,
     pub z_index: u64,
     pub kind: ItemKind,
 }
 
+impl Item {
+    pub fn new_stroke(id: ItemId, z_index: u64, stroke: Stroke) -> Self {
+        Self {
+            id,
+            z_index,
+            kind: ItemKind::Stroke(stroke),
+        }
+    }
+
+    pub fn new_image(id: ItemId, z_index: u64, image: ImageItem) -> Self {
+        Self {
+            id,
+            z_index,
+            kind: ItemKind::Image(image),
+        }
+    }
+
+    /// Restituisce il bounding box 2D dell'elemento a prescindere dal tipo.
+    #[inline]
+    pub fn bounding_box(&self) -> Option<Rect> {
+        self.kind.bounding_box()
+    }
+
+    /// Trasla l'elemento in-place.
+    #[inline]
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        self.kind.translate(dx, dy);
+    }
+
+    /// Scala l'elemento rispetto al perno indicato.
+    #[inline]
+    pub fn scale(&mut self, sx: f64, sy: f64, origin_x: f64, origin_y: f64) {
+        self.kind.scale(sx, sy, origin_x, origin_y);
+    }
+
+    #[inline]
+    pub fn as_stroke(&self) -> Option<&Stroke> {
+        self.kind.as_stroke()
+    }
+
+    #[inline]
+    pub fn as_stroke_mut(&mut self) -> Option<&mut Stroke> {
+        self.kind.as_stroke_mut()
+    }
+
+    #[inline]
+    pub fn as_image(&self) -> Option<&ImageItem> {
+        self.kind.as_image()
+    }
+
+    #[inline]
+    pub fn as_image_mut(&mut self) -> Option<&mut ImageItem> {
+        self.kind.as_image_mut()
+    }
+
+    #[inline]
+    pub fn is_stroke(&self) -> bool {
+        matches!(self.kind, ItemKind::Stroke(_))
+    }
+
+    #[inline]
+    pub fn is_image(&self) -> bool {
+        matches!(self.kind, ItemKind::Image(_))
+    }
+}
+
 /// Tipologia di contenuto di un Item.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ItemKind {
     Stroke(Stroke),
+    Image(ImageItem),
+}
+
+impl ItemKind {
+    /// Restituisce il bounding box 2D dell'elemento a prescindere dal tipo.
+    pub fn bounding_box(&self) -> Option<Rect> {
+        match self {
+            ItemKind::Stroke(s) => s.bounding_box(),
+            ItemKind::Image(img) => Some(img.bbox),
+        }
+    }
+
+    /// Trasla il contenuto dell'elemento in-place.
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        match self {
+            ItemKind::Stroke(s) => s.translate(dx, dy),
+            ItemKind::Image(img) => img.translate(dx, dy),
+        }
+    }
+
+    /// Scala il contenuto dell'elemento rispetto al perno indicato.
+    pub fn scale(&mut self, sx: f64, sy: f64, origin_x: f64, origin_y: f64) {
+        match self {
+            ItemKind::Stroke(s) => s.scale(sx, sy, origin_x, origin_y),
+            ItemKind::Image(img) => img.scale(sx, sy, origin_x, origin_y),
+        }
+    }
+
+    #[inline]
+    pub fn as_stroke(&self) -> Option<&Stroke> {
+        match self {
+            ItemKind::Stroke(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_stroke_mut(&mut self) -> Option<&mut Stroke> {
+        match self {
+            ItemKind::Stroke(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_image(&self) -> Option<&ImageItem> {
+        match self {
+            ItemKind::Image(img) => Some(img),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_image_mut(&mut self) -> Option<&mut ImageItem> {
+        match self {
+            ItemKind::Image(img) => Some(img),
+            _ => None,
+        }
+    }
 }
 
 /// Documento completo UniNote.
