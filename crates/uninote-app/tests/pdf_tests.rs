@@ -1038,3 +1038,354 @@ fn test_production_pdf_cache_manager_lru_and_rendering() {
 
     let _ = fs::remove_file(temp_pdf);
 }
+
+#[test]
+fn test_multipage_notebook_strokes_not_blank_on_subsequent_pages() {
+    let temp_pdf = unique_pdf_temp_path("multipage_strokes_no_blank");
+    let mut doc = Document::new_notebook("Test Multipage Inking");
+    doc.add_page(PageBackground::Blank);
+    doc.add_page(PageBackground::Blank);
+    assert_eq!(doc.pages.len(), 3);
+
+    let p0_top = doc.page_rect(0).unwrap().y;
+    let stroke0 = Stroke {
+        id: 1,
+        points: vec![
+            StrokePoint {
+                x: 100.0,
+                y: p0_top + 100.0,
+                pressure: 1.0,
+                width: 12.0,
+                timestamp_ns: 0,
+            },
+            StrokePoint {
+                x: 200.0,
+                y: p0_top + 100.0,
+                pressure: 1.0,
+                width: 12.0,
+                timestamp_ns: 10,
+            },
+        ],
+        style: StrokeStyle {
+            color: (0.0, 0.0, 0.0, 1.0),
+            base_width: 12.0,
+            min_width_factor: 1.0,
+            max_width_factor: 1.0,
+        },
+        raw_samples: Vec::new(),
+        is_dot: false,
+        mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
+    };
+    doc.pages[0].items.push(uninote_core::model::Item {
+        id: 1,
+        z_index: 1,
+        kind: uninote_core::model::ItemKind::Stroke(stroke0),
+    });
+
+    let p1_top = doc.page_rect(1).unwrap().y;
+    let stroke1 = Stroke {
+        id: 2,
+        points: vec![
+            StrokePoint {
+                x: 100.0,
+                y: p1_top + 100.0,
+                pressure: 1.0,
+                width: 12.0,
+                timestamp_ns: 20,
+            },
+            StrokePoint {
+                x: 200.0,
+                y: p1_top + 100.0,
+                pressure: 1.0,
+                width: 12.0,
+                timestamp_ns: 30,
+            },
+        ],
+        style: StrokeStyle {
+            color: (0.0, 0.0, 0.0, 1.0),
+            base_width: 12.0,
+            min_width_factor: 1.0,
+            max_width_factor: 1.0,
+        },
+        raw_samples: Vec::new(),
+        is_dot: false,
+        mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
+    };
+    doc.pages[1].items.push(uninote_core::model::Item {
+        id: 2,
+        z_index: 1,
+        kind: uninote_core::model::ItemKind::Stroke(stroke1),
+    });
+
+    let p2_top = doc.page_rect(2).unwrap().y;
+    let stroke2 = Stroke {
+        id: 3,
+        points: vec![
+            StrokePoint {
+                x: 100.0,
+                y: p2_top + 150.0,
+                pressure: 1.0,
+                width: 12.0,
+                timestamp_ns: 40,
+            },
+            StrokePoint {
+                x: 200.0,
+                y: p2_top + 150.0,
+                pressure: 1.0,
+                width: 12.0,
+                timestamp_ns: 50,
+            },
+        ],
+        style: StrokeStyle {
+            color: (0.0, 0.0, 0.0, 1.0),
+            base_width: 12.0,
+            min_width_factor: 1.0,
+            max_width_factor: 1.0,
+        },
+        raw_samples: Vec::new(),
+        is_dot: false,
+        mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
+    };
+    doc.pages[2].items.push(uninote_core::model::Item {
+        id: 3,
+        z_index: 1,
+        kind: uninote_core::model::ItemKind::Stroke(stroke2),
+    });
+
+    // Export to PDF
+    uninote_app::pdf_export::export_to_pdf(&doc, &temp_pdf)
+        .expect("Exporting multipage notebook must succeed");
+
+    let poppler_doc = poppler::PopplerDocument::new_from_file(temp_pdf.to_str().unwrap(), None)
+        .expect("Exported PDF must be openable by Poppler");
+    assert_eq!(poppler_doc.get_n_pages(), 3);
+
+    // Helper: checks whether there are dark stroke pixels on a page
+    let has_dark_stroke_pixel = |page_idx: usize, check_x: i32, check_y: i32| -> bool {
+        let page = poppler_doc.get_page(page_idx).unwrap();
+        let (pw, ph) = page.get_size();
+        let mut surf =
+            cairo::ImageSurface::create(cairo::Format::ARgb32, pw as i32, ph as i32).unwrap();
+        let cr = cairo::Context::new(&surf).unwrap();
+        cr.set_source_rgb(1.0, 1.0, 1.0);
+        cr.paint().unwrap();
+        page.render(&cr);
+        drop(cr);
+
+        let stride = surf.stride() as usize;
+        let data = surf.data().unwrap();
+
+        // Check 10x10 area around (check_x, check_y)
+        let mut dark_pixels = 0;
+        for dy in -5..=5 {
+            for dx in -5..=5 {
+                let px = (check_x + dx) as usize;
+                let py = (check_y + dy) as usize;
+                if py * stride + px * 4 + 2 < data.len() {
+                    let offset = py * stride + px * 4;
+                    let b = data[offset];
+                    let g = data[offset + 1];
+                    let r = data[offset + 2];
+                    if r < 100 && g < 100 && b < 100 {
+                        dark_pixels += 1;
+                    }
+                }
+            }
+        }
+        dark_pixels > 0
+    };
+
+    // Page 0: stroke at local y = 120 - 20 = 100
+    assert!(
+        has_dark_stroke_pixel(0, 150, 100),
+        "Page 0 must have stroke pixels at local y=100 (not shifted off)"
+    );
+
+    // Page 1: stroke at local y = 981.89 - 881.89 = 100
+    assert!(
+        has_dark_stroke_pixel(1, 150, 100),
+        "Page 1 MUST NOT BE BLANK: stroke pixels must be present at local y=100"
+    );
+
+    // Page 2: stroke at local y = 1893.78 - 1743.78 = 150
+    assert!(
+        has_dark_stroke_pixel(2, 150, 150),
+        "Page 2 MUST NOT BE BLANK: stroke pixels must be present at local y=150"
+    );
+
+    let _ = fs::remove_file(temp_pdf);
+}
+
+#[test]
+fn test_pdf_export_light_sheet_adapts_white_ink_to_dark_graphite() {
+    let temp_pdf = unique_pdf_temp_path("light_sheet_white_ink");
+    let mut doc = Document::new_notebook("White Ink Test");
+    doc.pages[0].background = PageBackground::Blank;
+
+    // Stroke with #D9E4EB (Bianco Caldo: 0.850, 0.894, 0.920, 1.0)
+    // Global y = 30 (top) + 100 = 130
+    let bianco_caldo = Stroke {
+        id: 1,
+        points: vec![
+            StrokePoint {
+                x: 100.0,
+                y: 130.0,
+                pressure: 1.0,
+                width: 16.0,
+                timestamp_ns: 0,
+            },
+            StrokePoint {
+                x: 200.0,
+                y: 130.0,
+                pressure: 1.0,
+                width: 16.0,
+                timestamp_ns: 10,
+            },
+        ],
+        style: StrokeStyle {
+            color: (0.850, 0.894, 0.920, 1.0),
+            base_width: 16.0,
+            min_width_factor: 1.0,
+            max_width_factor: 1.0,
+        },
+        raw_samples: Vec::new(),
+        is_dot: false,
+        mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
+    };
+    doc.pages[0].items.push(uninote_core::model::Item {
+        id: 1,
+        z_index: 1,
+        kind: uninote_core::model::ItemKind::Stroke(bianco_caldo),
+    });
+
+    let options = uninote_app::PdfExportOptions { is_dark: false };
+    uninote_app::export_to_pdf_with_options(&doc, &temp_pdf, &options)
+        .expect("Exporting white ink on light sheet must succeed");
+
+    let poppler_doc = poppler::PopplerDocument::new_from_file(temp_pdf.to_str().unwrap(), None)
+        .expect("Poppler must read exported PDF");
+    let page = poppler_doc.get_page(0).unwrap();
+    let (pw, ph) = page.get_size();
+    let mut surf =
+        cairo::ImageSurface::create(cairo::Format::ARgb32, pw as i32, ph as i32).unwrap();
+    let cr = cairo::Context::new(&surf).unwrap();
+    cr.set_source_rgb(1.0, 1.0, 1.0);
+    cr.paint().unwrap();
+    page.render(&cr);
+    drop(cr);
+
+    let stride = surf.stride() as usize;
+    let data = surf.data().unwrap();
+
+    // Check pixel at (150, 100): local y is 130 - 30 = 100
+    let offset = 100 * stride + 150 * 4;
+    let b = data[offset];
+    let g = data[offset + 1];
+    let r = data[offset + 2];
+
+    // It MUST be adapted to dark graphite (#172126 = ~23, 33, 38), NOT white!
+    assert!(
+        r < 80 && g < 80 && b < 80,
+        "White ink on light paper must be projected to dark graphite, but got RGB ({}, {}, {})",
+        r,
+        g,
+        b
+    );
+
+    let _ = fs::remove_file(temp_pdf);
+}
+
+#[test]
+fn test_pdf_export_dark_sheet_mode() {
+    let temp_pdf = unique_pdf_temp_path("dark_sheet_mode");
+    let mut doc = Document::new_notebook("Dark Mode PDF Test");
+    doc.pages[0].background = PageBackground::Blank;
+
+    // Pure black ink drawn in dark mode
+    // Global y = 30 + 100 = 130
+    let black_stroke = Stroke {
+        id: 1,
+        points: vec![
+            StrokePoint {
+                x: 100.0,
+                y: 130.0,
+                pressure: 1.0,
+                width: 16.0,
+                timestamp_ns: 0,
+            },
+            StrokePoint {
+                x: 200.0,
+                y: 130.0,
+                pressure: 1.0,
+                width: 16.0,
+                timestamp_ns: 10,
+            },
+        ],
+        style: StrokeStyle {
+            color: (0.0, 0.0, 0.0, 1.0),
+            base_width: 16.0,
+            min_width_factor: 1.0,
+            max_width_factor: 1.0,
+        },
+        raw_samples: Vec::new(),
+        is_dot: false,
+        mode: PipelineMode::Baseline,
+        cached_bbox: None,
+        cached_bezier: Vec::new(),
+    };
+    doc.pages[0].items.push(uninote_core::model::Item {
+        id: 1,
+        z_index: 1,
+        kind: uninote_core::model::ItemKind::Stroke(black_stroke),
+    });
+
+    let options = uninote_app::PdfExportOptions { is_dark: true };
+    uninote_app::export_to_pdf_with_options(&doc, &temp_pdf, &options)
+        .expect("Exporting dark mode PDF must succeed");
+
+    let poppler_doc = poppler::PopplerDocument::new_from_file(temp_pdf.to_str().unwrap(), None)
+        .expect("Poppler must read dark mode PDF");
+    let page = poppler_doc.get_page(0).unwrap();
+    let (pw, ph) = page.get_size();
+    let mut surf =
+        cairo::ImageSurface::create(cairo::Format::ARgb32, pw as i32, ph as i32).unwrap();
+    let cr = cairo::Context::new(&surf).unwrap();
+    page.render(&cr);
+    drop(cr);
+
+    let stride = surf.stride() as usize;
+    let data = surf.data().unwrap();
+
+    // Background pixel at (10, 10) must be dark slate (#172126 = ~23, 33, 38)
+    let bg_offset = 10 * stride + 10 * 4;
+    let bg_b = data[bg_offset];
+    let bg_g = data[bg_offset + 1];
+    let bg_r = data[bg_offset + 2];
+    assert!(
+        bg_r < 60 && bg_g < 60 && bg_b < 60,
+        "Dark mode background must be dark slate"
+    );
+
+    // Stroke pixel at (150, 100) must be ice white (#ECEFF4 = ~236, 239, 244)
+    let st_offset = 100 * stride + 150 * 4;
+    let st_b = data[st_offset];
+    let st_g = data[st_offset + 1];
+    let st_r = data[st_offset + 2];
+    assert!(
+        st_r > 180 && st_g > 180 && st_b > 180,
+        "Black stroke in dark mode must be adapted to ice white, got RGB ({}, {}, {})",
+        st_r,
+        st_g,
+        st_b
+    );
+
+    let _ = fs::remove_file(temp_pdf);
+}

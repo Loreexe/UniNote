@@ -1200,9 +1200,10 @@ impl UniNoteDashboard {
                 .root()
                 .and_then(|r| r.downcast::<Window>().ok());
             let r_cb = ref_cb_cloud.clone();
-            crate::cloud::ConnectCloudDialog::new(parent_win.as_ref(), move || {
+            let dialog = crate::cloud::ConnectCloudDialog::new(parent_win.as_ref(), move || {
                 r_cb();
             });
+            dialog.present();
         });
 
         // Pulsante + Nuova Cartella

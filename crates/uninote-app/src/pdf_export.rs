@@ -10,20 +10,30 @@ use cairo::{Context, LineCap, LineJoin, PdfMetadata, PdfSurface, PdfVersion};
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::path::Path;
+use uninote_core::coordinates::Rect2D;
 use uninote_core::model::{
     Document, DocumentFormat, ItemKind, Page, PageBackground, A4_HEIGHT_PT, A4_WIDTH_PT,
 };
 
-/// Colore di base per fogli accademici: Bianco caldo naturale (#FAFAF5).
-const WARM_WHITE: (f64, f64, f64) = (0.98, 0.98, 0.96);
+/// Colore di base per fogli accademici chiari: Bianco caldo naturale (#FAF9F6).
+const WARM_WHITE: (f64, f64, f64) = (0.985, 0.980, 0.965);
 
-/// Esporta un documento UniNote in un file PDF vettoriale multi-pagina ad alta fedeltà.
+/// Opzioni di configurazione per l'esportazione tipografica in PDF.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PdfExportOptions {
+    /// Se true, esporta su sfondo scuro Deep Slate (#172126) con inchiostri e griglie adattati;
+    /// se false, esporta su sfondo chiaro naturale accademico (#FAF9F6).
+    pub is_dark: bool,
+}
+
+/// Esporta un documento UniNote in un file PDF vettoriale multi-pagina ad alta fedeltà con opzioni tematiche.
 ///
 /// Restituisce `Ok(())` al completamento, oppure un errore esplicito se il documento
 /// è privo di pagine o si verificano errori I/O o Cairo.
-pub fn export_to_pdf(
+pub fn export_to_pdf_with_options(
     document: &Document,
     output_path: &Path,
+    options: &PdfExportOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if document.pages.is_empty() {
         return Err("Impossibile esportare un documento privo di pagine".into());
@@ -31,7 +41,7 @@ pub fn export_to_pdf(
 
     // 1. Inizializzazione della superficie PDF con le dimensioni della prima pagina
     let first_page = &document.pages[0];
-    let (first_w, first_h, _, _) = calculate_page_dimensions(first_page, document.format);
+    let (first_w, first_h, _, _) = calculate_page_geometry(document, first_page);
 
     let surface = PdfSurface::new(first_w, first_h, output_path)
         .map_err(|e| format!("Errore creazione cairo::PdfSurface: {:?}", e))?;
@@ -56,7 +66,7 @@ pub fn export_to_pdf(
 
     // 2. Rendering sequenziale di ciascuna pagina
     for page in &document.pages {
-        let (page_w, page_h, shift_x, shift_y) = calculate_page_dimensions(page, document.format);
+        let (page_w, page_h, shift_x, shift_y) = calculate_page_geometry(document, page);
         surface
             .set_size(page_w, page_h)
             .map_err(|e| format!("Errore surface.set_size: {:?}", e))?;
@@ -65,10 +75,17 @@ pub fn export_to_pdf(
             .map_err(|e| format!("Errore inizializzazione cairo::Context: {:?}", e))?;
 
         // 2.1. Rendering dello sfondo
-        render_background(&cr, page, page_w, page_h, &mut poppler_cache)?;
+        render_background(
+            &cr,
+            page,
+            page_w,
+            page_h,
+            options.is_dark,
+            &mut poppler_cache,
+        )?;
 
         // 2.2. Rendering vettoriale dei tratti dello studente
-        render_strokes(&cr, &page.items, shift_x, shift_y)?;
+        render_strokes(&cr, &page.items, shift_x, shift_y, options.is_dark)?;
 
         cr.show_page()
             .map_err(|e| format!("Errore cr.show_page: {:?}", e))?;
@@ -76,6 +93,14 @@ pub fn export_to_pdf(
 
     surface.finish();
     Ok(())
+}
+
+/// Esporta un documento UniNote in un file PDF vettoriale multi-pagina ad alta fedeltà (default chiaro accademico).
+pub fn export_to_pdf(
+    document: &Document,
+    output_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    export_to_pdf_with_options(document, output_path, &PdfExportOptions::default())
 }
 
 /// Crea un nuovo `Document` importando tutte le pagine di un file PDF esterno.
@@ -157,19 +182,27 @@ pub fn append_pdf_pages(
     Ok(n_pages)
 }
 
-/// Calcola le dimensioni geometriche di esportazione di una pagina e gli eventuali shift.
-fn calculate_page_dimensions(page: &Page, format: DocumentFormat) -> (f64, f64, f64, f64) {
-    if format == DocumentFormat::Notebook
+/// Calcola le dimensioni geometriche di esportazione di una pagina e i relativi shift di coordinate.
+fn calculate_page_geometry(document: &Document, page: &Page) -> (f64, f64, f64, f64) {
+    if document.format == DocumentFormat::Notebook
         && page.width.is_finite()
         && page.width > 0.0
         && page.height.is_finite()
         && page.height > 0.0
     {
-        return (page.width, page.height, 0.0, 0.0);
+        let page_rect = document.page_rect(page.index).unwrap_or(Rect2D::new(
+            0.0,
+            0.0,
+            page.width,
+            page.height,
+        ));
+        return (page.width, page.height, -page_rect.x, -page_rect.y);
     }
 
     // Modalità Lavagna Infinita: calcola il bounding box effettivo di tutti i tratti
-    if format == DocumentFormat::Whiteboard || page.width.is_infinite() || page.height.is_infinite()
+    if document.format == DocumentFormat::Whiteboard
+        || page.width.is_infinite()
+        || page.height.is_infinite()
     {
         let mut min_x = f64::INFINITY;
         let mut min_y = f64::INFINITY;
@@ -205,68 +238,28 @@ fn calculate_page_dimensions(page: &Page, format: DocumentFormat) -> (f64, f64, 
     (A4_WIDTH_PT, A4_HEIGHT_PT, 0.0, 0.0)
 }
 
-/// Renderizza lo sfondo della pagina (vettoriale Poppler, righe, quadretti o bianco caldo).
+/// Renderizza lo sfondo della pagina (vettoriale Poppler, righe, quadretti, tema chiaro o scuro).
 fn render_background(
     cr: &Context,
     page: &Page,
     w: f64,
     h: f64,
+    is_dark: bool,
     poppler_cache: &mut HashMap<String, poppler::PopplerDocument>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     cr.save()?;
 
-    // Riempimento base foglio in Bianco Caldo Naturale
-    cr.set_source_rgb(WARM_WHITE.0, WARM_WHITE.1, WARM_WHITE.2);
-    cr.rectangle(0.0, 0.0, w, h);
-    cr.fill()?;
-
     match &page.background {
-        PageBackground::Blank => {}
-        PageBackground::Ruled {
-            line_spacing,
-            margin_left,
-        } => {
-            // Righe orizzontali universitarie azzurro tenue
-            cr.set_line_width(0.6);
-            cr.set_source_rgba(0.70, 0.80, 0.92, 0.50);
-            let mut y = 60.0;
-            while y < h - 40.0 {
-                cr.move_to(0.0, y);
-                cr.line_to(w, y);
-                y += line_spacing;
-            }
-            cr.stroke()?;
-
-            // Margine verticale sinistro (corallo/rosso accademico)
-            cr.set_line_width(0.8);
-            cr.set_source_rgba(0.95, 0.50, 0.45, 0.60);
-            cr.move_to(*margin_left, 0.0);
-            cr.line_to(*margin_left, h);
-            cr.stroke()?;
-        }
-        PageBackground::Grid { grid_size } => {
-            // Quadrettatura matematica ortogonale
-            cr.set_line_width(0.5);
-            cr.set_source_rgba(0.75, 0.82, 0.90, 0.45);
-            let mut x = *grid_size;
-            while x < w {
-                cr.move_to(x, 0.0);
-                cr.line_to(x, h);
-                x += grid_size;
-            }
-            let mut y = *grid_size;
-            while y < h {
-                cr.move_to(0.0, y);
-                cr.line_to(w, y);
-                y += grid_size;
-            }
-            cr.stroke()?;
-        }
         PageBackground::PdfPage {
             source_path,
             page_index,
             ..
         } => {
+            // Per le slide e dispense PDF, riempimento base bianco ottico puro (#FFFFFF)
+            cr.set_source_rgb(1.0, 1.0, 1.0);
+            cr.rectangle(0.0, 0.0, w, h);
+            cr.fill()?;
+
             let doc = match poppler_cache.entry(source_path.clone()) {
                 std::collections::hash_map::Entry::Occupied(e) => Some(e.into_mut()),
                 std::collections::hash_map::Entry::Vacant(e) => {
@@ -278,6 +271,10 @@ fn render_background(
 
             if let Some(doc) = doc {
                 if let Some(pdf_page) = doc.get_page(*page_index) {
+                    let (pw, ph) = pdf_page.get_size();
+                    if pw > 0.0 && ph > 0.0 && ((pw - w).abs() > 0.1 || (ph - h).abs() > 0.1) {
+                        cr.scale(w / pw, h / ph);
+                    }
                     pdf_page.render_for_printing(cr);
                 }
             } else {
@@ -288,18 +285,123 @@ fn render_background(
                 cr.stroke()?;
             }
         }
+        _ => {
+            if is_dark {
+                // Tema scuro DMS Deep Slate (#172126)
+                cr.set_source_rgb(0.090, 0.129, 0.149);
+                cr.rectangle(0.0, 0.0, w, h);
+                cr.fill()?;
+
+                match &page.background {
+                    PageBackground::Blank => {}
+                    PageBackground::Ruled {
+                        line_spacing,
+                        margin_left,
+                    } => {
+                        // Righe orizzontali DMS in tema scuro
+                        cr.set_line_width(0.8);
+                        cr.set_source_rgba(0.427, 0.824, 1.0, 0.18);
+                        let mut y = 60.0;
+                        while y < h - 40.0 {
+                            cr.move_to(0.0, y);
+                            cr.line_to(w, y);
+                            y += line_spacing;
+                        }
+                        cr.stroke()?;
+
+                        // Margine sinistro Corallo DMS
+                        cr.set_line_width(1.0);
+                        cr.set_source_rgba(1.0, 0.706, 0.670, 0.35);
+                        cr.move_to(*margin_left, 0.0);
+                        cr.line_to(*margin_left, h);
+                        cr.stroke()?;
+                    }
+                    PageBackground::Grid { grid_size } => {
+                        // Quadrettatura DMS in tema scuro
+                        cr.set_line_width(0.7);
+                        cr.set_source_rgba(0.427, 0.824, 1.0, 0.14);
+                        let mut x = *grid_size;
+                        while x < w {
+                            cr.move_to(x, 0.0);
+                            cr.line_to(x, h);
+                            x += grid_size;
+                        }
+                        let mut y = *grid_size;
+                        while y < h {
+                            cr.move_to(0.0, y);
+                            cr.line_to(w, y);
+                            y += grid_size;
+                        }
+                        cr.stroke()?;
+                    }
+                    PageBackground::PdfPage { .. } => unreachable!(),
+                }
+            } else {
+                // Tema chiaro accademico: Bianco naturale (#FAF9F6)
+                cr.set_source_rgb(WARM_WHITE.0, WARM_WHITE.1, WARM_WHITE.2);
+                cr.rectangle(0.0, 0.0, w, h);
+                cr.fill()?;
+
+                match &page.background {
+                    PageBackground::Blank => {}
+                    PageBackground::Ruled {
+                        line_spacing,
+                        margin_left,
+                    } => {
+                        // Righe orizzontali universitarie azzurro tenue
+                        cr.set_line_width(0.8);
+                        cr.set_source_rgba(0.35, 0.50, 0.70, 0.35);
+                        let mut y = 60.0;
+                        while y < h - 40.0 {
+                            cr.move_to(0.0, y);
+                            cr.line_to(w, y);
+                            y += line_spacing;
+                        }
+                        cr.stroke()?;
+
+                        // Margine verticale sinistro accademico
+                        cr.set_line_width(1.0);
+                        cr.set_source_rgba(0.88, 0.35, 0.35, 0.35);
+                        cr.move_to(*margin_left, 0.0);
+                        cr.line_to(*margin_left, h);
+                        cr.stroke()?;
+                    }
+                    PageBackground::Grid { grid_size } => {
+                        // Quadrettatura matematica ortogonale
+                        cr.set_line_width(0.7);
+                        cr.set_source_rgba(0.45, 0.60, 0.80, 0.28);
+                        let mut x = *grid_size;
+                        while x < w {
+                            cr.move_to(x, 0.0);
+                            cr.line_to(x, h);
+                            x += grid_size;
+                        }
+                        let mut y = *grid_size;
+                        while y < h {
+                            cr.move_to(0.0, y);
+                            cr.line_to(w, y);
+                            y += grid_size;
+                        }
+                        cr.stroke()?;
+                    }
+                    PageBackground::PdfPage { .. } => unreachable!(),
+                }
+            }
+        }
     }
 
     cr.restore()?;
     Ok(())
 }
 
-/// Renderizza i tratti a mano libera e le annotazioni come curve di Bézier cubiche pure (`cr.curve_to`).
+/// Renderizza i tratti a mano libera e le annotazioni come curve di Bézier cubiche pure (`cr.curve_to`)
+/// con proiezione percettiva del colore e raggruppamento alfa pulito per gli evidenziatori.
 fn render_strokes(
     cr: &Context,
     items: &[uninote_core::model::Item],
     shift_x: f64,
     shift_y: f64,
+    is_dark: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     cr.save()?;
     if shift_x != 0.0 || shift_y != 0.0 {
@@ -316,8 +418,16 @@ fn render_strokes(
         }
 
         cr.save()?;
-        let (r, g, b, a) = stroke.style.color;
-        cr.set_source_rgba(r, g, b, a);
+        let adapted = crate::canvas::adapt_ink_color(stroke.style.color, is_dark);
+        let is_semi_transparent = adapted.3 < 0.999;
+
+        if is_semi_transparent {
+            cr.push_group_with_content(cairo::Content::ColorAlpha);
+            cr.set_source_rgb(adapted.0, adapted.1, adapted.2);
+        } else {
+            cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
+        }
+
         cr.set_line_cap(LineCap::Round);
         cr.set_line_join(LineJoin::Round);
 
@@ -356,6 +466,11 @@ fn render_strokes(
                     cr.stroke()?;
                 }
             }
+        }
+
+        if is_semi_transparent {
+            let _ = cr.pop_group_to_source();
+            let _ = cr.paint_with_alpha(adapted.3);
         }
 
         cr.restore()?;

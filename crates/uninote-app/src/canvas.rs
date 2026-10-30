@@ -1256,6 +1256,16 @@ impl NoteCanvas {
         }
     }
 
+    /// Esporta il documento corrente in un file PDF vettoriale ad alta definizione con opzioni tematiche.
+    pub fn export_pdf_with_options(
+        &self,
+        target_path: &std::path::Path,
+        options: &crate::pdf_export::PdfExportOptions,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let st = self.state.borrow();
+        crate::pdf_export::export_to_pdf_with_options(&st.document, target_path, options)
+    }
+
     /// Esporta il documento corrente in un file PDF vettoriale ad alta definizione.
     pub fn export_pdf(
         &self,

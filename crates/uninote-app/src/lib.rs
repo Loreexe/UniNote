@@ -28,7 +28,9 @@ pub use dashboard::{
     CreateDocumentDialog, UniNoteDashboard,
 };
 pub use pdf_cache::{PdfCacheConfig, PdfCacheError, PdfCacheManager, PdfPageKey};
-pub use pdf_export::{append_pdf_pages, export_to_pdf, import_from_pdf};
+pub use pdf_export::{
+    append_pdf_pages, export_to_pdf, export_to_pdf_with_options, import_from_pdf, PdfExportOptions,
+};
 pub use preferences::{
     AppPreferences, BarrelButtonAction, DashboardRecentStore, FullAppSettingsModel, PenSlotConfig,
     PressureCurve, RecentDocumentMeta, StylusSensitivity, ThemeMode,

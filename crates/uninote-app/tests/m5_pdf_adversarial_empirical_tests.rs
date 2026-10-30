@@ -219,6 +219,7 @@ fn test_m5_large_page_count_stress_50_pages() {
 fn test_m5_highlighter_alpha_038_pixel_blending_verification() {
     let temp_pdf = unique_m5_temp_path("hl_alpha_blend", "pdf");
     let mut doc = Document::new_empty("Highlighter Alpha Blending");
+    let p0_y = doc.page_rect(0).map(|r| r.y).unwrap_or(0.0);
 
     // Underneath stroke: Pitch black solid line across (100, 200) -> (300, 200)
     let black_stroke = Stroke {
@@ -226,14 +227,14 @@ fn test_m5_highlighter_alpha_038_pixel_blending_verification() {
         points: vec![
             StrokePoint {
                 x: 100.0,
-                y: 200.0,
+                y: p0_y + 200.0,
                 pressure: 1.0,
                 width: 10.0,
                 timestamp_ns: 0,
             },
             StrokePoint {
                 x: 300.0,
-                y: 200.0,
+                y: p0_y + 200.0,
                 pressure: 1.0,
                 width: 10.0,
                 timestamp_ns: 10,
@@ -258,14 +259,14 @@ fn test_m5_highlighter_alpha_038_pixel_blending_verification() {
         points: vec![
             StrokePoint {
                 x: 100.0,
-                y: 200.0,
+                y: p0_y + 200.0,
                 pressure: 0.5,
                 width: 24.0,
                 timestamp_ns: 20,
             },
             StrokePoint {
                 x: 300.0,
-                y: 200.0,
+                y: p0_y + 200.0,
                 pressure: 0.5,
                 width: 24.0,
                 timestamp_ns: 30,
