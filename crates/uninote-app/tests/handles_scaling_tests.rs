@@ -768,3 +768,132 @@ fn test_segment_eraser_halo_grazing_and_empty_motion_no_mutation_or_undo() {
         assert_eq!(page.items.len(), 2);
     }
 }
+
+// ============================================================================
+// TEST 14: THIN STROKE RENDERING UNCLAMPED BELOW 1.0 PT
+// ============================================================================
+
+#[test]
+fn test_thin_stroke_rendering_unclamped_below_1pt() {
+    // Verifies that strokes with width < 1.0 pt (Micro 0.3pt, Fine 0.5pt, dot)
+    // are rendered without artificially forcing a 1.0pt minimum.
+    let surf = gtk4::cairo::ImageSurface::create(gtk4::cairo::Format::ARgb32, 100, 100)
+        .expect("Cairo surface creation");
+    let cr = gtk4::cairo::Context::new(&surf).expect("Cairo context creation");
+
+    let style = StrokeStyle {
+        color: (0.1, 0.8, 0.2, 1.0),
+        base_width: 0.3,
+        ..Default::default()
+    };
+    let mut stroke = Stroke::new(555, style.clone(), PipelineMode::CatmullRomSpline);
+    stroke.points.push(StrokePoint {
+        x: 10.0,
+        y: 10.0,
+        pressure: 0.5,
+        width: 0.3,
+        timestamp_ns: 100,
+    });
+    stroke.points.push(StrokePoint {
+        x: 90.0,
+        y: 90.0,
+        pressure: 0.5,
+        width: 0.3,
+        timestamp_ns: 200,
+    });
+
+    // Draw stroke; line width in cairo context should reflect thin width <= 0.35, not clamped to 1.0
+    NoteCanvas::draw_stroke(&cr, &stroke, PipelineMode::CatmullRomSpline, false);
+    let current_line_w = cr.line_width();
+    assert!(
+        current_line_w <= 0.35,
+        "Stroke line width ({}) must reflect thin 0.3pt setting and not be clamped to 1.0",
+        current_line_w
+    );
+
+    // Also verify dot stroke
+    let mut dot = Stroke::new(556, style, PipelineMode::CatmullRomSpline);
+    dot.is_dot = true;
+    dot.points.push(StrokePoint {
+        x: 50.0,
+        y: 50.0,
+        pressure: 0.5,
+        width: 0.25,
+        timestamp_ns: 300,
+    });
+    NoteCanvas::draw_stroke(&cr, &dot, PipelineMode::CatmullRomSpline, false);
+}
+
+// ============================================================================
+// TEST 15: ERASER SEGMENT CUT CLEARS EXACT VISUAL PERIMETER WITHOUT PENETRATION
+// ============================================================================
+
+#[test]
+fn test_eraser_segment_cut_clears_exact_visual_perimeter_no_penetration() {
+    let mut st = CanvasState::new();
+    st.document = Document::new_notebook("Perimeter Test");
+    st.eraser_mode = EraserMode::Segment;
+
+    // Stroke going diagonally through (50.0, 50.0) with width 3.0 (half_w = 1.5)
+    let style = StrokeStyle {
+        color: (0.2, 0.8, 0.3, 1.0),
+        base_width: 3.0,
+        ..Default::default()
+    };
+    let mut stroke = Stroke::new(777, style, PipelineMode::CatmullRomSpline);
+    for i in 0..=10 {
+        let t = i as f64 / 10.0;
+        let x = 20.0 + t * 60.0; // from 20 to 80
+        let y = 20.0 + t * 60.0; // from 20 to 80
+        stroke.points.push(StrokePoint {
+            x,
+            y,
+            pressure: 0.5,
+            width: 3.0,
+            timestamp_ns: i * 1000,
+        });
+    }
+
+    let orig_item = Item {
+        id: stroke.id,
+        z_index: 0,
+        kind: ItemKind::Stroke(stroke.clone()),
+    };
+    st.document.pages[0].items.push(orig_item.clone());
+    st.document.pages[0].spatial_index.insert(&orig_item);
+
+    // Eraser at center (50.0, 50.0) with radius 12.0
+    let eraser_center = (50.0, 50.0);
+    let eraser_radius = 12.0;
+
+    NoteCanvas::erase_strokes_at(&mut st, eraser_center, eraser_radius);
+
+    // Stroke was sliced into 2 pieces
+    let page = &st.document.pages[0];
+    assert_eq!(
+        page.items.len(),
+        2,
+        "Center-crossing stroke must be sliced into 2 fragments"
+    );
+
+    let half_w = 3.0 / 2.0;
+    for item in &page.items {
+        if let ItemKind::Stroke(ref frag) = item.kind {
+            for p in &frag.points {
+                let dist =
+                    ((p.x - eraser_center.0).powi(2) + (p.y - eraser_center.1).powi(2)).sqrt();
+                // The centerline must end at distance >= eraser_radius + half_w - 0.1
+                // This ensures that Cairo's round cap of radius half_w touches the perimeter
+                // at (dist - half_w) >= eraser_radius - 0.1, preventing penetration into the eraser circle!
+                assert!(
+                    dist >= eraser_radius + half_w - 0.15,
+                    "Fragment centerline point ({:.2}, {:.2}) at dist {:.2} must be outside eff_cut_radius ({:.2})",
+                    p.x,
+                    p.y,
+                    dist,
+                    eraser_radius + half_w
+                );
+            }
+        }
+    }
+}

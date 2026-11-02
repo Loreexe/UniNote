@@ -421,6 +421,58 @@ impl Stroke {
         false
     }
 
+    /// Verifica se un punto con raggio interseca la linea mediana (centerline) del tratto,
+    /// escludendo lo spessore dell'inchiostro (utile per distinguere intersezione reale da sfioramento halo).
+    pub fn intersects_centerline(&self, (px, py): (f64, f64), radius: f64) -> bool {
+        if self.is_dot || self.points.len() <= 1 {
+            return self.intersects_point((px, py), radius);
+        }
+
+        if let Some(bbox) = self.bounding_box() {
+            if px < bbox.min_x - radius
+                || px > bbox.max_x + radius
+                || py < bbox.min_y - radius
+                || py > bbox.max_y + radius
+            {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
+        let r_sq = radius * radius;
+
+        // 1. Controllo prossimità punti della centerline
+        for p in &self.points {
+            let dx = p.x - px;
+            let dy = p.y - py;
+            if dx * dx + dy * dy <= r_sq {
+                return true;
+            }
+        }
+
+        // 2. Controllo prossimità segmenti della centerline
+        for w in self.points.windows(2) {
+            let p1 = &w[0];
+            let p2 = &w[1];
+            let l2 = (p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2);
+            let dist_sq = if l2 < 1e-6 {
+                (px - p1.x).powi(2) + (py - p1.y).powi(2)
+            } else {
+                let t = (((px - p1.x) * (p2.x - p1.x) + (py - p1.y) * (p2.y - p1.y)) / l2)
+                    .clamp(0.0, 1.0);
+                let proj_x = p1.x + t * (p2.x - p1.x);
+                let proj_y = p1.y + t * (p2.y - p1.y);
+                (px - proj_x).powi(2) + (py - proj_y).powi(2)
+            };
+            if dist_sq <= r_sq {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Trasla tutti i punti, campioni grezzi, bounding box e curve Bézier in-place con zero allocazioni.
     pub fn translate(&mut self, dx: f64, dy: f64) {
         for p in &mut self.points {

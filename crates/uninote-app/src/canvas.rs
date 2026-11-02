@@ -287,6 +287,8 @@ pub struct CanvasState {
     pub eraser_radius: f64,
     /// Posizione corrente a schermo (x, y) del puntatore della gomma per l'indicatore live.
     pub eraser_pointer: Option<(f64, f64)>,
+    /// Ultima posizione documento (x, y) della gomma durante il trascinamento continuo (per interpolazione priva di salti).
+    pub last_eraser_doc_pos: Option<(f64, f64)>,
     pub selection: SelectionState,
     pub active_builder: Option<StrokeBuilder>,
     pub active_device: Option<DeviceKind>,
@@ -316,6 +318,7 @@ impl CanvasState {
             eraser_mode: EraserMode::WholeStroke,
             eraser_radius: 16.0,
             eraser_pointer: None,
+            last_eraser_doc_pos: None,
             selection: SelectionState::default(),
             active_builder: None,
             active_device: None,
@@ -2508,7 +2511,7 @@ impl NoteCanvas {
 
         if stroke.is_dot || stroke.points.len() == 1 {
             let p = &stroke.points[0];
-            let radius = (p.width / 2.0).max(1.5);
+            let radius = (p.width / 2.0).max(0.05);
             cr.arc(p.x, p.y, radius, 0.0, 2.0 * std::f64::consts::PI);
             let _ = cr.fill();
             if is_semi_transparent {
@@ -2524,7 +2527,7 @@ impl NoteCanvas {
                     let p0 = &w[0];
                     let p1 = &w[1];
                     let avg_width = (p0.width + p1.width) / 2.0;
-                    cr.set_line_width(avg_width.max(1.0));
+                    cr.set_line_width(avg_width.max(0.05));
                     cr.move_to(p0.x, p0.y);
                     cr.line_to(p1.x, p1.y);
                     let _ = cr.stroke();
@@ -2547,7 +2550,7 @@ impl NoteCanvas {
 
                     if width_diff < 0.25 || len <= 3.0 {
                         let avg_w = (seg.width0 + seg.width1) / 2.0;
-                        cr.set_line_width(avg_w.max(1.0));
+                        cr.set_line_width(avg_w.max(0.05));
                         cr.move_to(seg.p0.0, seg.p0.1);
                         cr.curve_to(
                             seg.cp1.0, seg.cp1.1, seg.cp2.0, seg.cp2.1, seg.p1.0, seg.p1.1,
@@ -2561,7 +2564,7 @@ impl NoteCanvas {
                             let t = (s as f64) / (steps as f64);
                             let pt = seg.evaluate(t);
                             let w = seg.evaluate_width(t);
-                            cr.set_line_width(((prev_w + w) / 2.0).max(1.0));
+                            cr.set_line_width(((prev_w + w) / 2.0).max(0.05));
                             cr.move_to(prev_pt.0, prev_pt.1);
                             cr.line_to(pt.0, pt.1);
                             let _ = cr.stroke();
@@ -2703,6 +2706,7 @@ impl NoteCanvas {
                     Self::commit_finished_stroke(&mut st, stroke);
                 }
                 st.eraser_pointer = Some((x, y));
+                st.last_eraser_doc_pos = Some((doc_x, doc_y));
                 let radius = st.eraser_radius / st.viewport.zoom;
                 Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
                 drop(st);
@@ -2812,6 +2816,22 @@ impl NoteCanvas {
                 }
                 st.eraser_pointer = Some((x, y));
                 let radius = st.eraser_radius / st.viewport.zoom;
+                if let Some((prev_x, prev_y)) = st.last_eraser_doc_pos {
+                    let dx = doc_x - prev_x;
+                    let dy = doc_y - prev_y;
+                    let dist = (dx * dx + dy * dy).sqrt();
+                    let step = (radius * 0.4).max(3.0);
+                    if dist > step {
+                        let steps = ((dist / step).ceil() as usize).min(32);
+                        for i in 1..steps {
+                            let t = (i as f64) / (steps as f64);
+                            let inter_x = prev_x + t * dx;
+                            let inter_y = prev_y + t * dy;
+                            Self::erase_strokes_at(st, (inter_x, inter_y), radius);
+                        }
+                    }
+                }
+                st.last_eraser_doc_pos = Some((doc_x, doc_y));
                 Self::erase_strokes_at(st, (doc_x, doc_y), radius);
                 drop(st_guard);
                 area.queue_draw();
@@ -2951,6 +2971,7 @@ impl NoteCanvas {
             let mut st = state.borrow_mut();
             st.last_stylus_time = Some(Instant::now());
             st.active_device = None;
+            st.last_eraser_doc_pos = None;
             if st.active_tool != ActiveTool::Eraser && st.eraser_pointer.is_some() {
                 st.eraser_pointer = None;
             }
@@ -3154,6 +3175,7 @@ impl NoteCanvas {
 
                 if st.active_tool == ActiveTool::Eraser {
                     st.eraser_pointer = Some((start_x, start_y));
+                    st.last_eraser_doc_pos = Some((doc_x, doc_y));
                     let radius = st.eraser_radius / st.viewport.zoom;
                     Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
                     drop(st);
@@ -3252,6 +3274,22 @@ impl NoteCanvas {
                 if st.active_tool == ActiveTool::Eraser {
                     st.eraser_pointer = Some((cur_screen_x, cur_screen_y));
                     let radius = st.eraser_radius / st.viewport.zoom;
+                    if let Some((prev_x, prev_y)) = st.last_eraser_doc_pos {
+                        let dx = doc_x - prev_x;
+                        let dy = doc_y - prev_y;
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        let step = (radius * 0.4).max(3.0);
+                        if dist > step {
+                            let steps = ((dist / step).ceil() as usize).min(32);
+                            for i in 1..steps {
+                                let t = (i as f64) / (steps as f64);
+                                let inter_x = prev_x + t * dx;
+                                let inter_y = prev_y + t * dy;
+                                Self::erase_strokes_at(st, (inter_x, inter_y), radius);
+                            }
+                        }
+                    }
+                    st.last_eraser_doc_pos = Some((doc_x, doc_y));
                     Self::erase_strokes_at(st, (doc_x, doc_y), radius);
                     drop(st_guard);
                     area.queue_draw();
@@ -3318,6 +3356,7 @@ impl NoteCanvas {
 
                 if st.active_tool == ActiveTool::Eraser {
                     st.eraser_pointer = Some((cur_x, cur_y));
+                    st.last_eraser_doc_pos = None;
                     let radius = st.eraser_radius / st.viewport.zoom;
                     Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
                     drop(st);
@@ -3614,11 +3653,12 @@ impl NoteCanvas {
                 page.rebuild_spatial_index();
             }
 
-            // 1. Pre-filtraggio R*-Tree dell'inviluppo della gomma in O(log N + K)
-            let min_x = doc_pt.0 - radius;
-            let min_y = doc_pt.1 - radius;
-            let max_x = doc_pt.0 + radius;
-            let max_y = doc_pt.1 + radius;
+            // 1. Pre-filtraggio R*-Tree dell'inviluppo della gomma in O(log N + K) con padding per spessore tratto
+            let query_pad = 8.0;
+            let min_x = doc_pt.0 - radius - query_pad;
+            let min_y = doc_pt.1 - radius - query_pad;
+            let max_x = doc_pt.0 + radius + query_pad;
+            let max_y = doc_pt.1 + radius + query_pad;
 
             let candidates = page
                 .spatial_index
@@ -3677,8 +3717,13 @@ impl NoteCanvas {
                     for item in &page.items {
                         if candidate_ids.contains(&item.id) {
                             if let ItemKind::Stroke(ref s) = item.kind {
-                                if s.intersects_point(doc_pt, radius) {
-                                    let fragments = s.slice_with_circle(doc_pt, radius);
+                                if s.intersects_centerline(doc_pt, radius) {
+                                    let stroke_half_w =
+                                        (s.points.iter().map(|p| p.width).fold(0.0_f64, f64::max)
+                                            / 2.0)
+                                            .max(s.style.base_width / 2.0);
+                                    let eff_cut_radius = radius + stroke_half_w;
+                                    let fragments = s.slice_with_circle(doc_pt, eff_cut_radius);
                                     let is_unchanged = fragments.len() == 1
                                         && fragments[0].id == s.id
                                         && fragments[0].points.len() == s.points.len();

@@ -1000,3 +1000,42 @@ fn test_ensure_cache_repairs_disaligned_or_nan_cached_bezier() {
         assert!(seg.is_finite());
     }
 }
+
+#[test]
+fn test_slice_stroke_reproducing_screenshot() {
+    let pts = vec![
+        (39.0, 10.0),
+        (38.0, 15.0),
+        (37.0, 20.0),
+        (36.0, 25.0),
+        (35.0, 30.0),
+        (34.0, 35.0),
+        (33.0, 40.0),
+        (33.0, 50.0),
+    ];
+    let stroke = create_test_stroke(999, &pts, 2.8);
+    let center = (26.5, 27.5);
+    let radius = 14.5;
+
+    // Centerline intersects eraser circle
+    assert!(stroke.intersects_centerline(center, radius));
+
+    // When slicing with ink-aware effective radius (radius + half_w), the centerline
+    // cut is at distance >= radius + half_w, ensuring Cairo round cap (radius half_w)
+    // never penetrates inside the visible eraser circle of radius 14.5.
+    let half_w = 2.8 / 2.0;
+    let eff_radius = radius + half_w;
+    let frags = stroke.slice_with_circle(center, eff_radius);
+    assert_eq!(frags.len(), 2, "Must produce 2 fragments");
+    for f in &frags {
+        for p in &f.points {
+            let d = ((p.x - center.0).powi(2) + (p.y - center.1).powi(2)).sqrt();
+            assert!(
+                d >= radius + half_w - 0.1,
+                "Centerline endpoints must be at or outside eff_radius ({:.2} >= {:.2})",
+                d,
+                radius + half_w
+            );
+        }
+    }
+}
