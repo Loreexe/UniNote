@@ -22,6 +22,14 @@ pub fn thumbnail_cache_dir() -> PathBuf {
 }
 
 /// Genera o restituisce il percorso della miniatura PNG associata al documento.
+pub fn is_dark_theme_active() -> bool {
+    if gtk4::is_initialized() {
+        libadwaita::StyleManager::default().is_dark()
+    } else {
+        true
+    }
+}
+
 pub fn get_or_create_thumbnail_path(meta: &RecentDocumentMeta) -> PathBuf {
     let cache_dir = thumbnail_cache_dir();
     let sanitized_title: String = meta
@@ -37,7 +45,9 @@ pub fn get_or_create_thumbnail_path(meta: &RecentDocumentMeta) -> PathBuf {
         meta.file_path.hash(&mut hasher);
         hasher.finish()
     };
-    let thumb_filename = format!("{}_{:x}.png", sanitized_title, file_hash);
+    let is_dark = is_dark_theme_active();
+    let theme_suffix = if is_dark { "dark" } else { "light" };
+    let thumb_filename = format!("{}_{:x}_{}.png", sanitized_title, file_hash, theme_suffix);
     let thumb_path = cache_dir.join(thumb_filename);
 
     let needs_generation = if !thumb_path.exists() {
@@ -96,7 +106,9 @@ pub fn update_document_thumbnail_now(
         meta.file_path.hash(&mut hasher);
         hasher.finish()
     };
-    let thumb_filename = format!("{}_{:x}.png", sanitized_title, file_hash);
+    let is_dark = is_dark_theme_active();
+    let theme_suffix = if is_dark { "dark" } else { "light" };
+    let thumb_filename = format!("{}_{:x}_{}.png", sanitized_title, file_hash, theme_suffix);
     let thumb_path = cache_dir.join(thumb_filename);
     let _ = render_document_thumbnail_with_store(doc, &thumb_path, store);
     thumb_path
@@ -124,19 +136,24 @@ pub fn render_document_thumbnail_with_store(
     output_png: &Path,
     store: Option<&uninote_storage::DocumentStore>,
 ) -> Result<(), String> {
+    let is_dark = is_dark_theme_active();
     let (w, h) = (240, 340);
     let surface = ImageSurface::create(Format::ARgb32, w, h)
         .map_err(|e| format!("Thumbnail surface error: {:?}", e))?;
     let cr = Context::new(&surface).map_err(|e| format!("Thumbnail context error: {:?}", e))?;
 
-    // Sfondo principale Dark Deep Slate (#0A151A)
-    cr.set_source_rgb(0.039, 0.082, 0.102);
+    // Sfondo perimetrale esterno del canvas miniatura conforme al tema
+    if is_dark {
+        cr.set_source_rgb(0.039, 0.082, 0.102); // Dark Deep Slate (#0A151A)
+    } else {
+        cr.set_source_rgb(0.910, 0.925, 0.937); // Light Canvas (#E8ECEF)
+    }
     cr.rectangle(0.0, 0.0, w as f64, h as f64);
     cr.fill().map_err(|e| format!("{:?}", e))?;
 
     match doc.format {
         DocumentFormat::Notebook => {
-            // Disegna il foglio A4 proporzionato
+            // Disegna il foglio A4 proporzionato fedele al tema attivo
             let pad = 12.0;
             let paper_w = w as f64 - pad * 2.0;
             let paper_h =
@@ -145,17 +162,29 @@ pub fn render_document_thumbnail_with_store(
             let paper_y = (h as f64 - paper_h) / 2.0;
 
             // Ombra
-            cr.set_source_rgba(0.0, 0.0, 0.0, 0.45);
+            if is_dark {
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.65);
+            } else {
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.14);
+            }
             cr.rectangle(paper_x - 1.0, paper_y + 2.0, paper_w + 2.0, paper_h + 2.0);
             let _ = cr.fill();
 
-            // Foglio bianco naturale
-            cr.set_source_rgb(0.985, 0.980, 0.965);
+            // Corpo foglio A4 (Fedele al tema: Dark Deep Slate #172126 o Natural White #FAF9F6)
+            if is_dark {
+                cr.set_source_rgb(0.090, 0.129, 0.149);
+            } else {
+                cr.set_source_rgb(0.985, 0.980, 0.965);
+            }
             cr.rectangle(paper_x, paper_y, paper_w, paper_h);
             let _ = cr.fill();
 
             // Bordo foglio
-            cr.set_source_rgba(0.0, 0.0, 0.0, 0.12);
+            if is_dark {
+                cr.set_source_rgba(0.243, 0.282, 0.306, 0.80);
+            } else {
+                cr.set_source_rgba(0.0, 0.0, 0.0, 0.12);
+            }
             cr.set_line_width(0.8);
             cr.rectangle(paper_x, paper_y, paper_w, paper_h);
             let _ = cr.stroke();
@@ -166,7 +195,7 @@ pub fn render_document_thumbnail_with_store(
             cr.clip();
 
             if let Some(first_page) = doc.pages.first() {
-                // Rigatura o quadretti tenui
+                // Rigatura o quadretti tenui coordinati col tema
                 match &first_page.background {
                     PageBackground::Blank => {}
                     PageBackground::Ruled {
@@ -177,13 +206,21 @@ pub fn render_document_thumbnail_with_store(
                         let spacing_px = line_spacing * scale;
                         let margin_px = margin_left * scale;
 
-                        cr.set_source_rgba(0.88, 0.35, 0.35, 0.30);
+                        if is_dark {
+                            cr.set_source_rgba(1.0, 0.706, 0.670, 0.35); // Corallo DMS
+                        } else {
+                            cr.set_source_rgba(0.88, 0.35, 0.35, 0.30);
+                        }
                         cr.set_line_width(0.8);
                         cr.move_to(paper_x + margin_px, paper_y);
                         cr.line_to(paper_x + margin_px, paper_y + paper_h);
                         let _ = cr.stroke();
 
-                        cr.set_source_rgba(0.35, 0.50, 0.70, 0.25);
+                        if is_dark {
+                            cr.set_source_rgba(0.427, 0.824, 1.0, 0.18);
+                        } else {
+                            cr.set_source_rgba(0.35, 0.50, 0.70, 0.25);
+                        }
                         cr.set_line_width(0.6);
                         let mut ly = paper_y + spacing_px * 2.0;
                         while ly < paper_y + paper_h {
@@ -196,7 +233,11 @@ pub fn render_document_thumbnail_with_store(
                     PageBackground::Grid { grid_size } => {
                         let scale = paper_w / uninote_core::model::A4_WIDTH_PT;
                         let grid_px = (grid_size * scale).max(3.0);
-                        cr.set_source_rgba(0.45, 0.60, 0.80, 0.22);
+                        if is_dark {
+                            cr.set_source_rgba(0.427, 0.824, 1.0, 0.14);
+                        } else {
+                            cr.set_source_rgba(0.45, 0.60, 0.80, 0.22);
+                        }
                         cr.set_line_width(0.5);
 
                         let mut gx = paper_x + grid_px;
@@ -216,7 +257,7 @@ pub fn render_document_thumbnail_with_store(
                     _ => {}
                 }
 
-                // Renderizza elementi reali della pagina 1 (tratti e immagini)
+                // Renderizza elementi reali della pagina 1 (tratti e immagini con contrasto adattato)
                 let scale = paper_w / uninote_core::model::A4_WIDTH_PT;
                 let _ = cr.save();
                 cr.translate(paper_x, paper_y);
@@ -228,8 +269,9 @@ pub fn render_document_thumbnail_with_store(
                             if stroke.points.is_empty() {
                                 continue;
                             }
-                            let (r, g, b, a) = stroke.style.color;
-                            cr.set_source_rgba(r, g, b, a);
+                            let adapted =
+                                crate::canvas::adapt_ink_color(stroke.style.color, is_dark);
+                            cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
                             cr.set_line_cap(gtk4::cairo::LineCap::Round);
                             cr.set_line_join(gtk4::cairo::LineJoin::Round);
 
@@ -297,8 +339,12 @@ pub fn render_document_thumbnail_with_store(
             let _ = cr.restore();
         }
         DocumentFormat::Whiteboard => {
-            // Matrice di punti per la lavagna procedurale (griglia discreta di sfondo)
-            cr.set_source_rgba(0.475, 0.851, 0.647, 0.12);
+            // Matrice di punti per la lavagna procedurale (griglia discreta di sfondo conforme al tema)
+            if is_dark {
+                cr.set_source_rgba(0.475, 0.851, 0.647, 0.12);
+            } else {
+                cr.set_source_rgba(0.20, 0.35, 0.50, 0.18);
+            }
             let mut x = 24.0;
             while x < w as f64 - 20.0 {
                 let mut y = 24.0;
@@ -358,15 +404,29 @@ pub fn render_document_thumbnail_with_store(
                                 if stroke.points.is_empty() {
                                     continue;
                                 }
-                                let (r, g, b, a) = stroke.style.color;
-                                cr.set_source_rgba(r, g, b, a);
+                                let adapted =
+                                    crate::canvas::adapt_ink_color(stroke.style.color, is_dark);
+                                cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
                                 cr.set_line_cap(gtk4::cairo::LineCap::Round);
                                 cr.set_line_join(gtk4::cairo::LineJoin::Round);
-                                for w in stroke.points.windows(2) {
-                                    cr.set_line_width(w[0].width.max(1.5));
-                                    cr.move_to(w[0].x, w[0].y);
-                                    cr.line_to(w[1].x, w[1].y);
-                                    let _ = cr.stroke();
+
+                                if stroke.points.len() == 1 {
+                                    let p = &stroke.points[0];
+                                    cr.arc(
+                                        p.x,
+                                        p.y,
+                                        (p.width / 2.0).max(1.0),
+                                        0.0,
+                                        2.0 * std::f64::consts::PI,
+                                    );
+                                    let _ = cr.fill();
+                                } else {
+                                    for w in stroke.points.windows(2) {
+                                        cr.set_line_width(w[0].width.max(1.5));
+                                        cr.move_to(w[0].x, w[0].y);
+                                        cr.line_to(w[1].x, w[1].y);
+                                        let _ = cr.stroke();
+                                    }
                                 }
                             }
                             uninote_core::ItemKind::Image(img) => {
@@ -2185,8 +2245,18 @@ impl UniNoteDashboard {
             // Mostra documenti corrispondenti dai recenti
             let filtered_recents = store.borrow().filter_by_query(&q);
             for meta in filtered_recents {
+                let mut resolved_meta = meta;
+                let p = Path::new(&resolved_meta.file_path);
+                if p.exists() {
+                    if let Ok(doc_store) = uninote_storage::DocumentStore::open_or_create(p) {
+                        if let Ok(doc) = doc_store.load_document() {
+                            resolved_meta.format = doc.format;
+                            resolved_meta.page_count = doc.pages.len();
+                        }
+                    }
+                }
                 let card = Self::create_card_with_refresh(
-                    &meta,
+                    &resolved_meta,
                     open_cb,
                     store,
                     flow_box,
@@ -2214,7 +2284,7 @@ impl UniNoteDashboard {
                 let path_str = file_path.to_string_lossy().to_string();
                 seen_paths.insert(path_str.clone());
 
-                let meta = store
+                let mut meta = store
                     .borrow()
                     .recent_files
                     .iter()
@@ -2238,6 +2308,14 @@ impl UniNoteDashboard {
                         }
                     });
 
+                // Se il file esiste su disco, sincronizziamo formato reale e page_count
+                if let Ok(doc_store) = uninote_storage::DocumentStore::open_or_create(&file_path) {
+                    if let Ok(doc) = doc_store.load_document() {
+                        meta.format = doc.format;
+                        meta.page_count = doc.pages.len();
+                    }
+                }
+
                 let card = Self::create_card_with_refresh(
                     &meta,
                     open_cb,
@@ -2255,8 +2333,19 @@ impl UniNoteDashboard {
                 for meta in &store.borrow().recent_files {
                     if !seen_paths.contains(&meta.file_path) {
                         seen_paths.insert(meta.file_path.clone());
+                        let mut resolved_meta = meta.clone();
+                        let p = Path::new(&resolved_meta.file_path);
+                        if p.exists() {
+                            if let Ok(doc_store) = uninote_storage::DocumentStore::open_or_create(p)
+                            {
+                                if let Ok(doc) = doc_store.load_document() {
+                                    resolved_meta.format = doc.format;
+                                    resolved_meta.page_count = doc.pages.len();
+                                }
+                            }
+                        }
                         let card = Self::create_card_with_refresh(
-                            meta,
+                            &resolved_meta,
                             open_cb,
                             store,
                             flow_box,

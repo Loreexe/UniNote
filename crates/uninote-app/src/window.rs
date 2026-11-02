@@ -2173,6 +2173,7 @@ impl UniNoteWindow {
         let p3_sm = settings_popover.clone();
         let p4_sm = grid_popover.clone();
         let p5_sm = eraser_popover.clone();
+        let d_sm = dashboard.clone();
         libadwaita::StyleManager::default().connect_dark_notify(move |sm| {
             let is_dark = sm.is_dark();
             if is_dark {
@@ -2190,6 +2191,7 @@ impl UniNoteWindow {
                 p4_sm.add_css_class("light-theme");
                 p5_sm.add_css_class("light-theme");
             }
+            d_sm.refresh();
         });
 
         // Connessione dei segnali della Dashboard

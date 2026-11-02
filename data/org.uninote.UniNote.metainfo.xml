@@ -47,6 +47,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.20" date="2026-11-02">
+      <description>
+        <p>Release v0.4.20: Coerenza cromatica fedele al tema chiaro/scuro per tutte le copertine dei documenti e delle lavagne nella dashboard. Adattamento automatico contrasto tratti ink con luminanza Rec.709 (i tratti scuri diventano nitidi su fogli scuri e viceversa), coordinamento colori sfondi e rigature, rigenerazione istantanea al cambio tema e corretta sincronizzazione formato documento da disco.</p>
+      </description>
+    </release>
     <release version="0.4.19" date="2026-11-02">
       <description>
         <p>Release v0.4.19: Complete overhaul of folder cards and document covers: full-width folder art banner, clean vector folder geometry without ear artifacts, removal of artificial green dot on whiteboard covers with dynamic bounding-box auto-framing, unified 260px card cover height, and instant cover thumbnail regeneration on save/navigation.</p>
