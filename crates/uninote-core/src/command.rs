@@ -63,6 +63,8 @@ pub enum DocCommand {
         page_id: Uuid,
         changes: Vec<(ItemId, u64, u64)>,
     },
+    /// Esecuzione atomica raggruppata di più comandi (es. un intero gesto di cancellazione).
+    Batch { commands: Vec<DocCommand> },
 }
 
 impl DocCommand {
@@ -86,6 +88,7 @@ pub struct CommandHistory {
     pub saved_revision: u64,
     pub max_depth: usize,
     next_item_id: u64,
+    active_batch: Option<Vec<DocCommand>>,
 }
 
 impl Default for CommandHistory {
@@ -107,6 +110,7 @@ impl CommandHistory {
             saved_revision: 0,
             max_depth,
             next_item_id: next_id.max(1),
+            active_batch: None,
         }
     }
 
@@ -140,20 +144,62 @@ impl CommandHistory {
         self.saved_revision = revision;
     }
 
+    /// Ritorna true se un raggruppamento atomico di comandi è attualmente attivo.
+    pub fn is_batch_active(&self) -> bool {
+        self.active_batch.is_some()
+    }
+
+    /// Inizia un nuovo blocco di comandi raggruppati che verranno unificati in un unico step di Undo.
+    pub fn begin_batch(&mut self) {
+        if self.active_batch.is_none() {
+            self.active_batch = Some(Vec::new());
+        }
+    }
+
+    /// Conclude il blocco di comandi raggruppati e ne inserisce l'equivalente atomico nello stack di Undo.
+    pub fn end_batch(&mut self) {
+        if let Some(commands) = self.active_batch.take() {
+            if commands.is_empty() {
+                return;
+            }
+            let batch_cmd = if commands.len() == 1 {
+                commands.into_iter().next().unwrap()
+            } else {
+                DocCommand::Batch { commands }
+            };
+            self.undo_stack.push(batch_cmd);
+            self.redo_stack.clear();
+            self.current_revision += 1;
+
+            if self.undo_stack.len() > self.max_depth {
+                self.undo_stack.remove(0);
+            }
+        }
+    }
+
     /// Esegue un comando sul documento, aggiornando la cronologia e la revisione.
+    /// Se un batch è attivo, il comando viene applicato immediatamente al documento live
+    /// e accumulato nel batch in attesa di `end_batch()`.
     pub fn execute(&mut self, cmd: DocCommand, doc: &mut Document) {
         self.apply_command(&cmd, doc);
-        self.undo_stack.push(cmd);
-        self.redo_stack.clear();
-        self.current_revision += 1;
+        if let Some(ref mut batch) = self.active_batch {
+            batch.push(cmd);
+        } else {
+            self.undo_stack.push(cmd);
+            self.redo_stack.clear();
+            self.current_revision += 1;
 
-        if self.undo_stack.len() > self.max_depth {
-            self.undo_stack.remove(0);
+            if self.undo_stack.len() > self.max_depth {
+                self.undo_stack.remove(0);
+            }
         }
     }
 
     /// Annulla l'ultimo comando eseguito (Undo).
     pub fn undo(&mut self, doc: &mut Document) -> bool {
+        if self.active_batch.is_some() {
+            self.end_batch();
+        }
         if let Some(cmd) = self.undo_stack.pop() {
             self.revert_command(&cmd, doc);
             self.redo_stack.push(cmd);
@@ -166,6 +212,9 @@ impl CommandHistory {
 
     /// Ripristina l'ultimo comando annullato (Redo).
     pub fn redo(&mut self, doc: &mut Document) -> bool {
+        if self.active_batch.is_some() {
+            self.end_batch();
+        }
         if let Some(cmd) = self.redo_stack.pop() {
             self.apply_command(&cmd, doc);
             self.undo_stack.push(cmd);
@@ -378,6 +427,11 @@ impl CommandHistory {
                     page.rebuild_spatial_index();
                 }
             }
+            DocCommand::Batch { commands } => {
+                for c in commands {
+                    self.apply_command(c, doc);
+                }
+            }
         }
     }
 
@@ -588,6 +642,11 @@ impl CommandHistory {
                     }
                     page.items.sort_by_key(|it| it.z_index);
                     page.rebuild_spatial_index();
+                }
+            }
+            DocCommand::Batch { commands } => {
+                for c in commands.iter().rev() {
+                    self.revert_command(c, doc);
                 }
             }
         }

@@ -1003,3 +1003,86 @@ fn test_intersecting_strokes_drag_erasure() {
         }
     }
 }
+
+#[test]
+fn test_eraser_drag_batch_undo_single_ctrl_z_restores_all() {
+    let mut st = CanvasState::new();
+    st.eraser_mode = EraserMode::Segment;
+
+    // Creiamo due tratti: uno orizzontale e uno verticale
+    let mut s1 = Stroke::new(1, StrokeStyle::default(), PipelineMode::CatmullRomSpline);
+    for x in (50..=150).step_by(2) {
+        s1.points.push(StrokePoint {
+            x: x as f64,
+            y: 100.0,
+            pressure: 0.5,
+            width: 2.0,
+            timestamp_ns: x as u64 * 1000,
+        });
+    }
+
+    let mut s2 = Stroke::new(2, StrokeStyle::default(), PipelineMode::CatmullRomSpline);
+    for y in (50..=150).step_by(2) {
+        s2.points.push(StrokePoint {
+            x: 100.0,
+            y: y as f64,
+            pressure: 0.5,
+            width: 2.0,
+            timestamp_ns: y as u64 * 1000,
+        });
+    }
+
+    let item1 = Item {
+        id: 1,
+        z_index: 0,
+        kind: ItemKind::Stroke(s1),
+    };
+    let item2 = Item {
+        id: 2,
+        z_index: 1,
+        kind: ItemKind::Stroke(s2),
+    };
+    st.document.pages[0].items.push(item1.clone());
+    st.document.pages[0].spatial_index.insert(&item1);
+    st.document.pages[0].items.push(item2.clone());
+    st.document.pages[0].spatial_index.insert(&item2);
+
+    assert_eq!(st.document.pages[0].items.len(), 2);
+
+    // Simula inizio del drag della gomma:
+    st.history.begin_batch();
+    assert!(st.history.is_batch_active());
+
+    // Durante il trascinamento avvengono N tagli/cancellazioni
+    for pos_x in [95.0, 100.0, 105.0, 110.0, 115.0] {
+        NoteCanvas::erase_strokes_at(&mut st, (pos_x, 100.0), 12.0);
+    }
+
+    // A schermo i tratti sono stati tagliati in frammenti
+    assert!(st.document.pages[0].items.len() > 2);
+
+    // Simula rilascio (drag_end):
+    st.history.end_batch();
+    assert!(!st.history.is_batch_active());
+
+    // Premiamo Ctrl+Z UNA SOLA VOLTA:
+    let undone = st.undo();
+    assert!(undone);
+
+    // Tutti i tratti originali devono essere stati ripristinati integralmente
+    assert_eq!(st.document.pages[0].items.len(), 2);
+    let ids: Vec<u64> = st.document.pages[0].items.iter().map(|it| it.id).collect();
+    assert_eq!(ids, vec![1, 2]);
+
+    // Verifichiamo che i punti dei tratti ripristinati siano intatti
+    if let ItemKind::Stroke(ref restored_s1) = st.document.pages[0].items[0].kind {
+        assert_eq!(restored_s1.points.len(), 51);
+    } else {
+        panic!("item 1 non è uno stroke");
+    }
+
+    // Anche il redo ri-applica l'intero drag in un colpo solo
+    let redone = st.redo();
+    assert!(redone);
+    assert!(st.document.pages[0].items.len() > 2);
+}

@@ -394,3 +394,101 @@ fn test_heterogeneous_page_dimensions_page_rect_and_y_lookup() {
     assert_eq!(doc.find_page_index_at_y(expected_p2_top + 20.0), Some(2));
     assert_eq!(doc.find_page_index_at_y(expected_p2_top + 99999.0), Some(2));
 }
+
+#[test]
+fn test_command_history_batch_atomic_undo_redo() {
+    let mut doc = Document::new_empty("Batch Test");
+    let page_id = doc.pages[0].id;
+    let mut history = CommandHistory::new(50);
+
+    fn dummy_stroke(id: u64, x: f64, y: f64) -> Stroke {
+        Stroke {
+            id,
+            points: vec![
+                StrokePoint {
+                    x,
+                    y,
+                    pressure: 0.5,
+                    width: 2.0,
+                    timestamp_ns: 1000,
+                },
+                StrokePoint {
+                    x: x + 10.0,
+                    y: y + 10.0,
+                    pressure: 0.5,
+                    width: 2.0,
+                    timestamp_ns: 2000,
+                },
+            ],
+            style: StrokeStyle::default(),
+            raw_samples: Vec::new(),
+            is_dot: false,
+            mode: PipelineMode::CatmullRomSpline,
+            cached_bbox: None,
+            cached_bezier: Vec::new(),
+        }
+    }
+
+    history.execute(
+        DocCommand::AddStroke {
+            page_id,
+            stroke: dummy_stroke(1, 10.0, 10.0),
+        },
+        &mut doc,
+    );
+    history.execute(
+        DocCommand::AddStroke {
+            page_id,
+            stroke: dummy_stroke(2, 30.0, 30.0),
+        },
+        &mut doc,
+    );
+    history.execute(
+        DocCommand::AddStroke {
+            page_id,
+            stroke: dummy_stroke(3, 50.0, 50.0),
+        },
+        &mut doc,
+    );
+    assert_eq!(doc.pages[0].items.len(), 3);
+
+    // Iniziamo un batch (es. simulazione cancellazione con trascinamento gomma che rimuove due tratti in successione)
+    history.begin_batch();
+    assert!(history.is_batch_active());
+
+    let item0 = doc.pages[0].items[0].clone();
+    history.execute(
+        DocCommand::EraseItems {
+            page_id,
+            erased_items: vec![item0],
+        },
+        &mut doc,
+    );
+    // Verifichiamo che l'effetto a schermo sia immediato anche prima di end_batch
+    assert_eq!(doc.pages[0].items.len(), 2);
+
+    let item1 = doc.pages[0].items[0].clone();
+    history.execute(
+        DocCommand::EraseItems {
+            page_id,
+            erased_items: vec![item1],
+        },
+        &mut doc,
+    );
+    assert_eq!(doc.pages[0].items.len(), 1);
+
+    // Concludiamo il batch
+    history.end_batch();
+    assert!(!history.is_batch_active());
+    assert_eq!(doc.pages[0].items.len(), 1);
+
+    // Un SINGOLO undo deve ripristinare ENTRAMBI i tratti cancellati durante il batch
+    let undone = history.undo(&mut doc);
+    assert!(undone);
+    assert_eq!(doc.pages[0].items.len(), 3);
+
+    // Un SINGOLO redo deve ricancellare ENTRAMBI i tratti
+    let redone = history.redo(&mut doc);
+    assert!(redone);
+    assert_eq!(doc.pages[0].items.len(), 1);
+}

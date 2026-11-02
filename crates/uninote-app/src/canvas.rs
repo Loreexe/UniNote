@@ -2716,6 +2716,7 @@ impl NoteCanvas {
                     let stroke = prev_builder.finish();
                     Self::commit_finished_stroke(&mut st, stroke);
                 }
+                st.history.begin_batch();
                 st.eraser_pointer = Some((x, y));
                 st.last_eraser_doc_pos = Some((doc_x, doc_y));
                 let radius = st.eraser_radius / st.viewport.zoom;
@@ -2824,6 +2825,9 @@ impl NoteCanvas {
                 if let Some(prev_builder) = st.active_builder.take() {
                     let stroke = prev_builder.finish();
                     Self::commit_finished_stroke(st, stroke);
+                }
+                if !st.history.is_batch_active() {
+                    st.history.begin_batch();
                 }
                 st.eraser_pointer = Some((x, y));
                 let radius = st.eraser_radius / st.viewport.zoom;
@@ -2983,6 +2987,10 @@ impl NoteCanvas {
             st.last_stylus_time = Some(Instant::now());
             st.active_device = None;
             st.last_eraser_doc_pos = None;
+            if st.history.is_batch_active() {
+                st.history.end_batch();
+                st.persist_changes();
+            }
             if st.active_tool != ActiveTool::Eraser && st.eraser_pointer.is_some() {
                 st.eraser_pointer = None;
             }
@@ -3037,6 +3045,10 @@ impl NoteCanvas {
             let mut st = state.borrow_mut();
             st.last_stylus_time = Some(Instant::now());
             st.active_device = None;
+            if st.history.is_batch_active() {
+                st.history.end_batch();
+                st.persist_changes();
+            }
             st.palm_engine.on_pen_proximity(true, now_ns);
 
             let closed_stroke = if let Some(builder) = st.active_builder.take() {
@@ -3185,6 +3197,7 @@ impl NoteCanvas {
                 }
 
                 if st.active_tool == ActiveTool::Eraser {
+                    st.history.begin_batch();
                     st.eraser_pointer = Some((start_x, start_y));
                     st.last_eraser_doc_pos = Some((doc_x, doc_y));
                     let radius = st.eraser_radius / st.viewport.zoom;
@@ -3283,6 +3296,9 @@ impl NoteCanvas {
                 }
 
                 if st.active_tool == ActiveTool::Eraser {
+                    if !st.history.is_batch_active() {
+                        st.history.begin_batch();
+                    }
                     st.eraser_pointer = Some((cur_screen_x, cur_screen_y));
                     let radius = st.eraser_radius / st.viewport.zoom;
                     if let Some((prev_x, prev_y)) = st.last_eraser_doc_pos {
@@ -3370,6 +3386,10 @@ impl NoteCanvas {
                     st.last_eraser_doc_pos = None;
                     let radius = st.eraser_radius / st.viewport.zoom;
                     Self::erase_strokes_at(&mut st, (doc_x, doc_y), radius);
+                    if st.history.is_batch_active() {
+                        st.history.end_batch();
+                        st.persist_changes();
+                    }
                     drop(st);
                     area.queue_draw();
                     return;
@@ -3717,7 +3737,9 @@ impl NoteCanvas {
                             },
                             &mut st.document,
                         );
-                        st.persist_changes();
+                        if !st.history.is_batch_active() {
+                            st.persist_changes();
+                        }
                     }
                 }
                 EraserMode::Segment => {
@@ -3799,7 +3821,9 @@ impl NoteCanvas {
                                 &mut st.document,
                             );
                         }
-                        st.persist_changes();
+                        if !st.history.is_batch_active() {
+                            st.persist_changes();
+                        }
                     }
                 }
             }
