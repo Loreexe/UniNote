@@ -523,6 +523,27 @@ impl UniNoteWindow {
             tool_buttons.borrow_mut().push(btn);
         }
 
+        // Sincronizzazione automatica dell'isola degli strumenti quando lo strumento attivo cambia nel canvas
+        let all_tools_sync = tool_buttons.clone();
+        canvas.connect_tool_changed(move |active_tool| {
+            let target_idx = match active_tool {
+                ActiveTool::Pen => 0,
+                ActiveTool::Eraser => 1,
+                ActiveTool::Highlighter => 2,
+                ActiveTool::Select => 3,
+                ActiveTool::Text => 4,
+                ActiveTool::Line => 5,
+                ActiveTool::Shapes => 6,
+            };
+            for (idx, b) in all_tools_sync.borrow().iter().enumerate() {
+                if idx == target_idx {
+                    b.add_css_class("active");
+                } else {
+                    b.remove_css_class("active");
+                }
+            }
+        });
+
         let eraser_btn = eraser_btn_opt.expect("eraser button must exist");
         eraser_popover.set_parent(&eraser_btn);
 

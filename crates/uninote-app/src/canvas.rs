@@ -446,6 +446,7 @@ pub fn adapt_ink_color(color: (f64, f64, f64, f64), is_dark_sheet: bool) -> (f64
 }
 
 pub type ZoomCallback = Box<dyn Fn(f64)>;
+pub type ToolCallback = Box<dyn Fn(ActiveTool)>;
 
 #[derive(Clone)]
 pub struct NoteCanvas {
@@ -454,6 +455,7 @@ pub struct NoteCanvas {
     hud: Rc<DiagnosticHud>,
     app_start: Instant,
     zoom_callbacks: Rc<RefCell<Vec<ZoomCallback>>>,
+    tool_callbacks: Rc<RefCell<Vec<ToolCallback>>>,
 }
 
 impl NoteCanvas {
@@ -474,6 +476,7 @@ impl NoteCanvas {
         let state = Rc::new(RefCell::new(CanvasState::new()));
         let app_start = Instant::now();
         let zoom_callbacks = Rc::new(RefCell::new(Vec::new()));
+        let tool_callbacks = Rc::new(RefCell::new(Vec::new()));
 
         let canvas = Self {
             area,
@@ -481,6 +484,7 @@ impl NoteCanvas {
             hud,
             app_start,
             zoom_callbacks,
+            tool_callbacks,
         };
         canvas.setup_drawing();
         canvas.setup_capture_controller();
@@ -499,6 +503,16 @@ impl NoteCanvas {
     fn notify_zoom_changed(&self, zoom: f64) {
         for cb in self.zoom_callbacks.borrow().iter() {
             cb(zoom);
+        }
+    }
+
+    pub fn connect_tool_changed<F: Fn(ActiveTool) + 'static>(&self, f: F) {
+        self.tool_callbacks.borrow_mut().push(Box::new(f));
+    }
+
+    pub fn notify_tool_changed(&self, tool: ActiveTool) {
+        for cb in self.tool_callbacks.borrow().iter() {
+            cb(tool);
         }
     }
 
@@ -534,7 +548,9 @@ impl NoteCanvas {
         self.hud
             .update_metrics(|m| m.current_tool = tool_name.to_string());
         self.hud.update_view();
+        drop(st);
         self.area.queue_draw();
+        self.notify_tool_changed(tool);
     }
 
     pub fn eraser_mode(&self) -> EraserMode {
@@ -1158,6 +1174,7 @@ impl NoteCanvas {
             .update_metrics(|m| m.current_tool = "Selezione (Lazo / Rettangolo)".into());
         self.hud.update_view();
         self.area.queue_draw();
+        self.notify_tool_changed(ActiveTool::Select);
 
         Ok(new_item_id)
     }
@@ -1374,6 +1391,7 @@ impl NoteCanvas {
             .update_metrics(|m| m.current_tool = "Selezione (Lazo / Rettangolo)".into());
         self.hud.update_view();
         self.area.queue_draw();
+        self.notify_tool_changed(ActiveTool::Select);
         true
     }
 
@@ -3101,6 +3119,9 @@ impl NoteCanvas {
                     st.mouse_pan_start = None;
                     drop(st);
                     area.queue_draw();
+                    if hit_image {
+                        canvas_drag_clone.notify_tool_changed(ActiveTool::Select);
+                    }
                     canvas_drag_clone.show_selection_context_menu(start_x, start_y);
                     return;
                 }
@@ -3386,6 +3407,9 @@ impl NoteCanvas {
                 st.mouse_pan_start = None;
                 drop(st);
                 area.queue_draw();
+                if hit_image {
+                    canvas_clone.notify_tool_changed(ActiveTool::Select);
+                }
                 canvas_clone.show_selection_context_menu(x, y);
             }
         });

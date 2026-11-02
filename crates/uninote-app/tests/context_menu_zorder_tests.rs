@@ -353,3 +353,39 @@ fn test_zorder_mixed_selection_strokes_and_images() {
         }
     });
 }
+
+#[test]
+fn test_tool_changed_callback_notifies_select_on_image_insertion() {
+    run_on_gtk_thread(|| {
+        let hud = Rc::new(DiagnosticHud::new());
+        let canvas = NoteCanvas::new(hud);
+
+        let received_tools = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let recv_clone = received_tools.clone();
+        canvas.connect_tool_changed(move |tool| {
+            recv_clone.borrow_mut().push(tool);
+        });
+
+        // 1. Inseriamo un'immagine valida (1x1 PNG trasparente base)
+        let minimal_png: [u8; 67] = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // Magic
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, // 8-bit RGBA
+            0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, // IDAT
+            0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D,
+            0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, // IEND
+            0x42, 0x60, 0x82,
+        ];
+
+        let insert_res = canvas.insert_image_bytes(&minimal_png, None);
+        assert!(insert_res.is_ok(), "L'inserimento deve avere successo");
+
+        // 2. Verifichiamo che il callback sia stato invocato con ActiveTool::Select
+        let events = received_tools.borrow();
+        assert!(
+            events.contains(&uninote_app::canvas::ActiveTool::Select),
+            "Il callback del tool deve aver ricevuto ActiveTool::Select dopo l'inserimento dell'immagine"
+        );
+    });
+}
