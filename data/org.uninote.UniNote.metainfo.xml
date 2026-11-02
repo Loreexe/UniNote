@@ -47,6 +47,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.14" date="2026-11-02">
+      <description>
+        <p>Release v0.4.14: Sub-Phase 4D Milestones M3 &amp; M4 — Interactive image selection, direct hit testing in z-index order, 8-handle perimeter scaling with opposite pivot preservation, 120Hz smooth translation, atomic delete with full undo/redo, dashboard document thumbnail rendering with image support, and high-resolution vector PDF export with asset rasterization.</p>
+      </description>
+    </release>
     <release version="0.4.12" date="2026-11-02">
       <description>
         <p>Release v0.4.12: Sub-Phase 4D Milestone M2 — System clipboard image pasting via Ctrl+V and paste_image supporting PNG, JPEG, WebP, BMP, TIFF and GDK textures, smart active viewport centering for Notebook and Whiteboard, SQLite hash-addressed asset deduplication, in-memory ImageCacheManager and automatic item selection upon insertion.</p>
