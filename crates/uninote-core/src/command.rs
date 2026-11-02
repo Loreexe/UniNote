@@ -58,6 +58,11 @@ pub enum DocCommand {
         original_stroke: Item,
         new_strokes: Vec<Item>,
     },
+    /// Riordino atomico dello z-index di uno o più elementi con storico per Undo / Redo.
+    ReorderItemsZIndex {
+        page_id: Uuid,
+        changes: Vec<(ItemId, u64, u64)>,
+    },
 }
 
 impl DocCommand {
@@ -355,6 +360,24 @@ impl CommandHistory {
                     }
                 }
             }
+            DocCommand::ReorderItemsZIndex { page_id, changes } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    let change_map: std::collections::HashMap<ItemId, u64> = changes
+                        .iter()
+                        .map(|&(id, _old_z, new_z)| (id, new_z))
+                        .collect();
+                    for item in &mut page.items {
+                        if let Some(&new_z) = change_map.get(&item.id) {
+                            item.z_index = new_z;
+                            if let ItemKind::Image(ref mut img) = item.kind {
+                                img.z_index = new_z as i64;
+                            }
+                        }
+                    }
+                    page.items.sort_by_key(|it| it.z_index);
+                    page.rebuild_spatial_index();
+                }
+            }
         }
     }
 
@@ -547,6 +570,24 @@ impl CommandHistory {
 
                     // 4. Ripristina original_stroke nell'indice spaziale
                     page.spatial_index.insert(original_stroke);
+                }
+            }
+            DocCommand::ReorderItemsZIndex { page_id, changes } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    let change_map: std::collections::HashMap<ItemId, u64> = changes
+                        .iter()
+                        .map(|&(id, old_z, _new_z)| (id, old_z))
+                        .collect();
+                    for item in &mut page.items {
+                        if let Some(&old_z) = change_map.get(&item.id) {
+                            item.z_index = old_z;
+                            if let ItemKind::Image(ref mut img) = item.kind {
+                                img.z_index = old_z as i64;
+                            }
+                        }
+                    }
+                    page.items.sort_by_key(|it| it.z_index);
+                    page.rebuild_spatial_index();
                 }
             }
         }

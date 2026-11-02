@@ -11,6 +11,7 @@ pub enum IconKind {
     Undo,
     Redo,
     ChevronDown,
+    ChevronUp,
     PenTool,
     Eraser,
     Highlighter,
@@ -80,6 +81,7 @@ pub fn create_icon(kind: IconKind, size: i32, custom_color: Option<gdk::RGBA>) -
             IconKind::Undo => draw_undo(cr),
             IconKind::Redo => draw_redo(cr),
             IconKind::ChevronDown => draw_chevron_down(cr),
+            IconKind::ChevronUp => draw_chevron_up(cr),
             IconKind::PenTool => draw_pen_tool(cr),
             IconKind::Eraser => draw_eraser(cr),
             IconKind::Highlighter => draw_highlighter(cr),
@@ -145,6 +147,13 @@ fn draw_chevron_down(cr: &cairo::Context) {
     cr.move_to(6.0, 9.0);
     cr.line_to(12.0, 15.0);
     cr.line_to(18.0, 9.0);
+    let _ = cr.stroke();
+}
+
+fn draw_chevron_up(cr: &cairo::Context) {
+    cr.move_to(6.0, 15.0);
+    cr.line_to(12.0, 9.0);
+    cr.line_to(18.0, 15.0);
     let _ = cr.stroke();
 }
 

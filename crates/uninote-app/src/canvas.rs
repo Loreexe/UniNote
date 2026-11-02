@@ -1,4 +1,5 @@
 use crate::hud::DiagnosticHud;
+use crate::icons::{create_icon, IconKind};
 use crate::selection::{
     compute_scale_factors, HandleId, SelectionDragKind, SelectionHitTestResult,
 };
@@ -487,6 +488,7 @@ impl NoteCanvas {
         canvas.setup_mouse_controller();
         canvas.setup_motion_controller();
         canvas.setup_scroll_and_zoom_controllers();
+        canvas.setup_touch_long_press_controller();
         canvas
     }
 
@@ -599,6 +601,275 @@ impl NoteCanvas {
             self.area.queue_draw();
         }
         deleted
+    }
+
+    /// Sposta gli elementi selezionati in cima a tutti gli altri elementi della pagina ("Sposta sopra").
+    pub fn bring_to_front_selected(&self) -> bool {
+        let mut st_guard = self.state.borrow_mut();
+        let st = &mut *st_guard;
+        if !st.selection.has_selection() {
+            return false;
+        }
+        let page_idx = match st.selection.page_index {
+            Some(idx) => idx,
+            None => return false,
+        };
+
+        let sel_set: std::collections::HashSet<ItemId> =
+            st.selection.selected_ids.iter().copied().collect();
+
+        let page = match st.document.pages.get_mut(page_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let mut non_selected: Vec<&Item> = Vec::new();
+        let mut selected: Vec<&Item> = Vec::new();
+        for item in &page.items {
+            if sel_set.contains(&item.id) {
+                selected.push(item);
+            } else {
+                non_selected.push(item);
+            }
+        }
+
+        if selected.is_empty() || non_selected.is_empty() {
+            return false;
+        }
+
+        let mut changes: Vec<(ItemId, u64, u64)> = Vec::new();
+        let mut next_z: u64 = 1;
+        for it in &non_selected {
+            if it.z_index != next_z {
+                changes.push((it.id, it.z_index, next_z));
+            }
+            next_z += 1;
+        }
+        for it in &selected {
+            if it.z_index != next_z {
+                changes.push((it.id, it.z_index, next_z));
+            }
+            next_z += 1;
+        }
+
+        if changes.is_empty() {
+            return false;
+        }
+
+        let page_id = page.id;
+        let cmd = DocCommand::ReorderItemsZIndex { page_id, changes };
+        st.history.execute(cmd, &mut st.document);
+        st.persist_changes();
+        drop(st_guard);
+        self.area.queue_draw();
+        true
+    }
+
+    /// Sposta gli elementi selezionati sotto a tutti gli altri elementi della pagina ("Sposta sotto").
+    pub fn send_to_back_selected(&self) -> bool {
+        let mut st_guard = self.state.borrow_mut();
+        let st = &mut *st_guard;
+        if !st.selection.has_selection() {
+            return false;
+        }
+        let page_idx = match st.selection.page_index {
+            Some(idx) => idx,
+            None => return false,
+        };
+
+        let sel_set: std::collections::HashSet<ItemId> =
+            st.selection.selected_ids.iter().copied().collect();
+
+        let page = match st.document.pages.get_mut(page_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let mut non_selected: Vec<&Item> = Vec::new();
+        let mut selected: Vec<&Item> = Vec::new();
+        for item in &page.items {
+            if sel_set.contains(&item.id) {
+                selected.push(item);
+            } else {
+                non_selected.push(item);
+            }
+        }
+
+        if selected.is_empty() || non_selected.is_empty() {
+            return false;
+        }
+
+        let mut changes: Vec<(ItemId, u64, u64)> = Vec::new();
+        let mut next_z: u64 = 1;
+        for it in &selected {
+            if it.z_index != next_z {
+                changes.push((it.id, it.z_index, next_z));
+            }
+            next_z += 1;
+        }
+        for it in &non_selected {
+            if it.z_index != next_z {
+                changes.push((it.id, it.z_index, next_z));
+            }
+            next_z += 1;
+        }
+
+        if changes.is_empty() {
+            return false;
+        }
+
+        let page_id = page.id;
+        let cmd = DocCommand::ReorderItemsZIndex { page_id, changes };
+        st.history.execute(cmd, &mut st.document);
+        st.persist_changes();
+        drop(st_guard);
+        self.area.queue_draw();
+        true
+    }
+
+    /// Duplica gli elementi selezionati creandone una copia con offset e auto-selezionandoli ("Duplica").
+    pub fn duplicate_selected(&self) -> bool {
+        if !self.copy_selected() {
+            return false;
+        }
+        self.paste_from_clipboard()
+    }
+
+    /// Mostra il menu contestuale della selezione alle coordinate specificate.
+    pub fn show_selection_context_menu(&self, screen_x: f64, screen_y: f64) {
+        {
+            let st = self.state.borrow();
+            if !st.selection.has_selection() {
+                return;
+            }
+        }
+
+        let popover = gtk4::Popover::builder()
+            .autohide(true)
+            .has_arrow(true)
+            .position(gtk4::PositionType::Bottom)
+            .css_classes(["dms-popover", "dms-context-popover"])
+            .build();
+        popover.set_parent(&self.area);
+        popover.set_pointing_to(Some(&gdk::Rectangle::new(
+            screen_x as i32,
+            screen_y as i32,
+            1,
+            1,
+        )));
+
+        let menu_box = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(2)
+            .margin_start(4)
+            .margin_end(4)
+            .margin_top(4)
+            .margin_bottom(4)
+            .build();
+
+        // 1. Sposta sopra
+        let item_up = Self::create_context_menu_button("Sposta sopra", IconKind::ChevronUp, false);
+        let pop_up = popover.clone();
+        let canvas_up = self.clone();
+        item_up.connect_clicked(move |_| {
+            pop_up.popdown();
+            canvas_up.bring_to_front_selected();
+        });
+        menu_box.append(&item_up);
+
+        // 2. Sposta sotto
+        let item_down =
+            Self::create_context_menu_button("Sposta sotto", IconKind::ChevronDown, false);
+        let pop_down = popover.clone();
+        let canvas_down = self.clone();
+        item_down.connect_clicked(move |_| {
+            pop_down.popdown();
+            canvas_down.send_to_back_selected();
+        });
+        menu_box.append(&item_down);
+
+        // Separatore
+        let sep1 = gtk4::Separator::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .css_classes(["dms-menu-separator"])
+            .build();
+        menu_box.append(&sep1);
+
+        // 3. Copia
+        let item_copy = Self::create_context_menu_button("Copia", IconKind::Copy, false);
+        let pop_copy = popover.clone();
+        let canvas_copy = self.clone();
+        item_copy.connect_clicked(move |_| {
+            pop_copy.popdown();
+            canvas_copy.copy_selected();
+        });
+        menu_box.append(&item_copy);
+
+        // 4. Duplica
+        let item_dup = Self::create_context_menu_button("Duplica", IconKind::Copy, false);
+        let pop_dup = popover.clone();
+        let canvas_dup = self.clone();
+        item_dup.connect_clicked(move |_| {
+            pop_dup.popdown();
+            canvas_dup.duplicate_selected();
+        });
+        menu_box.append(&item_dup);
+
+        // Separatore
+        let sep2 = gtk4::Separator::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .css_classes(["dms-menu-separator"])
+            .build();
+        menu_box.append(&sep2);
+
+        // 5. Elimina
+        let item_del = Self::create_context_menu_button("Elimina", IconKind::Trash, true);
+        let pop_del = popover.clone();
+        let canvas_del = self.clone();
+        item_del.connect_clicked(move |_| {
+            pop_del.popdown();
+            canvas_del.delete_selected();
+        });
+        menu_box.append(&item_del);
+
+        popover.set_child(Some(&menu_box));
+
+        let area_cleanup = self.area.clone();
+        popover.connect_closed(move |p| {
+            p.unparent();
+            area_cleanup.queue_draw();
+        });
+
+        popover.popup();
+    }
+
+    fn create_context_menu_button(
+        label_text: &str,
+        icon: IconKind,
+        is_destructive: bool,
+    ) -> gtk4::Button {
+        let hbox = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Horizontal)
+            .spacing(8)
+            .build();
+        hbox.append(&create_icon(icon, 16, None));
+        let lbl = gtk4::Label::builder()
+            .label(label_text)
+            .xalign(0.0)
+            .hexpand(true)
+            .build();
+        hbox.append(&lbl);
+
+        let mut classes = vec!["dms-menu-item-btn"];
+        if is_destructive {
+            classes.push("destructive-action");
+        }
+
+        gtk4::Button::builder()
+            .child(&hbox)
+            .css_classes(classes)
+            .halign(gtk4::Align::Fill)
+            .build()
     }
 
     /// Copia gli elementi selezionati negli appunti (in-memory e GdkClipboard di sistema).
@@ -2748,11 +3019,13 @@ impl NoteCanvas {
         let area_clone = self.area.clone();
         let hud_clone = self.hud.clone();
         let app_start = self.app_start;
+        let canvas_clone = self.clone();
 
         // Drag Begin
         let state = state_clone.clone();
         let area = area_clone.clone();
         let hud = hud_clone.clone();
+        let canvas_drag_clone = canvas_clone.clone();
         drag.connect_drag_begin(move |gesture, start_x, start_y| {
             // Ignora categoricamente tocchi dal touchscreen (la mano/palmo non deve mai disegnare tratti)
             if gesture.current_sequence().is_some() {
@@ -2778,7 +3051,65 @@ impl NoteCanvas {
                 }
             }
 
-            if current_btn == gdk::BUTTON_SECONDARY || current_btn == gdk::BUTTON_MIDDLE {
+            if current_btn == gdk::BUTTON_SECONDARY {
+                let (doc_x, doc_y) = st.viewport.screen_to_document((start_x, start_y));
+
+                // 1. Clic destro all'interno della selezione corrente
+                let hit_selection = if st.selection.has_selection() {
+                    if let Some(bbox) = st.selection.bbox {
+                        doc_x >= bbox.min_x - 8.0
+                            && doc_x <= bbox.max_x + 8.0
+                            && doc_y >= bbox.min_y - 8.0
+                            && doc_y <= bbox.max_y + 8.0
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                // 2. Clic destro sopra un'immagine (se non era già selezionata)
+                let mut hit_image = false;
+                if !hit_selection {
+                    let page_idx = match st.document.format {
+                        DocumentFormat::Whiteboard => 0,
+                        DocumentFormat::Notebook => {
+                            Viewport::find_page_index_at_y(doc_y, st.document.pages.len())
+                        }
+                    };
+                    let mut found_image = None;
+                    if let Some(page) = st.document.pages.get(page_idx) {
+                        for it in page.items.iter().rev() {
+                            if let ItemKind::Image(ref img) = it.kind {
+                                if img.bbox.contains_point(doc_x, doc_y) {
+                                    found_image = Some((it.id, it.bounding_box()));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if let Some((it_id, it_bbox)) = found_image {
+                        st.selection.page_index = Some(page_idx);
+                        st.selection.selected_ids = vec![it_id];
+                        st.selection.bbox = it_bbox;
+                        st.active_tool = ActiveTool::Select;
+                        hit_image = true;
+                    }
+                }
+
+                if hit_selection || hit_image {
+                    st.mouse_pan_start = None;
+                    drop(st);
+                    area.queue_draw();
+                    canvas_drag_clone.show_selection_context_menu(start_x, start_y);
+                    return;
+                }
+
+                st.mouse_pan_start = Some((start_x, start_y));
+                return;
+            }
+
+            if current_btn == gdk::BUTTON_MIDDLE {
                 st.mouse_pan_start = Some((start_x, start_y));
                 return;
             }
@@ -2997,6 +3328,69 @@ impl NoteCanvas {
         });
 
         self.area.add_controller(drag);
+    }
+
+    fn setup_touch_long_press_controller(&self) {
+        let long_press = gtk4::GestureLongPress::new();
+        long_press.set_touch_only(false);
+        let state = self.state.clone();
+        let area = self.area.clone();
+        let canvas_clone = self.clone();
+
+        long_press.connect_pressed(move |_gesture, x, y| {
+            let mut st = state.borrow_mut();
+            let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
+
+            let hit_selection = if st.selection.has_selection() {
+                if let Some(bbox) = st.selection.bbox {
+                    doc_x >= bbox.min_x - 8.0
+                        && doc_x <= bbox.max_x + 8.0
+                        && doc_y >= bbox.min_y - 8.0
+                        && doc_y <= bbox.max_y + 8.0
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            let mut hit_image = false;
+            if !hit_selection {
+                let page_idx = match st.document.format {
+                    DocumentFormat::Whiteboard => 0,
+                    DocumentFormat::Notebook => {
+                        Viewport::find_page_index_at_y(doc_y, st.document.pages.len())
+                    }
+                };
+                let mut found_image = None;
+                if let Some(page) = st.document.pages.get(page_idx) {
+                    for it in page.items.iter().rev() {
+                        if let ItemKind::Image(ref img) = it.kind {
+                            if img.bbox.contains_point(doc_x, doc_y) {
+                                found_image = Some((it.id, it.bounding_box()));
+                                break;
+                            }
+                        }
+                    }
+                }
+                if let Some((it_id, it_bbox)) = found_image {
+                    st.selection.page_index = Some(page_idx);
+                    st.selection.selected_ids = vec![it_id];
+                    st.selection.bbox = it_bbox;
+                    st.active_tool = ActiveTool::Select;
+                    hit_image = true;
+                }
+            }
+
+            if hit_selection || hit_image {
+                st.mouse_pan_start = None;
+                drop(st);
+                area.queue_draw();
+                canvas_clone.show_selection_context_menu(x, y);
+            }
+        });
+
+        self.area.add_controller(long_press);
     }
 
     fn setup_motion_controller(&self) {
