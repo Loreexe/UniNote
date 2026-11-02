@@ -244,3 +244,184 @@ fn test_direct_image_click_handle_resize() {
         panic!("Item 0 must be Image");
     }
 }
+
+#[test]
+fn test_image_selection_by_intersecting_lasso() {
+    let mut page = Page::new(0, PageBackground::Blank);
+    let page_id = page.id;
+    let img_item = create_sample_image(page_id, 88, Rect::new(100.0, 100.0, 200.0, 200.0));
+    page.items.push(img_item);
+    page.rebuild_spatial_index();
+
+    // Lazo che attraversa solo il lato sinistro dell'immagine senza racchiuderla tutta
+    let poly = vec![
+        (80.0, 80.0),
+        (150.0, 80.0),
+        (150.0, 220.0),
+        (80.0, 220.0),
+        (80.0, 80.0),
+    ];
+    let (selected_ids, bbox) = AppSelectionEngine::select_lasso(&page, &poly);
+
+    assert_eq!(selected_ids, vec![88]);
+    assert!(bbox.is_some());
+}
+
+#[test]
+fn test_image_handle_scale_undo_redo_symmetry() {
+    let mut doc = Document::new_notebook("Handle Scale Undo Redo Test");
+    let page_id = doc.pages[0].id;
+    let orig_bbox = Rect::new(100.0, 100.0, 200.0, 200.0);
+    let img_item = create_sample_image(page_id, 303, orig_bbox);
+    doc.pages[0].items.push(img_item);
+    doc.pages[0].rebuild_spatial_index();
+
+    let mut st = CanvasState::new();
+    st.document = doc;
+    st.active_tool = uninote_app::canvas::ActiveTool::Select;
+
+    // 1. Seleziona l'immagine
+    NoteCanvas::handle_selection_down(&mut st, (150.0, 150.0), false);
+    NoteCanvas::handle_selection_up(&mut st);
+    assert_eq!(st.selection.selected_ids, vec![303]);
+
+    // 2. Drag maniglia BottomRight
+    NoteCanvas::handle_selection_down(&mut st, (200.0, 200.0), false);
+    NoteCanvas::handle_selection_motion(&mut st, (300.0, 300.0), false);
+    NoteCanvas::handle_selection_up(&mut st);
+
+    let scaled_bbox = st.selection.bbox.expect("Scaled bbox");
+    assert!(scaled_bbox.width() > 150.0);
+
+    // 3. Esegui Undo
+    let undone = st.undo();
+    assert!(undone, "Undo must succeed");
+    if let ItemKind::Image(ref img) = st.document.pages[0].items[0].kind {
+        assert!((img.bbox.min_x - orig_bbox.min_x).abs() < 1e-4);
+        assert!((img.bbox.min_y - orig_bbox.min_y).abs() < 1e-4);
+        assert!((img.bbox.max_x - orig_bbox.max_x).abs() < 1e-4);
+        assert!((img.bbox.max_y - orig_bbox.max_y).abs() < 1e-4);
+    } else {
+        panic!("Item must be Image");
+    }
+
+    // 4. Esegui Redo
+    let redone = st.redo();
+    assert!(redone, "Redo must succeed");
+    if let ItemKind::Image(ref img) = st.document.pages[0].items[0].kind {
+        assert!((img.bbox.width() - scaled_bbox.width()).abs() < 1e-3);
+    } else {
+        panic!("Item must be Image");
+    }
+}
+
+#[test]
+fn test_mixed_selection_scale_handles() {
+    let mut doc = Document::new_notebook("Mixed Selection Handle Test");
+    let page_id = doc.pages[0].id;
+    let stroke_item = create_sample_stroke(10, &[(100.0, 100.0), (150.0, 150.0)]);
+    let img_item = create_sample_image(page_id, 20, Rect::new(150.0, 150.0, 250.0, 250.0));
+    doc.pages[0].items.push(stroke_item);
+    doc.pages[0].items.push(img_item);
+    doc.pages[0].rebuild_spatial_index();
+
+    let mut st = CanvasState::new();
+    st.document = doc;
+    st.active_tool = uninote_app::canvas::ActiveTool::Select;
+
+    // Seleziona entrambi via rettangolo
+    let (mut ids, bbox) = AppSelectionEngine::select_rect(
+        &st.document.pages[0],
+        &Rect::new(50.0, 50.0, 300.0, 300.0),
+    );
+    ids.sort();
+    assert_eq!(ids, vec![10, 20]);
+    st.selection.selected_ids = ids;
+    st.selection.bbox = bbox;
+    st.selection.page_index = Some(0);
+
+    let base_bbox = bbox.expect("Unified bbox");
+
+    // Ridimensiona con maniglia BottomRight
+    NoteCanvas::handle_selection_down(&mut st, (base_bbox.max_x, base_bbox.max_y), false);
+    NoteCanvas::handle_selection_motion(
+        &mut st,
+        (base_bbox.max_x + 50.0, base_bbox.max_y + 50.0),
+        false,
+    );
+    NoteCanvas::handle_selection_up(&mut st);
+
+    // Verifica che entrambi siano stati ridimensionati
+    let updated_stroke = st.document.pages[0].items[0].as_stroke().unwrap();
+    let updated_img = st.document.pages[0].items[1].as_image().unwrap();
+    assert!(updated_stroke.bounding_box().unwrap().width() > 50.0);
+    assert!(updated_img.bbox.width() > 100.0);
+}
+
+#[test]
+fn test_direct_image_click_under_pan_and_zoom() {
+    let mut doc = Document::new_notebook("Pan and Zoom Click Test");
+    let page_id = doc.pages[0].id;
+    let img_item = create_sample_image(page_id, 404, Rect::new(200.0, 200.0, 400.0, 350.0));
+    doc.pages[0].items.push(img_item);
+    doc.pages[0].rebuild_spatial_index();
+
+    let mut st = CanvasState::new();
+    st.document = doc;
+    st.active_tool = uninote_app::canvas::ActiveTool::Select;
+
+    // Viewport con zoom 2.5x e pan offset (150.0, -80.0)
+    st.viewport.zoom = 2.5;
+    st.viewport.offset_x = 150.0;
+    st.viewport.offset_y = -80.0;
+
+    // Coordinate schermo che corrispondono al centro dell'immagine (300.0, 275.0) in document space:
+    // screen_x = 300.0 * 2.5 + 150.0 = 900.0
+    // screen_y = 275.0 * 2.5 - 80.0 = 607.5
+    let screen_pt = (900.0, 607.5);
+    let doc_pt = st.viewport.screen_to_document(screen_pt);
+
+    assert!((doc_pt.0 - 300.0).abs() < 1e-4);
+    assert!((doc_pt.1 - 275.0).abs() < 1e-4);
+
+    NoteCanvas::handle_selection_down(&mut st, doc_pt, false);
+    assert_eq!(st.selection.selected_ids, vec![404]);
+    assert!(st.selection.is_dragging);
+}
+
+#[test]
+fn test_delete_selected_image_and_undo_redo() {
+    let mut doc = Document::new_notebook("Delete Image Test");
+    let page_id = doc.pages[0].id;
+    let img_item = create_sample_image(page_id, 505, Rect::new(100.0, 100.0, 200.0, 200.0));
+    doc.pages[0].items.push(img_item);
+    doc.pages[0].rebuild_spatial_index();
+
+    let mut st = CanvasState::new();
+    st.document = doc;
+    st.active_tool = uninote_app::canvas::ActiveTool::Select;
+
+    // Seleziona l'immagine
+    NoteCanvas::handle_selection_down(&mut st, (150.0, 150.0), false);
+    NoteCanvas::handle_selection_up(&mut st);
+    assert_eq!(st.selection.selected_ids, vec![505]);
+
+    // Elimina
+    let deleted = NoteCanvas::delete_selected_items(&mut st);
+    assert!(deleted, "Image must be deleted");
+    assert!(st.document.pages[0].items.is_empty());
+    assert_eq!(st.document.pages[0].spatial_index.len(), 0);
+
+    // Undo
+    let undone = st.undo();
+    assert!(undone, "Undo delete must succeed");
+    assert_eq!(st.document.pages[0].items.len(), 1);
+    assert_eq!(st.document.pages[0].spatial_index.len(), 1);
+    assert_eq!(st.document.pages[0].items[0].id, 505);
+
+    // Redo
+    let redone = st.redo();
+    assert!(redone, "Redo delete must succeed");
+    assert!(st.document.pages[0].items.is_empty());
+    assert_eq!(st.document.pages[0].spatial_index.len(), 0);
+}

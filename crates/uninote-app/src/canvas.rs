@@ -3749,7 +3749,7 @@ impl NoteCanvas {
     }
 
     /// Elimina in blocco gli elementi attualmente selezionati tramite DocCommand::EraseItems.
-    fn delete_selected_items(st: &mut CanvasState) -> bool {
+    pub fn delete_selected_items(st: &mut CanvasState) -> bool {
         if !st.selection.has_selection() {
             return false;
         }
