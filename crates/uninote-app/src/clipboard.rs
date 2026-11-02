@@ -2,6 +2,7 @@ use gtk4::gdk;
 use gtk4::glib;
 use gtk4::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::sync::{Arc, Mutex, OnceLock};
 use uninote_core::{DocumentFormat, Item};
 use uninote_stroke::Rect;
@@ -10,6 +11,30 @@ use uninote_stroke::Rect;
 pub const MIME_UNINOTE_SELECTION: &str = "application/x-uninote-strokes+json";
 /// MIME type di fallback per compatibilità testuale UTF-8.
 pub const MIME_TEXT_PLAIN: &str = "text/plain;charset=utf-8";
+
+/// MIME types riconosciuti per immagini raster negli appunti di sistema.
+pub const IMAGE_MIME_TYPES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/x-png",
+];
+
+/// Payload immagine estratto dagli appunti di sistema normalizzato in PNG deterministico.
+#[derive(Debug, Clone)]
+pub struct ClipboardImage {
+    /// Byte compressi in formato PNG deterministico.
+    pub bytes: Vec<u8>,
+    /// Larghezza originale in pixel.
+    pub width: u32,
+    /// Altezza originale in pixel.
+    pub height: u32,
+    /// MIME type standard dell'immagine (tipicamente "image/png").
+    pub mime_type: String,
+}
 
 /// Dati contenuti negli appunti (in memoria e serializzabili).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,30 +138,113 @@ pub fn clear_clipboard() {
     };
 }
 
+/// Legge in modo asincrono un'immagine o texture da `gdk::Clipboard`.
+///
+/// Workflow:
+/// 1. Tenta prioritariamente `gdk::Clipboard::read_texture_async`. Se disponibile,
+///    estrae le dimensioni e normalizza i pixel in PNG tramite `texture.save_to_png_bytes()`.
+/// 2. In caso di fallimento o assenza di texture diretta, esegue il fallback su stream
+///    binario tramite `gdk::Clipboard::read_async` per `IMAGE_MIME_TYPES`.
+/// 3. Converte i byte ricevuti in `gdk::Texture` tramite `Texture::from_bytes` e
+///    successivamente in PNG tramite `save_to_png_bytes()`.
+/// 4. Se nessun formato valido è presente o se l'ambiente è headless, invoca `callback(None)`.
+pub fn read_clipboard_image_async<F>(callback: F)
+where
+    F: FnOnce(Option<ClipboardImage>) + 'static,
+{
+    let Some(display) = gdk::Display::default() else {
+        callback(None);
+        return;
+    };
+
+    let clipboard = display.clipboard();
+
+    // 1. Tenta prioritariamente la lettura diretta come texture GDK
+    clipboard.read_texture_async(gtk4::gio::Cancellable::NONE, move |res| {
+        match res {
+            Ok(Some(texture)) => {
+                let w = texture.width();
+                let h = texture.height();
+                if w > 0 && h > 0 {
+                    let png_bytes = texture.save_to_png_bytes();
+                    if !png_bytes.is_empty() {
+                        callback(Some(ClipboardImage {
+                            bytes: png_bytes.to_vec(),
+                            width: w as u32,
+                            height: h as u32,
+                            mime_type: "image/png".to_string(),
+                        }));
+                        return;
+                    }
+                }
+                callback(None);
+            }
+            _ => {
+                // 2. Fallback: lettura stream asincrona per formati raster alternativi
+                let fallback_display = match gdk::Display::default() {
+                    Some(d) => d,
+                    None => {
+                        callback(None);
+                        return;
+                    }
+                };
+                let fallback_cb = fallback_display.clipboard();
+                fallback_cb.read_async(
+                    IMAGE_MIME_TYPES,
+                    glib::Priority::DEFAULT,
+                    gtk4::gio::Cancellable::NONE,
+                    move |stream_res| match stream_res {
+                        Ok((stream, _out_mime)) => {
+                            let mut reader = stream.into_read();
+                            let mut raw_data = Vec::new();
+                            if reader.read_to_end(&mut raw_data).is_ok() && !raw_data.is_empty() {
+                                let glib_bytes = glib::Bytes::from(&raw_data);
+                                if let Ok(texture) = gdk::Texture::from_bytes(&glib_bytes) {
+                                    let w = texture.width();
+                                    let h = texture.height();
+                                    if w > 0 && h > 0 {
+                                        let png_bytes = texture.save_to_png_bytes();
+                                        if !png_bytes.is_empty() {
+                                            callback(Some(ClipboardImage {
+                                                bytes: png_bytes.to_vec(),
+                                                width: w as u32,
+                                                height: h as u32,
+                                                mime_type: "image/png".to_string(),
+                                            }));
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            callback(None);
+                        }
+                        Err(_) => {
+                            callback(None);
+                        }
+                    },
+                );
+            }
+        }
+    });
+}
+
 /// Inizializza l'ascoltatore di cambio clipboard di sistema per sincronizzazione tra processi.
 pub fn init_system_clipboard_sync() {
     if let Some(display) = gdk::Display::default() {
         let sys_cb = display.clipboard();
 
-        // 1. Sincronizzazione iniziale immediata se la clipboard contiene dati da processo esterno
-        if !sys_cb.is_local() {
-            sys_cb.read_text_async(gtk4::gio::Cancellable::NONE, |res| {
-                if let Ok(Some(text)) = res {
-                    if let Ok(data) = deserialize_clipboard(&text) {
-                        let in_mem = get_app_clipboard();
-                        if let Ok(mut lock) = in_mem.lock() {
-                            *lock = Some(data);
-                        };
-                    }
-                }
-            });
-        }
+        let handle_clipboard_change = |cb: &gdk::Clipboard| {
+            if !cb.is_local() {
+                let formats = cb.formats();
+                let has_image = formats.contains_type(gdk::Texture::static_type())
+                    || IMAGE_MIME_TYPES
+                        .iter()
+                        .any(|mime| formats.contain_mime_type(mime));
 
-        // 2. Ascoltatore reattivo per futuri aggiornamenti esterni (idempotente)
-        static CONNECT_ONCE: std::sync::Once = std::sync::Once::new();
-        CONNECT_ONCE.call_once(|| {
-            sys_cb.connect_changed(|cb| {
-                if !cb.is_local() {
+                if has_image {
+                    // Immagine esterna rilevata: azzera i vecchi tratti interni per dare precedenza all'immagine
+                    clear_clipboard();
+                } else {
                     cb.read_text_async(gtk4::gio::Cancellable::NONE, |res| {
                         if let Ok(Some(text)) = res {
                             if let Ok(data) = deserialize_clipboard(&text) {
@@ -148,7 +256,16 @@ pub fn init_system_clipboard_sync() {
                         }
                     });
                 }
-            });
+            }
+        };
+
+        // 1. Sincronizzazione iniziale immediata se la clipboard contiene dati da processo esterno
+        handle_clipboard_change(&sys_cb);
+
+        // 2. Ascoltatore reattivo per futuri aggiornamenti esterni (idempotente)
+        static CONNECT_ONCE: std::sync::Once = std::sync::Once::new();
+        CONNECT_ONCE.call_once(|| {
+            sys_cb.connect_changed(handle_clipboard_change);
         });
     }
 }

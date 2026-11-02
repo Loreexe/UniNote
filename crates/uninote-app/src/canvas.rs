@@ -3,6 +3,7 @@ use crate::selection::{
     compute_scale_factors, HandleId, SelectionDragKind, SelectionHitTestResult,
 };
 use gtk4::gdk;
+use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::DrawingArea;
 use std::cell::RefCell;
@@ -445,6 +446,7 @@ pub fn adapt_ink_color(color: (f64, f64, f64, f64), is_dark_sheet: bool) -> (f64
 
 pub type ZoomCallback = Box<dyn Fn(f64)>;
 
+#[derive(Clone)]
 pub struct NoteCanvas {
     area: DrawingArea,
     state: Rc<RefCell<CanvasState>>,
@@ -679,12 +681,279 @@ impl NoteCanvas {
         deleted
     }
 
+    /// Inserisce un'immagine da buffer di byte (PNG, JPEG, WebP) con calcolo SHA-256,
+    /// posizionamento intelligente centrato nella viewport, salvataggio asset su SQLite e auto-selezione.
+    pub fn insert_image_bytes(
+        &self,
+        bytes: &[u8],
+        mime_type: Option<&str>,
+    ) -> Result<ItemId, String> {
+        if bytes.is_empty() {
+            return Err("Cannot insert empty image bytes".to_string());
+        }
+
+        // 1. Riconoscimento del MIME type
+        let detected_mime = if let Some(m) = mime_type {
+            m.to_string()
+        } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            "image/png".to_string()
+        } else if bytes.starts_with(b"\xff\xd8\xff") {
+            "image/jpeg".to_string()
+        } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+            "image/webp".to_string()
+        } else {
+            "image/png".to_string()
+        };
+
+        // 2. Decodifica della texture / superficie per ricavare le dimensioni originali
+        let (orig_w, orig_h, png_for_cache) = {
+            let glib_bytes = glib::Bytes::from(bytes);
+            if let Ok(texture) = gdk::Texture::from_bytes(&glib_bytes) {
+                let w = texture.width() as u32;
+                let h = texture.height() as u32;
+                let png = if detected_mime == "image/png" {
+                    None
+                } else {
+                    Some(texture.save_to_png_bytes().to_vec())
+                };
+                (w, h, png)
+            } else {
+                // Fallback deterministico headless tramite Cairo PNG decoder
+                let mut cursor = std::io::Cursor::new(bytes);
+                let surf = cairo::ImageSurface::create_from_png(&mut cursor)
+                    .map_err(|e| format!("Failed to decode image texture: {e:?}"))?;
+                let w = surf.width() as u32;
+                let h = surf.height() as u32;
+                (w, h, None)
+            }
+        };
+
+        if orig_w == 0 || orig_h == 0 {
+            return Err("Decoded image has zero dimensions".to_string());
+        }
+
+        // 3. Calcolo hash crittografico SHA-256 per persistenza e deduplicazione
+        let hash = glib::compute_checksum_for_data(glib::ChecksumType::Sha256, bytes)
+            .map(|s| s.to_string())
+            .ok_or_else(|| "Failed to compute SHA-256 checksum for image data".to_string())?;
+
+        // Pre-popolamento ImageCacheManager globale per rendering a 120 Hz immediato
+        {
+            let cache_rc = crate::image_cache::get_global_image_cache();
+            let mut cache = cache_rc.borrow_mut();
+            if let Some(ref png_bytes) = png_for_cache {
+                let _ = cache.insert_from_png_bytes(&hash, png_bytes);
+            } else if detected_mime == "image/png" {
+                let _ = cache.insert_from_png_bytes(&hash, bytes);
+            }
+        }
+
+        // 4. Risoluzione centro viewport e calcolo bounding box (Whiteboard vs Notebook)
+        let st_ref = self.state.borrow();
+        if st_ref.document.pages.is_empty() {
+            return Err("Document contains no pages".to_string());
+        }
+
+        let area_w = (self.area.width() as f64).max(800.0);
+        let area_h = (self.area.height() as f64).max(600.0);
+        let screen_center = (area_w / 2.0, area_h / 2.0);
+        let (vp_center_x, vp_center_y) = st_ref.viewport.screen_to_document(screen_center);
+
+        if !vp_center_x.is_finite() || !vp_center_y.is_finite() {
+            return Err("Viewport center coordinate is not finite".to_string());
+        }
+
+        let (target_page_idx, target_page_id, bbox) = match st_ref.document.format {
+            DocumentFormat::Whiteboard => {
+                let vis_w = area_w / st_ref.viewport.zoom;
+                let vis_h = area_h / st_ref.viewport.zoom;
+                let max_w = (vis_w * 0.6).max(100.0);
+                let max_h = (vis_h * 0.6).max(100.0);
+                let mut w = orig_w as f64;
+                let mut h = orig_h as f64;
+                if w > max_w || h > max_h {
+                    let scale = (max_w / w).min(max_h / h);
+                    w *= scale;
+                    h *= scale;
+                }
+                let page_id = st_ref.document.pages[0].id;
+                let b = Rect::new(
+                    vp_center_x - w / 2.0,
+                    vp_center_y - h / 2.0,
+                    vp_center_x + w / 2.0,
+                    vp_center_y + h / 2.0,
+                );
+                (0, page_id, b)
+            }
+            DocumentFormat::Notebook => {
+                let page_idx =
+                    Viewport::find_page_index_at_y(vp_center_y, st_ref.document.pages.len())
+                        .min(st_ref.document.pages.len().saturating_sub(1));
+                let page = &st_ref.document.pages[page_idx];
+                let page_id = page.id;
+                let page_rect = Viewport::page_rect(page_idx);
+
+                let max_w = (page_rect.width - 20.0).max(100.0);
+                let max_h = (page_rect.height - 20.0).max(100.0);
+                let mut w = orig_w as f64;
+                let mut h = orig_h as f64;
+                if w > max_w || h > max_h {
+                    let scale = (max_w / w).min(max_h / h);
+                    w *= scale;
+                    h *= scale;
+                }
+
+                // Centratura orizzontale intelligente con clamping entro i margini
+                let min_cx = page_rect.x + w / 2.0 + 10.0;
+                let max_cx = page_rect.x + page_rect.width - w / 2.0 - 10.0;
+                let cx = if min_cx <= max_cx {
+                    if vp_center_x >= page_rect.x && vp_center_x <= page_rect.x + page_rect.width {
+                        vp_center_x.clamp(min_cx, max_cx)
+                    } else {
+                        page_rect.x + page_rect.width / 2.0
+                    }
+                } else {
+                    page_rect.x + page_rect.width / 2.0
+                };
+
+                // Centratura verticale intelligente clampata nel foglio A4
+                let min_cy = page_rect.y + h / 2.0 + 10.0;
+                let max_cy = page_rect.y + page_rect.height - h / 2.0 - 10.0;
+                let cy = if min_cy <= max_cy {
+                    vp_center_y.clamp(min_cy, max_cy)
+                } else {
+                    page_rect.y + page_rect.height / 2.0
+                };
+
+                let b = Rect::new(cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0);
+                (page_idx, page_id, b)
+            }
+        };
+        drop(st_ref);
+
+        // 5. Modifica atomica dello stato: allocazione nuovo ID, comando DocCommand::AddImage e salvataggio asset
+        let mut st_guard = self.state.borrow_mut();
+        let st = &mut *st_guard;
+
+        let new_item_id = st.alloc_item_id();
+        let target_page = match st.document.pages.get(target_page_idx) {
+            Some(p) => p,
+            None => return Err("Target page not found".to_string()),
+        };
+        let max_z = target_page
+            .items
+            .iter()
+            .map(|it| it.z_index)
+            .max()
+            .unwrap_or(0);
+        let new_z_index = max_z + 1;
+
+        let image_item = uninote_core::ImageItem::with_id(
+            uuid::Uuid::new_v4(),
+            target_page_id,
+            hash.clone(),
+            bbox,
+            new_z_index as i64,
+            1.0,
+            orig_w,
+            orig_h,
+        );
+
+        let cmd = DocCommand::add_image(target_page_id, new_item_id, new_z_index, image_item);
+        st.history.execute(cmd, &mut st.document);
+        st.persist_changes();
+
+        // Persistenza dell'asset su SQLite (sincrona immediata se file_path disponibile e/o asincrona via worker)
+        if let Some(ref path) = st.file_path {
+            if let Ok(store) = DocumentStore::open_or_create(path) {
+                let _ = store.save_asset(&hash, &detected_mime, bytes);
+            }
+        }
+        if let Some(ref worker) = st.storage_worker {
+            worker.save_asset(hash.clone(), detected_mime.clone(), bytes.to_vec(), None);
+        }
+
+        // 6. Auto-attivazione della selezione sul nuovo elemento immagine
+        st.selection.page_index = Some(target_page_idx);
+        st.selection.selected_ids = vec![new_item_id];
+        st.selection.bbox = Some(bbox);
+        st.selection.is_dragging = false;
+        st.selection.drag_kind = SelectionDragKind::None;
+        st.selection.drag_offset = (0.0, 0.0);
+        st.active_tool = ActiveTool::Select;
+
+        drop(st_guard);
+        self.hud
+            .update_metrics(|m| m.current_tool = "Selezione (Lazo / Rettangolo)".into());
+        self.hud.update_view();
+        self.area.queue_draw();
+
+        Ok(new_item_id)
+    }
+
+    /// Interroga in modo asincrono la clipboard GDK di sistema per texture o immagini raster,
+    /// serializza il payload in PNG ed esegue l'inserimento programmato.
+    pub fn paste_image(&self) -> bool {
+        let display = match gdk::Display::default() {
+            Some(d) => d,
+            None => return false,
+        };
+        let clipboard = display.clipboard();
+        let formats = clipboard.formats();
+
+        let has_image = formats.contains_type(gdk::Texture::static_type())
+            || crate::clipboard::IMAGE_MIME_TYPES
+                .iter()
+                .any(|mime| formats.contain_mime_type(mime))
+            || formats.mime_types().iter().any(|m| m.starts_with("image/"));
+
+        if !has_image {
+            return false;
+        }
+
+        let canvas_clone = self.clone();
+        crate::clipboard::read_clipboard_image_async(move |payload_opt| {
+            if let Some(payload) = payload_opt {
+                if let Err(err) =
+                    canvas_clone.insert_image_bytes(&payload.bytes, Some(&payload.mime_type))
+                {
+                    eprintln!("[UniNote NoteCanvas] Failed to insert pasted image: {err}");
+                }
+            }
+        });
+
+        true
+    }
+
+    /// Collega o aggiorna il worker di storage asincrono.
+    pub fn set_storage_worker(&self, worker: StorageWorker) {
+        self.state.borrow_mut().storage_worker = Some(worker);
+    }
+
     /// Incolla gli elementi dagli appunti con posizionamento intelligente e auto-attivazione della selezione.
     pub fn paste_from_clipboard(&self) -> bool {
+        // 1. Se la clipboard di sistema contiene un'immagine esterna o texture GDK, delega a paste_image
+        if let Some(display) = gdk::Display::default() {
+            let sys_cb = display.clipboard();
+            let formats = sys_cb.formats();
+            let has_uninote_strokes =
+                formats.contain_mime_type(crate::clipboard::MIME_UNINOTE_SELECTION);
+            let has_image = formats.contains_type(gdk::Texture::static_type())
+                || crate::clipboard::IMAGE_MIME_TYPES
+                    .iter()
+                    .any(|mime| formats.contain_mime_type(mime))
+                || formats.mime_types().iter().any(|m| m.starts_with("image/"));
+
+            if has_image && !has_uninote_strokes {
+                return self.paste_image();
+            }
+        }
+
+        // 2. Recupero tratti/elementi UniNote dagli appunti interni
         let clipboard_opt = crate::clipboard::get_clipboard_data();
         let clipboard = match clipboard_opt {
             Some(cb) if !cb.items.is_empty() => cb,
-            _ => return false,
+            _ => return self.paste_image(),
         };
 
         let st = self.state.borrow();

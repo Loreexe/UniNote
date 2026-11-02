@@ -6,6 +6,7 @@ pub mod cloud;
 pub mod dashboard;
 pub mod hud;
 pub mod icons;
+pub mod image_cache;
 pub mod pdf_cache;
 pub mod pdf_export;
 pub mod preferences;
@@ -17,16 +18,19 @@ pub use cloud::{
     CloudServiceType, CloudSyncSettings, ConnectCloudDialog, GoogleDriveAccount, NextcloudAccount,
 };
 
+pub use canvas::{ActiveTool, NoteCanvas};
 pub use clipboard::{
     clear_clipboard, deserialize_clipboard, get_app_clipboard, get_clipboard_data,
-    init_system_clipboard_sync, serialize_clipboard, set_clipboard_data, ClipboardData,
-    APP_CLIPBOARD, MIME_UNINOTE_SELECTION,
+    init_system_clipboard_sync, read_clipboard_image_async, serialize_clipboard,
+    set_clipboard_data, ClipboardData, ClipboardImage, APP_CLIPBOARD, IMAGE_MIME_TYPES,
+    MIME_TEXT_PLAIN, MIME_UNINOTE_SELECTION,
 };
 
 pub use dashboard::{
     get_or_create_thumbnail_path, render_cairo_thumbnail, thumbnail_cache_dir,
     CreateDocumentDialog, UniNoteDashboard,
 };
+pub use image_cache::{get_global_image_cache, ImageCacheEntry, ImageCacheManager};
 pub use pdf_cache::{PdfCacheConfig, PdfCacheError, PdfCacheManager, PdfPageKey};
 pub use pdf_export::{
     append_pdf_pages, export_to_pdf, export_to_pdf_with_options, import_from_pdf, PdfExportOptions,

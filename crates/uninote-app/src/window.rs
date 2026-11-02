@@ -2045,7 +2045,7 @@ impl UniNoteWindow {
                             }
                         }
                         gdk::Key::v | gdk::Key::V => {
-                            if c_keys.paste_from_clipboard() {
+                            if c_keys.paste_from_clipboard() || c_keys.paste_image() {
                                 return glib::Propagation::Stop;
                             }
                         }
