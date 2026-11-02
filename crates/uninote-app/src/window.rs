@@ -227,6 +227,7 @@ impl UniNoteWindow {
                 let w_s = win_for_dlg.clone();
                 btn_save.connect_clicked(move |_| {
                     c_s.persist_changes();
+                    c_s.update_thumbnail();
                     dlg_s.close();
                     d_s.refresh();
                     w_s.set_title(Some("UniNote — Hub Accademico"));
@@ -236,6 +237,7 @@ impl UniNoteWindow {
                 dlg.present();
             } else {
                 c_nav.persist_changes();
+                c_nav.update_thumbnail();
                 d_nav.refresh();
                 win_nav.set_title(Some("UniNote — Hub Accademico"));
                 s_nav.set_visible_child_name("dashboard");
@@ -2347,6 +2349,7 @@ impl UniNoteWindow {
 
     pub fn show_dashboard(&self) {
         self.canvas.persist_changes();
+        self.canvas.update_thumbnail();
         self.dashboard.refresh();
         self.window.set_title(Some("UniNote — Hub Accademico"));
         self.stack.set_visible_child_name("dashboard");

@@ -1308,14 +1308,31 @@ scale.dms-pill-scale trough {
     box-shadow: 0 8px 22px rgba(23, 33, 38, 0.16);
 }
 
+.dms-card-thumbnail {
+    border-top-left-radius: 15px;
+    border-top-right-radius: 15px;
+}
+
 .dms-folder-art {
-    background: linear-gradient(135deg, @dms_surface_container_high 0%, @dms_surface_container_highest 100%);
-    border-top-left-radius: 11px;
-    border-top-right-radius: 11px;
+    background: linear-gradient(145deg, rgba(37, 51, 60, 0.85) 0%, rgba(26, 38, 45, 0.95) 100%);
+    border-top-left-radius: 15px;
+    border-top-right-radius: 15px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.dms-folder-art:hover {
+    background: linear-gradient(145deg, rgba(45, 62, 73, 0.9) 0%, rgba(30, 44, 52, 0.98) 100%);
 }
 
 .light-theme .dms-folder-art {
-    background: linear-gradient(135deg, @dms_surface_container_high_light 0%, @dms_surface_container_highest_light 100%);
+    background: linear-gradient(145deg, rgba(230, 238, 243, 0.9) 0%, rgba(215, 226, 233, 0.95) 100%);
+    border-top-left-radius: 15px;
+    border-top-right-radius: 15px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.light-theme .dms-folder-art:hover {
+    background: linear-gradient(145deg, rgba(220, 232, 240, 0.95) 0%, rgba(205, 218, 226, 1.0) 100%);
 }
 
 .dms-folder-title {

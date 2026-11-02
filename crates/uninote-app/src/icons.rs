@@ -497,17 +497,28 @@ fn draw_trash(cr: &cairo::Context) {
 }
 
 fn draw_folder(cr: &cairo::Context) {
-    // Lucide folder vector geometry (24x24)
+    // Geometria vettoriale Lucide/Adwaita folder pulita e simmetrica (griglia 24x24)
     cr.move_to(4.0, 20.0);
-    cr.arc(20.0, 18.0, 2.0, PI / 2.0, 0.0);
+    // Basso: da (4, 20) a (20, 20)
+    cr.line_to(20.0, 20.0);
+    // Angolo in basso a destra: (20, 20) -> (22, 18)
+    cr.curve_to(21.1, 20.0, 22.0, 19.1, 22.0, 18.0);
+    // Lato destro: (22, 18) -> (22, 8)
     cr.line_to(22.0, 8.0);
-    cr.arc(20.0, 8.0, 2.0, 0.0, 3.0 * PI / 2.0);
-    cr.line_to(12.0, 6.0);
-    cr.line_to(10.0, 4.0);
+    // Angolo in alto a destra: (22, 8) -> (20, 6)
+    cr.curve_to(22.0, 6.9, 21.1, 6.0, 20.0, 6.0);
+    // Bordo superiore cartella: (20, 6) -> (12.5, 6)
+    cr.line_to(12.5, 6.0);
+    // Transizione linguetta: (12.5, 6) -> (10.0, 4.0)
+    cr.curve_to(11.8, 5.0, 11.2, 4.0, 10.0, 4.0);
+    // Linguetta superiore sinistra: (10, 4) -> (4, 4)
     cr.line_to(4.0, 4.0);
-    cr.arc(4.0, 6.0, 2.0, 3.0 * PI / 2.0, PI);
+    // Angolo in alto a sinistra: (4, 4) -> (2, 6)
+    cr.curve_to(2.9, 4.0, 2.0, 4.9, 2.0, 6.0);
+    // Lato sinistro: (2, 6) -> (2, 18)
     cr.line_to(2.0, 18.0);
-    cr.arc(4.0, 18.0, 2.0, PI, PI / 2.0);
+    // Angolo in basso a sinistra: (2, 18) -> (4, 20)
+    cr.curve_to(2.0, 19.1, 2.9, 20.0, 4.0, 20.0);
     cr.close_path();
     let _ = cr.stroke();
 }
@@ -523,22 +534,24 @@ fn draw_folder_plus(cr: &cairo::Context) {
 }
 
 fn draw_folder_open(cr: &cairo::Context) {
-    // Parte posteriore della cartella con tab
-    cr.move_to(2.0, 11.0);
+    // Parte posteriore con tab
+    cr.move_to(2.0, 12.0);
     cr.line_to(2.0, 6.0);
-    cr.arc(4.0, 6.0, 2.0, 3.0 * PI / 2.0, PI);
+    cr.curve_to(2.0, 4.9, 2.9, 4.0, 4.0, 4.0);
     cr.line_to(10.0, 4.0);
-    cr.line_to(12.0, 6.0);
+    cr.curve_to(11.2, 4.0, 11.8, 5.0, 12.5, 6.0);
     cr.line_to(20.0, 6.0);
-    cr.arc(20.0, 8.0, 2.0, 0.0, 3.0 * PI / 2.0);
-    cr.line_to(22.0, 11.0);
+    cr.curve_to(21.1, 6.0, 22.0, 6.9, 22.0, 8.0);
+    cr.line_to(22.0, 12.0);
     let _ = cr.stroke();
 
-    // Falda anteriore aperta in prospettiva
-    cr.move_to(2.0, 12.0);
-    cr.line_to(5.0, 20.0);
-    cr.line_to(20.5, 20.0);
-    cr.line_to(22.5, 12.0);
+    // Falda anteriore aperta in prospettiva con angoli arrotondati
+    cr.move_to(2.0, 13.0);
+    cr.line_to(4.5, 19.5);
+    cr.curve_to(4.8, 20.0, 5.4, 20.0, 6.0, 20.0);
+    cr.line_to(19.5, 20.0);
+    cr.curve_to(20.1, 20.0, 20.7, 19.6, 21.0, 19.0);
+    cr.line_to(22.8, 13.0);
     cr.close_path();
     let _ = cr.stroke();
 }

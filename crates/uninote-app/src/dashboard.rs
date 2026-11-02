@@ -23,13 +23,6 @@ pub fn thumbnail_cache_dir() -> PathBuf {
 
 /// Genera o restituisce il percorso della miniatura PNG associata al documento.
 pub fn get_or_create_thumbnail_path(meta: &RecentDocumentMeta) -> PathBuf {
-    if let Some(ref existing) = meta.thumbnail_path {
-        let p = PathBuf::from(existing);
-        if p.exists() {
-            return p;
-        }
-    }
-
     let cache_dir = thumbnail_cache_dir();
     let sanitized_title: String = meta
         .title
@@ -47,7 +40,20 @@ pub fn get_or_create_thumbnail_path(meta: &RecentDocumentMeta) -> PathBuf {
     let thumb_filename = format!("{}_{:x}.png", sanitized_title, file_hash);
     let thumb_path = cache_dir.join(thumb_filename);
 
-    if !thumb_path.exists() {
+    let needs_generation = if !thumb_path.exists() {
+        true
+    } else {
+        let doc_mtime = fs::metadata(&meta.file_path)
+            .and_then(|m| m.modified())
+            .ok();
+        let thumb_mtime = fs::metadata(&thumb_path).and_then(|m| m.modified()).ok();
+        match (doc_mtime, thumb_mtime) {
+            (Some(dm), Some(tm)) => dm > tm,
+            _ => false,
+        }
+    };
+
+    if needs_generation {
         let p = Path::new(&meta.file_path);
         let rendered_real = if p.exists() {
             if let Ok(store) = uninote_storage::DocumentStore::open_or_create(p) {
@@ -67,6 +73,32 @@ pub fn get_or_create_thumbnail_path(meta: &RecentDocumentMeta) -> PathBuf {
             let _ = render_cairo_thumbnail(&meta.title, meta.format, &thumb_path);
         }
     }
+    thumb_path
+}
+
+/// Rigenera immediatamente e in modo sincrono la miniatura per il documento corrente.
+pub fn update_document_thumbnail_now(
+    meta: &RecentDocumentMeta,
+    doc: &uninote_core::Document,
+    store: Option<&uninote_storage::DocumentStore>,
+) -> PathBuf {
+    let cache_dir = thumbnail_cache_dir();
+    let sanitized_title: String = meta
+        .title
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+
+    let file_hash = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        meta.file_path.hash(&mut hasher);
+        hasher.finish()
+    };
+    let thumb_filename = format!("{}_{:x}.png", sanitized_title, file_hash);
+    let thumb_path = cache_dir.join(thumb_filename);
+    let _ = render_document_thumbnail_with_store(doc, &thumb_path, store);
     thumb_path
 }
 
@@ -265,7 +297,7 @@ pub fn render_document_thumbnail_with_store(
             let _ = cr.restore();
         }
         DocumentFormat::Whiteboard => {
-            // Matrice di punti per la lavagna procedurale
+            // Matrice di punti per la lavagna procedurale (griglia discreta di sfondo)
             cr.set_source_rgba(0.475, 0.851, 0.647, 0.12);
             let mut x = 24.0;
             while x < w as f64 - 20.0 {
@@ -278,23 +310,48 @@ pub fn render_document_thumbnail_with_store(
                 x += 24.0;
             }
 
-            // Simbolo centrale verde menta DMS
-            cr.set_source_rgba(0.475, 0.851, 0.647, 0.25);
-            cr.arc(
-                w as f64 / 2.0,
-                h as f64 / 2.0,
-                40.0,
-                0.0,
-                2.0 * std::f64::consts::PI,
-            );
-            cr.fill().map_err(|e| format!("{:?}", e))?;
-
-            // Se ci sono elementi nella prima pagina della whiteboard, renderizzali al centro
+            // Inquadratura dinamica automatica del contenuto reale (senza cerchi artificiali)
             if let Some(first_page) = doc.pages.first() {
                 if !first_page.items.is_empty() {
+                    let mut bbox_opt: Option<(f64, f64, f64, f64)> = None;
+                    for item in &first_page.items {
+                        if let Some(b) = item.bounding_box() {
+                            if b.min_x.is_finite()
+                                && b.min_y.is_finite()
+                                && b.max_x.is_finite()
+                                && b.max_y.is_finite()
+                            {
+                                bbox_opt = match bbox_opt {
+                                    None => Some((b.min_x, b.min_y, b.max_x, b.max_y)),
+                                    Some((x1, y1, x2, y2)) => Some((
+                                        x1.min(b.min_x),
+                                        y1.min(b.min_y),
+                                        x2.max(b.max_x),
+                                        y2.max(b.max_y),
+                                    )),
+                                };
+                            }
+                        }
+                    }
+
+                    let (trans_x, trans_y, scale) =
+                        if let Some((min_x, min_y, max_x, max_y)) = bbox_opt {
+                            let content_w = (max_x - min_x).max(1.0);
+                            let content_h = (max_y - min_y).max(1.0);
+                            let pad = 24.0;
+                            let avail_w = (w as f64 - pad * 2.0).max(10.0);
+                            let avail_h = (h as f64 - pad * 2.0).max(10.0);
+                            let s = (avail_w / content_w).min(avail_h / content_h).min(1.0);
+                            let cx = (min_x + max_x) / 2.0;
+                            let cy = (min_y + max_y) / 2.0;
+                            ((w as f64 / 2.0) - cx * s, (h as f64 / 2.0) - cy * s, s)
+                        } else {
+                            (w as f64 / 2.0, h as f64 / 2.0, 0.3)
+                        };
+
                     let _ = cr.save();
-                    cr.translate(w as f64 / 2.0, h as f64 / 2.0);
-                    cr.scale(0.3, 0.3);
+                    cr.translate(trans_x, trans_y);
+                    cr.scale(scale, scale);
                     for item in &first_page.items {
                         match &item.kind {
                             uninote_core::ItemKind::Stroke(stroke) => {
@@ -2242,22 +2299,27 @@ impl UniNoteDashboard {
 
         let card_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
-            .spacing(10)
+            .spacing(8)
             .width_request(240)
             .css_classes(["dms-dashboard-card", "dms-folder-card"])
             .can_target(true)
             .build();
 
-        // Area grafica / Icona Cartella (160px di altezza o simile proporzione)
+        // Area grafica / Icona Cartella a tutta larghezza ed altezza uniforme 260px
         let art_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
-            .halign(Align::Center)
-            .valign(Align::Center)
-            .height_request(160)
+            .hexpand(true)
+            .halign(Align::Fill)
+            .valign(Align::Fill)
+            .height_request(260)
             .css_classes(["dms-folder-art"])
             .build();
 
-        let icon_folder = create_icon(IconKind::Folder, 64, None);
+        let icon_folder = create_icon(IconKind::Folder, 72, None);
+        icon_folder.set_halign(Align::Center);
+        icon_folder.set_valign(Align::Center);
+        icon_folder.set_vexpand(true);
+        icon_folder.set_hexpand(true);
         art_box.append(&icon_folder);
         card_box.append(&art_box);
 
@@ -2611,16 +2673,16 @@ impl UniNoteDashboard {
 
         let card_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
-            .spacing(10)
+            .spacing(8)
             .width_request(240)
             .css_classes(["dms-dashboard-card"])
             .can_target(true)
             .build();
 
-        // 1. Miniatura 240x340 px
+        // 1. Miniatura con altezza uniforme 260px (ContentFit::Cover scala la texture 240x340 impeccabilmente)
         let thumb_path = get_or_create_thumbnail_path(meta);
         let picture = Picture::for_filename(&thumb_path);
-        picture.set_size_request(240, 340);
+        picture.set_size_request(240, 260);
         picture.set_content_fit(gtk4::ContentFit::Cover);
         picture.add_css_class("dms-card-thumbnail");
         card_box.append(&picture);

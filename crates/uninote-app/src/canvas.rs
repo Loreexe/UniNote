@@ -1677,6 +1677,25 @@ impl NoteCanvas {
         self.state.borrow_mut().persist_changes();
     }
 
+    /// Aggiorna la miniatura/copertina del documento su disco.
+    pub fn update_thumbnail(&self) {
+        let st = self.state.borrow();
+        if let Some(ref path) = st.file_path {
+            let meta = crate::preferences::RecentDocumentMeta {
+                file_path: path.to_string_lossy().to_string(),
+                title: st.document.title.clone(),
+                format: st.document.format,
+                last_modified_timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                page_count: st.document.pages.len().max(1),
+                thumbnail_path: None,
+            };
+            let _ = crate::dashboard::update_document_thumbnail_now(&meta, &st.document, None);
+        }
+    }
+
     pub fn new_document(&self) {
         let mut st = self.state.borrow_mut();
         st.document = Document::new_empty("Nuovo Quaderno");
