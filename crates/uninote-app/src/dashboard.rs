@@ -52,7 +52,7 @@ pub fn get_or_create_thumbnail_path(meta: &RecentDocumentMeta) -> PathBuf {
         let rendered_real = if p.exists() {
             if let Ok(store) = uninote_storage::DocumentStore::open_or_create(p) {
                 if let Ok(doc) = store.load_document() {
-                    render_document_thumbnail(&doc, &thumb_path).is_ok()
+                    render_document_thumbnail_with_store(&doc, &thumb_path, Some(&store)).is_ok()
                 } else {
                     false
                 }
@@ -82,6 +82,15 @@ pub fn format_badge_label(format: DocumentFormat) -> &'static str {
 pub fn render_document_thumbnail(
     doc: &uninote_core::Document,
     output_png: &Path,
+) -> Result<(), String> {
+    render_document_thumbnail_with_store(doc, output_png, None)
+}
+
+/// Genera la miniatura per il documento con supporto opzionale al DocumentStore per caricamento asset.
+pub fn render_document_thumbnail_with_store(
+    doc: &uninote_core::Document,
+    output_png: &Path,
+    store: Option<&uninote_storage::DocumentStore>,
 ) -> Result<(), String> {
     let (w, h) = (240, 340);
     let surface = ImageSurface::create(Format::ARgb32, w, h)
@@ -175,41 +184,78 @@ pub fn render_document_thumbnail(
                     _ => {}
                 }
 
-                // Renderizza i tratti reali della pagina 1
+                // Renderizza elementi reali della pagina 1 (tratti e immagini)
                 let scale = paper_w / uninote_core::model::A4_WIDTH_PT;
                 let _ = cr.save();
                 cr.translate(paper_x, paper_y);
                 cr.scale(scale, scale);
 
                 for item in &first_page.items {
-                    let stroke = match &item.kind {
-                        uninote_core::ItemKind::Stroke(s) => s,
-                        _ => continue,
-                    };
-                    if stroke.points.is_empty() {
-                        continue;
-                    }
-                    let (r, g, b, a) = stroke.style.color;
-                    cr.set_source_rgba(r, g, b, a);
-                    cr.set_line_cap(gtk4::cairo::LineCap::Round);
-                    cr.set_line_join(gtk4::cairo::LineJoin::Round);
+                    match &item.kind {
+                        uninote_core::ItemKind::Stroke(stroke) => {
+                            if stroke.points.is_empty() {
+                                continue;
+                            }
+                            let (r, g, b, a) = stroke.style.color;
+                            cr.set_source_rgba(r, g, b, a);
+                            cr.set_line_cap(gtk4::cairo::LineCap::Round);
+                            cr.set_line_join(gtk4::cairo::LineJoin::Round);
 
-                    if stroke.points.len() == 1 {
-                        let p = &stroke.points[0];
-                        cr.arc(
-                            p.x,
-                            p.y,
-                            (p.width / 2.0).max(1.0),
-                            0.0,
-                            2.0 * std::f64::consts::PI,
-                        );
-                        let _ = cr.fill();
-                    } else {
-                        for w in stroke.points.windows(2) {
-                            cr.set_line_width(w[0].width.max(1.2));
-                            cr.move_to(w[0].x, w[0].y);
-                            cr.line_to(w[1].x, w[1].y);
-                            let _ = cr.stroke();
+                            if stroke.points.len() == 1 {
+                                let p = &stroke.points[0];
+                                cr.arc(
+                                    p.x,
+                                    p.y,
+                                    (p.width / 2.0).max(1.0),
+                                    0.0,
+                                    2.0 * std::f64::consts::PI,
+                                );
+                                let _ = cr.fill();
+                            } else {
+                                for w in stroke.points.windows(2) {
+                                    cr.set_line_width(w[0].width.max(1.2));
+                                    cr.move_to(w[0].x, w[0].y);
+                                    cr.line_to(w[1].x, w[1].y);
+                                    let _ = cr.stroke();
+                                }
+                            }
+                        }
+                        uninote_core::ItemKind::Image(img) => {
+                            let cache_rc = crate::image_cache::get_global_image_cache();
+                            let mut cache = cache_rc.borrow_mut();
+                            let surface_opt = if let Some(surf) = cache.get(&img.asset_hash) {
+                                Some(surf)
+                            } else if let Some(st) = store {
+                                cache.get_or_load_from_store(&img.asset_hash, st)
+                            } else {
+                                None
+                            };
+
+                            if let Some(surface) = surface_opt {
+                                let surf_w = surface.width() as f64;
+                                let surf_h = surface.height() as f64;
+                                if surf_w > 0.0 && surf_h > 0.0 {
+                                    let dest_x = img.bbox.min_x;
+                                    let dest_y = img.bbox.min_y;
+                                    let dest_w = img.bbox.width();
+                                    let dest_h = img.bbox.height();
+                                    if dest_w > 0.0 && dest_h > 0.0 {
+                                        let _ = cr.save();
+                                        cr.translate(dest_x, dest_y);
+                                        cr.scale(dest_w / surf_w, dest_h / surf_h);
+                                        let _ = cr.set_source_surface(&surface, 0.0, 0.0);
+                                        let pattern = cr.source();
+                                        pattern.set_filter(gtk4::cairo::Filter::Bilinear);
+                                        let opacity = img.opacity.clamp(0.0, 1.0);
+                                        if opacity < 0.999 {
+                                            let _ = cr.paint_with_alpha(opacity);
+                                        } else {
+                                            let _ = cr.paint();
+                                        }
+                                        let _ = cr.restore();
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -243,29 +289,66 @@ pub fn render_document_thumbnail(
             );
             cr.fill().map_err(|e| format!("{:?}", e))?;
 
-            // Se ci sono tratti nella prima pagina della whiteboard, renderizzali al centro
+            // Se ci sono elementi nella prima pagina della whiteboard, renderizzali al centro
             if let Some(first_page) = doc.pages.first() {
                 if !first_page.items.is_empty() {
                     let _ = cr.save();
                     cr.translate(w as f64 / 2.0, h as f64 / 2.0);
                     cr.scale(0.3, 0.3);
                     for item in &first_page.items {
-                        let stroke = match &item.kind {
-                            uninote_core::ItemKind::Stroke(s) => s,
-                            _ => continue,
-                        };
-                        if stroke.points.is_empty() {
-                            continue;
-                        }
-                        let (r, g, b, a) = stroke.style.color;
-                        cr.set_source_rgba(r, g, b, a);
-                        cr.set_line_cap(gtk4::cairo::LineCap::Round);
-                        cr.set_line_join(gtk4::cairo::LineJoin::Round);
-                        for w in stroke.points.windows(2) {
-                            cr.set_line_width(w[0].width.max(1.5));
-                            cr.move_to(w[0].x, w[0].y);
-                            cr.line_to(w[1].x, w[1].y);
-                            let _ = cr.stroke();
+                        match &item.kind {
+                            uninote_core::ItemKind::Stroke(stroke) => {
+                                if stroke.points.is_empty() {
+                                    continue;
+                                }
+                                let (r, g, b, a) = stroke.style.color;
+                                cr.set_source_rgba(r, g, b, a);
+                                cr.set_line_cap(gtk4::cairo::LineCap::Round);
+                                cr.set_line_join(gtk4::cairo::LineJoin::Round);
+                                for w in stroke.points.windows(2) {
+                                    cr.set_line_width(w[0].width.max(1.5));
+                                    cr.move_to(w[0].x, w[0].y);
+                                    cr.line_to(w[1].x, w[1].y);
+                                    let _ = cr.stroke();
+                                }
+                            }
+                            uninote_core::ItemKind::Image(img) => {
+                                let cache_rc = crate::image_cache::get_global_image_cache();
+                                let mut cache = cache_rc.borrow_mut();
+                                let surface_opt = if let Some(surf) = cache.get(&img.asset_hash) {
+                                    Some(surf)
+                                } else if let Some(st) = store {
+                                    cache.get_or_load_from_store(&img.asset_hash, st)
+                                } else {
+                                    None
+                                };
+
+                                if let Some(surface) = surface_opt {
+                                    let surf_w = surface.width() as f64;
+                                    let surf_h = surface.height() as f64;
+                                    if surf_w > 0.0 && surf_h > 0.0 {
+                                        let dest_x = img.bbox.min_x;
+                                        let dest_y = img.bbox.min_y;
+                                        let dest_w = img.bbox.width();
+                                        let dest_h = img.bbox.height();
+                                        if dest_w > 0.0 && dest_h > 0.0 {
+                                            let _ = cr.save();
+                                            cr.translate(dest_x, dest_y);
+                                            cr.scale(dest_w / surf_w, dest_h / surf_h);
+                                            let _ = cr.set_source_surface(&surface, 0.0, 0.0);
+                                            let pattern = cr.source();
+                                            pattern.set_filter(gtk4::cairo::Filter::Bilinear);
+                                            let opacity = img.opacity.clamp(0.0, 1.0);
+                                            if opacity < 0.999 {
+                                                let _ = cr.paint_with_alpha(opacity);
+                                            } else {
+                                                let _ = cr.paint();
+                                            }
+                                            let _ = cr.restore();
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     let _ = cr.restore();

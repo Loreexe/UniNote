@@ -35,6 +35,16 @@ pub fn export_to_pdf_with_options(
     output_path: &Path,
     options: &PdfExportOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    export_to_pdf_with_store(document, output_path, options, None)
+}
+
+/// Esporta un documento UniNote in un file PDF vettoriale con supporto opzionale al database SQLite per asset immagini.
+pub fn export_to_pdf_with_store(
+    document: &Document,
+    output_path: &Path,
+    options: &PdfExportOptions,
+    store_path: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
     if document.pages.is_empty() {
         return Err("Impossibile esportare un documento privo di pagine".into());
     }
@@ -84,8 +94,15 @@ pub fn export_to_pdf_with_options(
             &mut poppler_cache,
         )?;
 
-        // 2.2. Rendering vettoriale dei tratti dello studente
-        render_strokes(&cr, &page.items, shift_x, shift_y, options.is_dark)?;
+        // 2.2. Rendering vettoriale dei tratti e delle immagini dello studente
+        render_strokes(
+            &cr,
+            &page.items,
+            shift_x,
+            shift_y,
+            options.is_dark,
+            store_path,
+        )?;
 
         cr.show_page()
             .map_err(|e| format!("Errore cr.show_page: {:?}", e))?;
@@ -394,14 +411,14 @@ fn render_background(
     Ok(())
 }
 
-/// Renderizza i tratti a mano libera e le annotazioni come curve di Bézier cubiche pure (`cr.curve_to`)
-/// con proiezione percettiva del colore e raggruppamento alfa pulito per gli evidenziatori.
+/// Renderizza i tratti a mano libera e le immagini inserite dello studente
 fn render_strokes(
     cr: &Context,
     items: &[uninote_core::model::Item],
     shift_x: f64,
     shift_y: f64,
     is_dark: bool,
+    store_path: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     cr.save()?;
     if shift_x != 0.0 || shift_y != 0.0 {
@@ -409,71 +426,112 @@ fn render_strokes(
     }
 
     for item in items {
-        let stroke = match &item.kind {
-            ItemKind::Stroke(ref s) => s,
-            _ => continue,
-        };
-        if stroke.points.is_empty() {
-            continue;
-        }
-
-        cr.save()?;
-        let adapted = crate::canvas::adapt_ink_color(stroke.style.color, is_dark);
-        let is_semi_transparent = adapted.3 < 0.999;
-
-        if is_semi_transparent {
-            cr.push_group_with_content(cairo::Content::ColorAlpha);
-            cr.set_source_rgb(adapted.0, adapted.1, adapted.2);
-        } else {
-            cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
-        }
-
-        cr.set_line_cap(LineCap::Round);
-        cr.set_line_join(LineJoin::Round);
-
-        if stroke.points.len() == 1 || stroke.is_dot {
-            // Punto singolo isolato (dot)
-            let p = &stroke.points[0];
-            let radius = if p.width > 0.0 {
-                p.width / 2.0
-            } else {
-                stroke.style.base_width / 2.0
-            };
-            cr.arc(p.x, p.y, radius.max(0.5), 0.0, 2.0 * PI);
-            cr.fill()?;
-        } else {
-            // Conversione Catmull-Rom -> spline Bézier cubiche continue C1
-            let segments = uninote_stroke::geometry::catmull_rom_to_bezier(&stroke.points);
-            if segments.is_empty() {
-                // Fallback di congiunzione diretta per sequenze degenerate a 2 punti
-                for window in stroke.points.windows(2) {
-                    let p0 = &window[0];
-                    let p1 = &window[1];
-                    let avg_w = ((p0.width + p1.width) / 2.0).max(0.5);
-                    cr.set_line_width(avg_w);
-                    cr.move_to(p0.x, p0.y);
-                    cr.line_to(p1.x, p1.y);
-                    cr.stroke()?;
+        match &item.kind {
+            ItemKind::Stroke(ref stroke) => {
+                if stroke.points.is_empty() {
+                    continue;
                 }
-            } else {
-                for seg in segments {
-                    let avg_w = ((seg.width0 + seg.width1) / 2.0).max(0.5);
-                    cr.set_line_width(avg_w);
-                    cr.move_to(seg.p0.0, seg.p0.1);
-                    cr.curve_to(
-                        seg.cp1.0, seg.cp1.1, seg.cp2.0, seg.cp2.1, seg.p1.0, seg.p1.1,
-                    );
-                    cr.stroke()?;
+
+                cr.save()?;
+                let adapted = crate::canvas::adapt_ink_color(stroke.style.color, is_dark);
+                let is_semi_transparent = adapted.3 < 0.999;
+
+                if is_semi_transparent {
+                    cr.push_group_with_content(cairo::Content::ColorAlpha);
+                    cr.set_source_rgb(adapted.0, adapted.1, adapted.2);
+                } else {
+                    cr.set_source_rgba(adapted.0, adapted.1, adapted.2, adapted.3);
+                }
+
+                cr.set_line_cap(LineCap::Round);
+                cr.set_line_join(LineJoin::Round);
+
+                if stroke.points.len() == 1 || stroke.is_dot {
+                    // Punto singolo isolato (dot)
+                    let p = &stroke.points[0];
+                    let radius = if p.width > 0.0 {
+                        p.width / 2.0
+                    } else {
+                        stroke.style.base_width / 2.0
+                    };
+                    cr.arc(p.x, p.y, radius.max(0.5), 0.0, 2.0 * PI);
+                    cr.fill()?;
+                } else {
+                    // Conversione Catmull-Rom -> spline Bézier cubiche continue C1
+                    let segments = uninote_stroke::geometry::catmull_rom_to_bezier(&stroke.points);
+                    if segments.is_empty() {
+                        // Fallback di congiunzione diretta per sequenze degenerate a 2 punti
+                        for window in stroke.points.windows(2) {
+                            let p0 = &window[0];
+                            let p1 = &window[1];
+                            let avg_w = ((p0.width + p1.width) / 2.0).max(0.5);
+                            cr.set_line_width(avg_w);
+                            cr.move_to(p0.x, p0.y);
+                            cr.line_to(p1.x, p1.y);
+                            cr.stroke()?;
+                        }
+                    } else {
+                        for seg in segments {
+                            let avg_w = ((seg.width0 + seg.width1) / 2.0).max(0.5);
+                            cr.set_line_width(avg_w);
+                            cr.move_to(seg.p0.0, seg.p0.1);
+                            cr.curve_to(
+                                seg.cp1.0, seg.cp1.1, seg.cp2.0, seg.cp2.1, seg.p1.0, seg.p1.1,
+                            );
+                            cr.stroke()?;
+                        }
+                    }
+                }
+
+                if is_semi_transparent {
+                    let _ = cr.pop_group_to_source();
+                    let _ = cr.paint_with_alpha(adapted.3);
+                }
+
+                cr.restore()?;
+            }
+            ItemKind::Image(ref img) => {
+                let cache_rc = crate::image_cache::get_global_image_cache();
+                let mut cache = cache_rc.borrow_mut();
+                let surface_opt = if let Some(surf) = cache.get(&img.asset_hash) {
+                    Some(surf)
+                } else if let Some(p) = store_path {
+                    if let Ok(store) = uninote_storage::DocumentStore::open_or_create(p) {
+                        cache.get_or_load_from_store(&img.asset_hash, &store)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(surface) = surface_opt {
+                    let surf_w = surface.width() as f64;
+                    let surf_h = surface.height() as f64;
+                    if surf_w > 0.0 && surf_h > 0.0 {
+                        let dest_x = img.bbox.min_x;
+                        let dest_y = img.bbox.min_y;
+                        let dest_w = img.bbox.width();
+                        let dest_h = img.bbox.height();
+                        if dest_w > 0.0 && dest_h > 0.0 {
+                            cr.save()?;
+                            cr.translate(dest_x, dest_y);
+                            cr.scale(dest_w / surf_w, dest_h / surf_h);
+                            cr.set_source_surface(&surface, 0.0, 0.0)?;
+                            let pattern = cr.source();
+                            pattern.set_filter(cairo::Filter::Bilinear);
+                            let opacity = img.opacity.clamp(0.0, 1.0);
+                            if opacity < 0.999 {
+                                cr.paint_with_alpha(opacity)?;
+                            } else {
+                                cr.paint()?;
+                            }
+                            cr.restore()?;
+                        }
+                    }
                 }
             }
         }
-
-        if is_semi_transparent {
-            let _ = cr.pop_group_to_source();
-            let _ = cr.paint_with_alpha(adapted.3);
-        }
-
-        cr.restore()?;
     }
 
     cr.restore()?;

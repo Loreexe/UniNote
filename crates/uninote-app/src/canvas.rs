@@ -1532,7 +1532,12 @@ impl NoteCanvas {
         options: &crate::pdf_export::PdfExportOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let st = self.state.borrow();
-        crate::pdf_export::export_to_pdf_with_options(&st.document, target_path, options)
+        crate::pdf_export::export_to_pdf_with_store(
+            &st.document,
+            target_path,
+            options,
+            st.file_path.as_deref(),
+        )
     }
 
     /// Esporta il documento corrente in un file PDF vettoriale ad alta definizione.
@@ -1541,7 +1546,12 @@ impl NoteCanvas {
         target_path: &std::path::Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let st = self.state.borrow();
-        crate::pdf_export::export_to_pdf(&st.document, target_path)
+        crate::pdf_export::export_to_pdf_with_store(
+            &st.document,
+            target_path,
+            &crate::pdf_export::PdfExportOptions::default(),
+            st.file_path.as_deref(),
+        )
     }
 
     /// Carica un nuovo documento sostituendo lo stato corrente e aggiornando l'HUD e la vista.

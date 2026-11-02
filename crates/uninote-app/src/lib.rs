@@ -27,13 +27,15 @@ pub use clipboard::{
 };
 
 pub use dashboard::{
-    get_or_create_thumbnail_path, render_cairo_thumbnail, thumbnail_cache_dir,
-    CreateDocumentDialog, UniNoteDashboard,
+    get_or_create_thumbnail_path, render_cairo_thumbnail, render_document_thumbnail,
+    render_document_thumbnail_with_store, thumbnail_cache_dir, CreateDocumentDialog,
+    UniNoteDashboard,
 };
 pub use image_cache::{get_global_image_cache, ImageCacheEntry, ImageCacheManager};
 pub use pdf_cache::{PdfCacheConfig, PdfCacheError, PdfCacheManager, PdfPageKey};
 pub use pdf_export::{
-    append_pdf_pages, export_to_pdf, export_to_pdf_with_options, import_from_pdf, PdfExportOptions,
+    append_pdf_pages, export_to_pdf, export_to_pdf_with_options, export_to_pdf_with_store,
+    import_from_pdf, PdfExportOptions,
 };
 pub use preferences::{
     AppPreferences, BarrelButtonAction, DashboardRecentStore, FullAppSettingsModel, PenSlotConfig,
