@@ -47,6 +47,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.16" date="2026-11-02">
+      <description>
+        <p>Release v0.4.16: Fix eraser indicator stray line artifact via clean path initialization, perfect stroke cut boundaries matching visible eraser diameter without penetration, and pen thickness uncapped below 1.0pt.</p>
+      </description>
+    </release>
     <release version="0.4.15" date="2026-11-02">
       <description>
         <p>Release v0.4.15: Context menu on right-click or long-press for selections and images with Move Up, Move Down, Copy, Duplicate, and Delete actions, atomic z-index reordering with full Undo/Redo symmetry, and touch gesture support.</p>

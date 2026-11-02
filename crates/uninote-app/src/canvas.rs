@@ -3717,12 +3717,38 @@ impl NoteCanvas {
                     for item in &page.items {
                         if candidate_ids.contains(&item.id) {
                             if let ItemKind::Stroke(ref s) = item.kind {
-                                if s.intersects_centerline(doc_pt, radius) {
-                                    let stroke_half_w =
-                                        (s.points.iter().map(|p| p.width).fold(0.0_f64, f64::max)
-                                            / 2.0)
-                                            .max(s.style.base_width / 2.0);
-                                    let eff_cut_radius = radius + stroke_half_w;
+                                let stroke_half_w =
+                                    (s.points.iter().map(|p| p.width).fold(0.0_f64, f64::max)
+                                        / 2.0)
+                                        .max(s.style.base_width / 2.0);
+                                let eff_cut_radius = radius + stroke_half_w;
+
+                                // Verifica se il cerchio della gomma interseca la linea mediana (anche curvata)
+                                // o include un estremo del tratto, prevenendo tagli accidentali da halo grazing.
+                                let r_sq = radius * radius;
+                                let any_pt_inside = s.points.iter().any(|p| {
+                                    let dx = p.x - doc_pt.0;
+                                    let dy = p.y - doc_pt.1;
+                                    dx * dx + dy * dy <= r_sq
+                                });
+
+                                let hits_centerline = if any_pt_inside {
+                                    true
+                                } else {
+                                    let segs = s.bezier_segments();
+                                    if !segs.is_empty() {
+                                        segs.iter().any(|seg| {
+                                            !uninote_stroke::slice::find_bezier_circle_intersections(
+                                                seg, doc_pt, radius,
+                                            )
+                                            .is_empty()
+                                        })
+                                    } else {
+                                        s.intersects_centerline(doc_pt, radius)
+                                    }
+                                };
+
+                                if hits_centerline {
                                     let fragments = s.slice_with_circle(doc_pt, eff_cut_radius);
                                     let is_unchanged = fragments.len() == 1
                                         && fragments[0].id == s.id
@@ -4465,6 +4491,7 @@ impl NoteCanvas {
         }
 
         let _ = cr.save();
+        cr.new_path();
         cr.set_dash(&[], 0.0);
         cr.arc(screen_x, screen_y, radius, 0.0, 2.0 * std::f64::consts::PI);
 
