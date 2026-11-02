@@ -47,6 +47,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.22" date="2026-11-02">
+      <description>
+        <p>Release v0.4.22: Risoluzione del problema di apertura immediata del documento durante l'avvio del drag per spostarlo (gestione fluida del drag and drop con isolamento click e thumbnail mobile sotto il cursore), e correzione dell'isolamento delle sottocartelle nella dashboard per cui i file spostati in sottocartelle non compaiono erroneamente nella vista principale.</p>
+      </description>
+    </release>
     <release version="0.4.21" date="2026-11-02">
       <description>
         <p>Release v0.4.21: Spostamento file tra cartelle e sottocartelle: nuova azione contestuale "Sposta in..." con selezione gerarchica Adwaita e creazione rapida di sottocartelle, supporto completo a Drag and Drop sulle card delle cartelle e nella sidebar, e apertura contestuale al clic destro sulle card dei documenti.</p>

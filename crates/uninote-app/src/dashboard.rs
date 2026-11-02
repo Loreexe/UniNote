@@ -2443,20 +2443,20 @@ impl UniNoteDashboard {
                 displayed_count += 1;
             }
 
-            // Se ci troviamo alla radice, includiamo anche tutti i documenti in recent_files non ancora aggiunti
+            // Se ci troviamo alla radice, includiamo eventuali file recenti esterni (non memorizzati dentro root_folder o sue sottocartelle)
             if current_folder == root_folder {
                 for meta in &store.borrow().recent_files {
-                    if !seen_paths.contains(&meta.file_path) {
+                    let p = Path::new(&meta.file_path);
+                    if p.exists()
+                        && !p.starts_with(root_folder)
+                        && !seen_paths.contains(&meta.file_path)
+                    {
                         seen_paths.insert(meta.file_path.clone());
                         let mut resolved_meta = meta.clone();
-                        let p = Path::new(&resolved_meta.file_path);
-                        if p.exists() {
-                            if let Ok(doc_store) = uninote_storage::DocumentStore::open_or_create(p)
-                            {
-                                if let Ok(doc) = doc_store.load_document() {
-                                    resolved_meta.format = doc.format;
-                                    resolved_meta.page_count = doc.pages.len();
-                                }
+                        if let Ok(doc_store) = uninote_storage::DocumentStore::open_or_create(p) {
+                            if let Ok(doc) = doc_store.load_document() {
+                                resolved_meta.format = doc.format;
+                                resolved_meta.page_count = doc.pages.len();
                             }
                         }
                         let card = Self::create_card_with_refresh(
@@ -3257,15 +3257,6 @@ impl UniNoteDashboard {
             .can_target(true)
             .build();
 
-        // DragSource per consentire di trascinare il documento verso una cartella
-        let drag_src = DragSource::new();
-        drag_src.set_actions(gdk::DragAction::MOVE);
-        let fpath_drag = meta.file_path.clone();
-        drag_src.connect_prepare(move |_, _, _| {
-            Some(gdk::ContentProvider::for_value(&fpath_drag.to_value()))
-        });
-        card_box.add_controller(drag_src);
-
         // 1. Miniatura con altezza uniforme 260px (ContentFit::Cover scala la texture 240x340 impeccabilmente)
         let thumb_path = get_or_create_thumbnail_path(meta);
         let picture = Picture::for_filename(&thumb_path);
@@ -3273,6 +3264,45 @@ impl UniNoteDashboard {
         picture.set_content_fit(gtk4::ContentFit::Cover);
         picture.add_css_class("dms-card-thumbnail");
         card_box.append(&picture);
+
+        // Flag atomico per distinguere il click dall'avvio di un'operazione di trascinamento (drag)
+        let is_dragging = Rc::new(std::cell::Cell::new(false));
+
+        // DragSource per consentire di trascinare il documento verso una cartella
+        let drag_src = DragSource::new();
+        drag_src.set_actions(gdk::DragAction::MOVE);
+        let fpath_drag = meta.file_path.clone();
+        drag_src.connect_prepare(move |_, _, _| {
+            Some(gdk::ContentProvider::for_value(&fpath_drag.to_value()))
+        });
+
+        let is_drag_start = is_dragging.clone();
+        let pic_clone = picture.clone();
+        let drag_src_clone = drag_src.clone();
+        drag_src.connect_drag_begin(move |_, _| {
+            is_drag_start.set(true);
+            if let Some(paintable) = pic_clone.paintable() {
+                drag_src_clone.set_icon(Some(&paintable), 40, 40);
+            }
+        });
+
+        let is_drag_end = is_dragging.clone();
+        drag_src.connect_drag_end(move |_, _, _| {
+            let is_drag_reset = is_drag_end.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+                is_drag_reset.set(false);
+            });
+        });
+
+        let is_drag_cancel = is_dragging.clone();
+        drag_src.connect_drag_cancel(move |_, _, _| {
+            let is_drag_reset = is_drag_cancel.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+                is_drag_reset.set(false);
+            });
+            false
+        });
+        card_box.add_controller(drag_src);
 
         // 2. Dettagli testuali con riga titolo + menu 3 puntini
         let info_box = GtkBox::builder()
@@ -3651,7 +3681,9 @@ impl UniNoteDashboard {
         info_box.append(&meta_row);
         card_box.append(&info_box);
 
-        // Interattività al click per aprire il documento (sulla Picture e sull'info box, evitando btn_menu)
+        // Interattività al click per aprire il documento (sulla Picture e sul titolo, evitando btn_menu).
+        // Si usa connect_released controllando che non sia avvenuto un trascinamento (drag) per non
+        // aprire il documento mentre l'utente intende spostare la card con il drag and drop.
         let gesture = GestureClick::new();
         let target_path = PathBuf::from(&meta.file_path);
         let cb_clone = open_cb.clone();
@@ -3659,13 +3691,36 @@ impl UniNoteDashboard {
         gesture.connect_pressed(move |g, _, _, _| {
             if g.current_button() == gdk::BUTTON_SECONDARY {
                 pop_picture.popup();
-            } else if g.current_button() == gdk::BUTTON_PRIMARY {
+            }
+        });
+        let is_drag_rel = is_dragging.clone();
+        gesture.connect_released(move |g, _, _, _| {
+            if g.current_button() == gdk::BUTTON_PRIMARY && !is_drag_rel.get() {
                 if let Some(ref cb) = *cb_clone.borrow() {
                     cb(target_path.clone());
                 }
             }
         });
         picture.add_controller(gesture);
+
+        let gesture_lbl = GestureClick::new();
+        let target_path_lbl = PathBuf::from(&meta.file_path);
+        let cb_lbl = open_cb.clone();
+        let is_drag_lbl = is_dragging;
+        let pop_lbl = popover.clone();
+        gesture_lbl.connect_pressed(move |g, _, _, _| {
+            if g.current_button() == gdk::BUTTON_SECONDARY {
+                pop_lbl.popup();
+            }
+        });
+        gesture_lbl.connect_released(move |g, _, _, _| {
+            if g.current_button() == gdk::BUTTON_PRIMARY && !is_drag_lbl.get() {
+                if let Some(ref cb) = *cb_lbl.borrow() {
+                    cb(target_path_lbl.clone());
+                }
+            }
+        });
+        lbl_title.add_controller(gesture_lbl);
 
         let gesture_info = GestureClick::new();
         let pop_info = popover.clone();
@@ -3683,6 +3738,11 @@ impl UniNoteDashboard {
     /// Restituisce il widget GTK radice della Dashboard per l'inclusione nella gerarchia Adwaita.
     pub fn widget(&self) -> &gtk4::Widget {
         self.container.upcast_ref()
+    }
+
+    /// Restituisce il widget FlowBox interno per testing e ispezione dei figli.
+    pub fn flow_box(&self) -> &FlowBox {
+        &self.flow_box
     }
 
     /// Connette il callback invocato quando l'utente seleziona un documento da aprire.

@@ -807,3 +807,69 @@ fn test_open_move_dialog_creation_on_gtk_thread() {
         let _ = fs::remove_dir_all(&root);
     });
 }
+
+#[test]
+fn test_subfolder_documents_isolated_from_root_view() {
+    run_on_gtk_thread(|| {
+        let root = unique_dash_temp_path("root_isolation", "dir");
+        let sub = root.join("Reti");
+        fs::create_dir_all(&sub).unwrap();
+
+        let doc_root = root.join("RootDoc.uninote");
+        let doc_sub = sub.join("RetiDoc.uninote");
+        fs::write(&doc_root, "uninote content").unwrap();
+        fs::write(&doc_sub, "uninote content in sub").unwrap();
+
+        let mut store_obj = DashboardRecentStore::new();
+        store_obj.default_notes_dir = root.to_string_lossy().to_string();
+        store_obj.add_recent(RecentDocumentMeta {
+            file_path: doc_root.to_string_lossy().to_string(),
+            title: "RootDoc".to_string(),
+            format: DocumentFormat::Notebook,
+            last_modified_timestamp: 1000,
+            page_count: 1,
+            thumbnail_path: None,
+        });
+        store_obj.add_recent(RecentDocumentMeta {
+            file_path: doc_sub.to_string_lossy().to_string(),
+            title: "RetiDoc".to_string(),
+            format: DocumentFormat::Notebook,
+            last_modified_timestamp: 1001,
+            page_count: 2,
+            thumbnail_path: None,
+        });
+        let store = std::rc::Rc::new(std::cell::RefCell::new(store_obj));
+
+        let dash = UniNoteDashboard::with_store_and_root(store, root.clone());
+        // La dashboard alla radice deve mostrare solo 2 elementi: 1 cartella ('Reti') e 1 documento ('RootDoc')
+        // Non deve mostrare 'RetiDoc' alla radice!
+        let flow_box = dash.flow_box();
+        let mut count = 0;
+        let mut child = flow_box.first_child();
+        while let Some(c) = child {
+            count += 1;
+            child = c.next_sibling();
+        }
+        assert_eq!(
+            count, 2,
+            "Root view must contain exactly 1 folder card and 1 direct document card, got {}",
+            count
+        );
+
+        // Navigando dentro Reti, deve mostrare solo 1 elemento: 'RetiDoc'
+        dash.navigate_to(sub.clone());
+        let mut sub_count = 0;
+        let mut sub_child = flow_box.first_child();
+        while let Some(c) = sub_child {
+            sub_count += 1;
+            sub_child = c.next_sibling();
+        }
+        assert_eq!(
+            sub_count, 1,
+            "Subfolder Reti must contain exactly 1 document card ('RetiDoc'), got {}",
+            sub_count
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    });
+}
