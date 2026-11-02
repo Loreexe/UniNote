@@ -897,3 +897,109 @@ fn test_eraser_segment_cut_clears_exact_visual_perimeter_no_penetration() {
         }
     }
 }
+
+#[test]
+fn test_intersecting_strokes_drag_erasure() {
+    let mut st = CanvasState::new();
+    st.eraser_mode = EraserMode::Segment;
+    st.eraser_radius = 15.0;
+
+    // Stroke 1: Vertical (x = 100, y from 20 to 180)
+    let style1 = StrokeStyle {
+        color: (0.0, 1.0, 0.0, 1.0),
+        base_width: 3.0,
+        ..Default::default()
+    };
+    let mut s1 = Stroke::new(1, style1, PipelineMode::CatmullRomSpline);
+    for i in 0..=16 {
+        s1.points.push(StrokePoint {
+            x: 100.0,
+            y: 20.0 + i as f64 * 10.0,
+            pressure: 0.5,
+            width: 3.0,
+            timestamp_ns: i * 1000,
+        });
+    }
+    s1.recompute_cache();
+
+    // Stroke 2: Horizontal (y = 100, x from 20 to 180)
+    let style2 = StrokeStyle {
+        color: (0.0, 1.0, 0.0, 1.0),
+        base_width: 3.0,
+        ..Default::default()
+    };
+    let mut s2 = Stroke::new(2, style2, PipelineMode::CatmullRomSpline);
+    for i in 0..=16 {
+        s2.points.push(StrokePoint {
+            x: 20.0 + i as f64 * 10.0,
+            y: 100.0,
+            pressure: 0.5,
+            width: 3.0,
+            timestamp_ns: i * 1000,
+        });
+    }
+    s2.recompute_cache();
+
+    let item1 = Item {
+        id: 1,
+        z_index: 0,
+        kind: ItemKind::Stroke(s1),
+    };
+    let item2 = Item {
+        id: 2,
+        z_index: 1,
+        kind: ItemKind::Stroke(s2),
+    };
+    st.document.pages[0].items.push(item1.clone());
+    st.document.pages[0].spatial_index.insert(&item1);
+    st.document.pages[0].items.push(item2.clone());
+    st.document.pages[0].spatial_index.insert(&item2);
+
+    println!("--- INITIAL: 2 intersecting strokes ---");
+    // Click 1 at intersection (100.0, 100.0)
+    NoteCanvas::erase_strokes_at(&mut st, (100.0, 100.0), 15.0);
+    println!(
+        "After click 1: items count = {}",
+        st.document.pages[0].items.len()
+    );
+    for it in &st.document.pages[0].items {
+        if let ItemKind::Stroke(ref s) = it.kind {
+            println!(
+                "  item {}: {} pts, bbox: {:?}",
+                it.id,
+                s.points.len(),
+                s.bounding_box()
+            );
+        }
+    }
+
+    // Now drag: move eraser to (106.0, 100.0), (112.0, 100.0), (120.0, 100.0), (130.0, 100.0)
+    for pos_x in [106.0, 112.0, 120.0, 130.0] {
+        NoteCanvas::erase_strokes_at(&mut st, (pos_x, 100.0), 15.0);
+        println!(
+            "After drag to ({:.1}, 100.0): items count = {}",
+            pos_x,
+            st.document.pages[0].items.len()
+        );
+        for it in &st.document.pages[0].items {
+            if let ItemKind::Stroke(ref s) = it.kind {
+                println!(
+                    "    item {}: {} pts, first pt: ({:.1}, {:.1})",
+                    it.id,
+                    s.points.len(),
+                    s.points[0].x,
+                    s.points[0].y
+                );
+                for p in &s.points {
+                    let d = ((p.x - pos_x).powi(2) + (p.y - 100.0).powi(2)).sqrt();
+                    if d < 15.0 {
+                        panic!(
+                            "ERROR: point ({:.1}, {:.1}) inside eraser circle! dist={:.2} < 15.0",
+                            p.x, p.y, d
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

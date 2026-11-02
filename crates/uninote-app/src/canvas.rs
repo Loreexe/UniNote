@@ -336,9 +336,20 @@ impl CanvasState {
         }
     }
 
-    /// Alloca un nuovo ItemId strettamente univoco sincronizzando next_stroke_id e history.
+    /// Alloca un nuovo ItemId strettamente univoco sincronizzando next_stroke_id, history e document.
     pub fn alloc_item_id(&mut self) -> u64 {
-        let id = self.next_stroke_id.max(self.history.next_item_id());
+        let max_doc_id = self
+            .document
+            .pages
+            .iter()
+            .flat_map(|p| p.items.iter())
+            .map(|it| it.id)
+            .max()
+            .unwrap_or(0);
+        let id = self
+            .next_stroke_id
+            .max(self.history.next_item_id())
+            .max(max_doc_id + 1);
         self.next_stroke_id = id + 1;
         self.history.set_next_item_id(id + 1);
         id
@@ -3752,7 +3763,13 @@ impl NoteCanvas {
                                     let fragments = s.slice_with_circle(doc_pt, eff_cut_radius);
                                     let is_unchanged = fragments.len() == 1
                                         && fragments[0].id == s.id
-                                        && fragments[0].points.len() == s.points.len();
+                                        && fragments[0].points.len() == s.points.len()
+                                        && fragments[0].points.iter().zip(&s.points).all(
+                                            |(p1, p2)| {
+                                                (p1.x - p2.x).abs() < 1e-4
+                                                    && (p1.y - p2.y).abs() < 1e-4
+                                            },
+                                        );
                                     if !is_unchanged {
                                         to_slice.push((item.clone(), fragments));
                                     }
