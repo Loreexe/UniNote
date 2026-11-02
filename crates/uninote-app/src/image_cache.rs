@@ -4,6 +4,9 @@
 //! associate agli `ImageItem`, memorizzate tramite digest SHA-256 e indicizzate per asset_hash.
 
 use cairo::ImageSurface;
+use gtk4::gdk;
+use gtk4::gdk::prelude::TextureExt;
+use gtk4::glib;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -126,6 +129,42 @@ impl ImageCacheManager {
         Ok(surface_clone)
     }
 
+    /// Decodifica byte immagine multi-formato (PNG nativo, JPEG, WebP, BMP, TIFF) e inserisce in cache.
+    pub fn insert_from_bytes(
+        &mut self,
+        hash: impl Into<String>,
+        raw_bytes: &[u8],
+    ) -> Result<ImageSurface, String> {
+        let hash_str = hash.into();
+        // 1. Tenta decodifica diretta come PNG via Cairo
+        let mut cursor = Cursor::new(raw_bytes);
+        if let Ok(surface) = ImageSurface::create_from_png(&mut cursor) {
+            let w = surface.width() as u32;
+            let h = surface.height() as u32;
+            let surface_clone = surface.clone();
+            self.insert(hash_str, surface, w, h);
+            return Ok(surface_clone);
+        }
+
+        // 2. Fallback multi-formato tramite GDK Texture
+        let glib_bytes = glib::Bytes::from(raw_bytes);
+        if let Ok(texture) = gdk::Texture::from_bytes(&glib_bytes) {
+            let png_bytes = texture.save_to_png_bytes();
+            if !png_bytes.is_empty() {
+                let mut cursor = Cursor::new(&png_bytes);
+                if let Ok(surface) = ImageSurface::create_from_png(&mut cursor) {
+                    let w = surface.width() as u32;
+                    let h = surface.height() as u32;
+                    let surface_clone = surface.clone();
+                    self.insert(hash_str, surface, w, h);
+                    return Ok(surface_clone);
+                }
+            }
+        }
+
+        Err("Formato immagine non supportato o byte non decodificabili".to_string())
+    }
+
     /// Carica un asset dal database SQLite se mancante in memoria e lo inserisce nella cache.
     pub fn get_or_load_from_store(
         &mut self,
@@ -136,7 +175,7 @@ impl ImageCacheManager {
             return Some(surf);
         }
         match store.load_asset(hash) {
-            Ok(Some(bytes)) => self.insert_from_png_bytes(hash.to_string(), &bytes).ok(),
+            Ok(Some(bytes)) => self.insert_from_bytes(hash.to_string(), &bytes).ok(),
             _ => None,
         }
     }

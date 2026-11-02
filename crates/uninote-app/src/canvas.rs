@@ -743,8 +743,8 @@ impl NoteCanvas {
             let mut cache = cache_rc.borrow_mut();
             if let Some(ref png_bytes) = png_for_cache {
                 let _ = cache.insert_from_png_bytes(&hash, png_bytes);
-            } else if detected_mime == "image/png" {
-                let _ = cache.insert_from_png_bytes(&hash, bytes);
+            } else {
+                let _ = cache.insert_from_bytes(&hash, bytes);
             }
         }
 
@@ -1830,16 +1830,14 @@ impl NoteCanvas {
                                         });
 
                                     if let Some(item) = item_opt {
-                                        if let ItemKind::Stroke(stroke) = &item.kind {
-                                            Self::draw_stroke_with_selection(
-                                                cr,
-                                                stroke,
-                                                item.id,
-                                                &st.selection,
-                                                current_mode,
-                                                is_dark,
-                                            );
-                                        }
+                                        Self::draw_item_with_selection(
+                                            cr,
+                                            item,
+                                            &st.selection,
+                                            &st,
+                                            current_mode,
+                                            is_dark,
+                                        );
                                     }
                                 }
 
@@ -1852,16 +1850,14 @@ impl NoteCanvas {
                                                 page.items.iter().find(|it| it.id == sel_id)
                                             {
                                                 visible_strokes += 1;
-                                                if let ItemKind::Stroke(stroke) = &item.kind {
-                                                    Self::draw_stroke_with_selection(
-                                                        cr,
-                                                        stroke,
-                                                        item.id,
-                                                        &st.selection,
-                                                        current_mode,
-                                                        is_dark,
-                                                    );
-                                                }
+                                                Self::draw_item_with_selection(
+                                                    cr,
+                                                    item,
+                                                    &st.selection,
+                                                    &st,
+                                                    current_mode,
+                                                    is_dark,
+                                                );
                                             }
                                         }
                                     }
@@ -1871,16 +1867,14 @@ impl NoteCanvas {
                             // Fallback sicuro su scansione lineare se l'indice non è ancora popolato
                             visible_strokes += page.items.len();
                             for item in &page.items {
-                                if let ItemKind::Stroke(stroke) = &item.kind {
-                                    Self::draw_stroke_with_selection(
-                                        cr,
-                                        stroke,
-                                        item.id,
-                                        &st.selection,
-                                        current_mode,
-                                        is_dark,
-                                    );
-                                }
+                                Self::draw_item_with_selection(
+                                    cr,
+                                    item,
+                                    &st.selection,
+                                    &st,
+                                    current_mode,
+                                    is_dark,
+                                );
                             }
                         }
                         let _ = cr.restore();
@@ -1946,16 +1940,14 @@ impl NoteCanvas {
                                     });
 
                                 if let Some(item) = item_opt {
-                                    if let ItemKind::Stroke(stroke) = &item.kind {
-                                        Self::draw_stroke_with_selection(
-                                            cr,
-                                            stroke,
-                                            item.id,
-                                            &st.selection,
-                                            current_mode,
-                                            is_dark,
-                                        );
-                                    }
+                                    Self::draw_item_with_selection(
+                                        cr,
+                                        item,
+                                        &st.selection,
+                                        &st,
+                                        current_mode,
+                                        is_dark,
+                                    );
                                 }
                             }
 
@@ -1966,16 +1958,14 @@ impl NoteCanvas {
                                             page.items.iter().find(|it| it.id == sel_id)
                                         {
                                             visible_strokes += 1;
-                                            if let ItemKind::Stroke(stroke) = &item.kind {
-                                                Self::draw_stroke_with_selection(
-                                                    cr,
-                                                    stroke,
-                                                    item.id,
-                                                    &st.selection,
-                                                    current_mode,
-                                                    is_dark,
-                                                );
-                                            }
+                                            Self::draw_item_with_selection(
+                                                cr,
+                                                item,
+                                                &st.selection,
+                                                &st,
+                                                current_mode,
+                                                is_dark,
+                                            );
                                         }
                                     }
                                 }
@@ -1983,34 +1973,32 @@ impl NoteCanvas {
                         } else {
                             // Fallback sicuro su scansione lineare se l'indice è vuoto
                             for item in &page.items {
-                                if let ItemKind::Stroke(stroke) = &item.kind {
-                                    if let Some(bbox) = stroke.bounding_box() {
-                                        let stroke_rect = uninote_core::coordinates::Rect2D::new(
-                                            bbox.min_x,
-                                            bbox.min_y,
-                                            bbox.max_x - bbox.min_x,
-                                            bbox.max_y - bbox.min_y,
-                                        );
-                                        let vis_rect = uninote_core::coordinates::Rect2D::new(
-                                            doc_left,
-                                            doc_top,
-                                            doc_right - doc_left,
-                                            doc_bottom - doc_top,
-                                        );
-                                        if !vis_rect.intersects(&stroke_rect) {
-                                            continue;
-                                        }
-                                    }
-                                    visible_strokes += 1;
-                                    Self::draw_stroke_with_selection(
-                                        cr,
-                                        stroke,
-                                        item.id,
-                                        &st.selection,
-                                        current_mode,
-                                        is_dark,
+                                if let Some(bbox) = item.bounding_box() {
+                                    let item_rect = uninote_core::coordinates::Rect2D::new(
+                                        bbox.min_x,
+                                        bbox.min_y,
+                                        bbox.max_x - bbox.min_x,
+                                        bbox.max_y - bbox.min_y,
                                     );
+                                    let vis_rect = uninote_core::coordinates::Rect2D::new(
+                                        doc_left,
+                                        doc_top,
+                                        doc_right - doc_left,
+                                        doc_bottom - doc_top,
+                                    );
+                                    if !vis_rect.intersects(&item_rect) {
+                                        continue;
+                                    }
                                 }
+                                visible_strokes += 1;
+                                Self::draw_item_with_selection(
+                                    cr,
+                                    item,
+                                    &st.selection,
+                                    &st,
+                                    current_mode,
+                                    is_dark,
+                                );
                             }
                         }
                     }
@@ -2058,6 +2046,112 @@ impl NoteCanvas {
                 hud_clone.update_view();
             }
         });
+    }
+
+    #[inline]
+    pub fn draw_item_with_selection(
+        cr: &gtk4::cairo::Context,
+        item: &uninote_core::Item,
+        selection: &SelectionState,
+        st: &CanvasState,
+        mode: PipelineMode,
+        is_dark: bool,
+    ) {
+        match &item.kind {
+            ItemKind::Stroke(stroke) => {
+                Self::draw_stroke_with_selection(cr, stroke, item.id, selection, mode, is_dark);
+            }
+            ItemKind::Image(image) => {
+                Self::draw_image_with_selection(cr, image, item.id, selection, st);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn draw_image_with_selection(
+        cr: &gtk4::cairo::Context,
+        image: &uninote_core::ImageItem,
+        item_id: u64,
+        selection: &SelectionState,
+        st: &CanvasState,
+    ) {
+        let is_selected_drag = selection.is_dragging && selection.selected_ids.contains(&item_id);
+        if is_selected_drag {
+            let _ = cr.save();
+            match selection.drag_kind {
+                SelectionDragKind::Translate => {
+                    cr.translate(selection.drag_offset.0, selection.drag_offset.1);
+                }
+                SelectionDragKind::ScaleHandle(_) => {
+                    let (ox, oy) = selection.scale_anchor;
+                    let (sx, sy) = selection.scale_factors;
+                    cr.translate(ox, oy);
+                    cr.scale(sx, sy);
+                    cr.translate(-ox, -oy);
+                }
+                SelectionDragKind::None => {}
+            }
+            Self::draw_image(cr, image, st);
+            let _ = cr.restore();
+        } else {
+            Self::draw_image(cr, image, st);
+        }
+    }
+
+    pub fn draw_image(
+        cr: &gtk4::cairo::Context,
+        image: &uninote_core::ImageItem,
+        st: &CanvasState,
+    ) {
+        let cache_rc = crate::image_cache::get_global_image_cache();
+        let mut cache = cache_rc.borrow_mut();
+        let surface_opt = if let Some(surf) = cache.get(&image.asset_hash) {
+            Some(surf)
+        } else if let Some(ref path) = st.file_path {
+            if let Ok(store) = uninote_storage::DocumentStore::open_or_create(path) {
+                cache.get_or_load_from_store(&image.asset_hash, &store)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let Some(surface) = surface_opt else {
+            return;
+        };
+
+        let surf_w = surface.width() as f64;
+        let surf_h = surface.height() as f64;
+        if surf_w <= 0.0 || surf_h <= 0.0 {
+            return;
+        }
+
+        let dest_x = image.bbox.min_x;
+        let dest_y = image.bbox.min_y;
+        let dest_w = image.bbox.max_x - image.bbox.min_x;
+        let dest_h = image.bbox.max_y - image.bbox.min_y;
+
+        if dest_w <= 0.0 || dest_h <= 0.0 {
+            return;
+        }
+
+        let _ = cr.save();
+        cr.translate(dest_x, dest_y);
+        cr.scale(dest_w / surf_w, dest_h / surf_h);
+
+        let _ = cr.set_source_surface(&surface, 0.0, 0.0);
+        let pattern = cr.source();
+        pattern.set_filter(gtk4::cairo::Filter::Bilinear);
+
+        let opacity = image.opacity.clamp(0.0, 1.0);
+        if opacity < 0.999 {
+            let _ = cr.paint_with_alpha(opacity);
+        } else {
+            let _ = cr.paint();
+        }
+
+        let _ = cr.restore();
     }
 
     #[inline]
@@ -3395,14 +3489,60 @@ impl NoteCanvas {
                 st.selection.drag_offset = (0.0, 0.0);
             }
             SelectionHitTestResult::None => {
-                st.selection.clear();
-                match st.selection.mode {
-                    SelectionMode::Lasso => {
-                        st.selection.active_lasso.push(doc_pt);
+                // Se il tocco/click avviene direttamente su un'immagine, selezionala al volo e prepara il trascinamento
+                let mut clicked_image: Option<(usize, ItemId, Rect)> = None;
+                if !st.document.pages.is_empty() {
+                    let est_idx = if st.document.format == DocumentFormat::Whiteboard {
+                        0
+                    } else {
+                        Viewport::find_page_index_at_y(doc_pt.1, st.document.pages.len())
+                            .min(st.document.pages.len().saturating_sub(1))
+                    };
+
+                    let mut candidate_pages = vec![est_idx];
+                    for idx in 0..st.document.pages.len() {
+                        if idx != est_idx {
+                            candidate_pages.push(idx);
+                        }
                     }
-                    SelectionMode::Rectangle => {
-                        st.selection.active_rect_start = Some(doc_pt);
-                        st.selection.active_rect_current = Some(doc_pt);
+
+                    for page_idx in candidate_pages {
+                        if let Some(page) = st.document.pages.get(page_idx) {
+                            for item in page.items.iter().rev() {
+                                if let ItemKind::Image(ref img) = item.kind {
+                                    if img.bbox.normalized().contains_point(doc_pt.0, doc_pt.1) {
+                                        clicked_image =
+                                            Some((page_idx, item.id, img.bbox.normalized()));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if clicked_image.is_some() {
+                            break;
+                        }
+                    }
+                }
+
+                if let Some((page_idx, img_id, img_bbox)) = clicked_image {
+                    st.selection.clear();
+                    st.selection.page_index = Some(page_idx);
+                    st.selection.selected_ids = vec![img_id];
+                    st.selection.bbox = Some(img_bbox);
+                    st.selection.is_dragging = true;
+                    st.selection.drag_kind = SelectionDragKind::Translate;
+                    st.selection.drag_start_doc = Some(doc_pt);
+                    st.selection.drag_offset = (0.0, 0.0);
+                } else {
+                    st.selection.clear();
+                    match st.selection.mode {
+                        SelectionMode::Lasso => {
+                            st.selection.active_lasso.push(doc_pt);
+                        }
+                        SelectionMode::Rectangle => {
+                            st.selection.active_rect_start = Some(doc_pt);
+                            st.selection.active_rect_current = Some(doc_pt);
+                        }
                     }
                 }
             }

@@ -39,7 +39,7 @@ pub use preferences::{
     AppPreferences, BarrelButtonAction, DashboardRecentStore, FullAppSettingsModel, PenSlotConfig,
     PressureCurve, RecentDocumentMeta, StylusSensitivity, ThemeMode,
 };
-pub use selection::AppSelectionEngine;
+pub use selection::{is_image_selected_by_lasso, is_image_selected_by_rect, AppSelectionEngine};
 pub use settings::{
     UniNoteSettingsWindow, APP_VERSION, APP_VERSION_LABEL, GITHUB_NEW_ISSUE_URL,
     GITHUB_RELEASES_URL, GITHUB_REPO_URL, GPL_3_0_LICENSE_URL,

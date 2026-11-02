@@ -871,3 +871,57 @@ fn test_paste_from_clipboard_fallback_to_image() {
         );
     });
 }
+
+// ============================================================================
+// TEST 11: CAIRO RASTERING VERIFICATION OF PASTED IMAGE ITEM
+// ============================================================================
+
+#[test]
+fn test_cairo_rendering_of_pasted_image_item() {
+    run_on_gtk_thread(|| {
+        let canvas = create_test_canvas();
+        let png_bytes = create_test_png_bytes(50, 50, (0.8, 0.2, 0.2));
+
+        let item_id = canvas
+            .insert_image_bytes(&png_bytes, Some("image/png"))
+            .expect("insert image");
+
+        let state_rc = canvas.state();
+        let st = state_rc.borrow();
+        let page = &st.document.pages[0];
+        let item = page
+            .items
+            .iter()
+            .find(|it| it.id == item_id)
+            .expect("item exists");
+
+        // Crea una superficie Cairo target in memoria e renderizza l'item
+        let mut target_surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 600, 800)
+            .expect("create target surface");
+        {
+            let cr = cairo::Context::new(&target_surface).expect("create cairo context");
+
+            uninote_app::canvas::NoteCanvas::draw_item_with_selection(
+                &cr,
+                item,
+                &st.selection,
+                &st,
+                uninote_stroke::types::PipelineMode::CatmullRomSpline,
+                false,
+            );
+        }
+
+        // Verifica che la superficie non sia completamente vuota (almeno alcuni pixel non zero)
+        let data = target_surface.data().expect("target surface data");
+        let non_zero_pixels = data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|chunk| chunk[3] > 0)
+            .count();
+        assert!(
+            non_zero_pixels > 0,
+            "Target surface must contain rendered non-zero pixels for the pasted image"
+        );
+    });
+}

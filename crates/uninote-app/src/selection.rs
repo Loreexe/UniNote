@@ -3,9 +3,73 @@
 use std::collections::HashSet;
 use uninote_core::model::{ItemId, ItemKind, Page};
 use uninote_stroke::selection::{
-    is_stroke_selected_by_lasso, is_stroke_selected_by_rect, SelectionEngine,
+    is_stroke_selected_by_lasso, is_stroke_selected_by_rect, point_in_polygon,
 };
 use uninote_stroke::types::Rect;
+
+/// Determina se un'immagine è selezionata da un rettangolo di selezione.
+///
+/// Regola geometrica: l'immagine è selezionata se il rettangolo di selezione la racchiude interamente,
+/// oppure se si intersecano/sovrappongono.
+pub fn is_image_selected_by_rect(image: &uninote_core::model::ImageItem, rect: &Rect) -> bool {
+    let norm_rect = rect.normalized();
+    let img_bbox = image.bbox.normalized();
+    norm_rect.contains_rect(&img_bbox) || norm_rect.intersects_rect(&img_bbox)
+}
+
+/// Determina se un'immagine è selezionata da un poligono di lazo.
+///
+/// Regola geometrica: il centro dell'immagine o almeno uno dei 4 vertici cade all'interno del poligono,
+/// oppure almeno uno dei vertici del poligono cade all'interno del bounding box dell'immagine.
+pub fn is_image_selected_by_lasso(
+    image: &uninote_core::model::ImageItem,
+    polygon: &[(f64, f64)],
+) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    let img_bbox = image.bbox.normalized();
+    let center_x = (img_bbox.min_x + img_bbox.max_x) * 0.5;
+    let center_y = (img_bbox.min_y + img_bbox.max_y) * 0.5;
+
+    if point_in_polygon(center_x, center_y, polygon) {
+        return true;
+    }
+
+    let corners = [
+        (img_bbox.min_x, img_bbox.min_y),
+        (img_bbox.max_x, img_bbox.min_y),
+        (img_bbox.max_x, img_bbox.max_y),
+        (img_bbox.min_x, img_bbox.max_y),
+    ];
+    for (cx, cy) in corners {
+        if point_in_polygon(cx, cy, polygon) {
+            return true;
+        }
+    }
+
+    for &(px, py) in polygon {
+        if img_bbox.contains_point(px, py) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Unifica una sequenza di bounding box in un singolo AABB opzionale.
+#[inline]
+fn combine_selection_bboxes(bboxes: &[Rect]) -> Option<Rect> {
+    if bboxes.is_empty() {
+        None
+    } else {
+        let mut u = bboxes[0];
+        for b in &bboxes[1..] {
+            u = u.union(b);
+        }
+        Some(u)
+    }
+}
 
 /// Motore di selezione accelerato a livello applicativo con pre-filtraggio spaziale R-Tree.
 pub struct AppSelectionEngine;
@@ -32,37 +96,57 @@ impl AppSelectionEngine {
 
             let candidate_set: HashSet<u64> = candidates.iter().map(|c| c.item_id).collect();
             let mut selected_ids = Vec::new();
-            let mut selected_strokes = Vec::new();
+            let mut selected_bboxes = Vec::new();
 
             for item in &page.items {
                 if !candidate_set.contains(&item.id) {
                     continue;
                 }
-                if let ItemKind::Stroke(ref s) = item.kind {
-                    if is_stroke_selected_by_rect(s, &norm_rect) {
-                        selected_ids.push(item.id);
-                        selected_strokes.push(s);
+                match &item.kind {
+                    ItemKind::Stroke(ref s) => {
+                        if is_stroke_selected_by_rect(s, &norm_rect) {
+                            selected_ids.push(item.id);
+                            if let Some(bbox) = s.bounding_box() {
+                                selected_bboxes.push(bbox);
+                            }
+                        }
+                    }
+                    ItemKind::Image(ref img) => {
+                        if is_image_selected_by_rect(img, &norm_rect) {
+                            selected_ids.push(item.id);
+                            selected_bboxes.push(img.bbox.normalized());
+                        }
                     }
                 }
             }
 
-            let bbox = SelectionEngine::compute_selection_bounding_box(selected_strokes);
+            let bbox = combine_selection_bboxes(&selected_bboxes);
             (selected_ids, bbox)
         } else {
             // Fallback trasparente su scansione lineare se l'indice spaziale non è popolato
             let mut selected_ids = Vec::new();
-            let mut selected_strokes = Vec::new();
+            let mut selected_bboxes = Vec::new();
 
             for item in &page.items {
-                if let ItemKind::Stroke(ref s) = item.kind {
-                    if is_stroke_selected_by_rect(s, &norm_rect) {
-                        selected_ids.push(item.id);
-                        selected_strokes.push(s);
+                match &item.kind {
+                    ItemKind::Stroke(ref s) => {
+                        if is_stroke_selected_by_rect(s, &norm_rect) {
+                            selected_ids.push(item.id);
+                            if let Some(bbox) = s.bounding_box() {
+                                selected_bboxes.push(bbox);
+                            }
+                        }
+                    }
+                    ItemKind::Image(ref img) => {
+                        if is_image_selected_by_rect(img, &norm_rect) {
+                            selected_ids.push(item.id);
+                            selected_bboxes.push(img.bbox.normalized());
+                        }
                     }
                 }
             }
 
-            let bbox = SelectionEngine::compute_selection_bounding_box(selected_strokes);
+            let bbox = combine_selection_bboxes(&selected_bboxes);
             (selected_ids, bbox)
         }
     }
@@ -107,37 +191,57 @@ impl AppSelectionEngine {
 
             let candidate_set: HashSet<u64> = candidates.iter().map(|c| c.item_id).collect();
             let mut selected_ids = Vec::new();
-            let mut selected_strokes = Vec::new();
+            let mut selected_bboxes = Vec::new();
 
             for item in &page.items {
                 if !candidate_set.contains(&item.id) {
                     continue;
                 }
-                if let ItemKind::Stroke(ref s) = item.kind {
-                    if is_stroke_selected_by_lasso(s, poly) {
-                        selected_ids.push(item.id);
-                        selected_strokes.push(s);
+                match &item.kind {
+                    ItemKind::Stroke(ref s) => {
+                        if is_stroke_selected_by_lasso(s, poly) {
+                            selected_ids.push(item.id);
+                            if let Some(bbox) = s.bounding_box() {
+                                selected_bboxes.push(bbox);
+                            }
+                        }
+                    }
+                    ItemKind::Image(ref img) => {
+                        if is_image_selected_by_lasso(img, poly) {
+                            selected_ids.push(item.id);
+                            selected_bboxes.push(img.bbox.normalized());
+                        }
                     }
                 }
             }
 
-            let bbox = SelectionEngine::compute_selection_bounding_box(selected_strokes);
+            let bbox = combine_selection_bboxes(&selected_bboxes);
             (selected_ids, bbox)
         } else {
             // Fallback trasparente su scansione lineare se l'indice spaziale non è popolato
             let mut selected_ids = Vec::new();
-            let mut selected_strokes = Vec::new();
+            let mut selected_bboxes = Vec::new();
 
             for item in &page.items {
-                if let ItemKind::Stroke(ref s) = item.kind {
-                    if is_stroke_selected_by_lasso(s, poly) {
-                        selected_ids.push(item.id);
-                        selected_strokes.push(s);
+                match &item.kind {
+                    ItemKind::Stroke(ref s) => {
+                        if is_stroke_selected_by_lasso(s, poly) {
+                            selected_ids.push(item.id);
+                            if let Some(bbox) = s.bounding_box() {
+                                selected_bboxes.push(bbox);
+                            }
+                        }
+                    }
+                    ItemKind::Image(ref img) => {
+                        if is_image_selected_by_lasso(img, poly) {
+                            selected_ids.push(item.id);
+                            selected_bboxes.push(img.bbox.normalized());
+                        }
                     }
                 }
             }
 
-            let bbox = SelectionEngine::compute_selection_bounding_box(selected_strokes);
+            let bbox = combine_selection_bboxes(&selected_bboxes);
             (selected_ids, bbox)
         }
     }
