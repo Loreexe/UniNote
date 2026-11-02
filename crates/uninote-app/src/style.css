@@ -1354,3 +1354,53 @@ scale.dms-pill-scale trough {
     color: @dms_text_secondary_light;
 }
 
+/* Feedback visivo Drag & Drop e Selettore Cartelle */
+.dms-drop-active {
+    outline: 2px solid @dms_primary;
+    outline-offset: -2px;
+    background: rgba(109, 210, 255, 0.16);
+    border-radius: 12px;
+}
+
+.light-theme .dms-drop-active {
+    outline: 2px solid @dms_primary_light;
+    outline-offset: -2px;
+    background: rgba(0, 102, 139, 0.12);
+}
+
+.dms-folder-picker-list {
+    background-color: @dms_surface_container_high;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 6px;
+}
+
+.light-theme .dms-folder-picker-list {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.dms-folder-picker-row {
+    border-radius: 8px;
+    padding: 2px 4px;
+    transition: background-color 150ms ease;
+}
+
+.dms-folder-picker-row:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.light-theme .dms-folder-picker-row:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+.dms-folder-picker-row:selected {
+    background-color: @dms_primary_container;
+    color: @dms_on_primary_container;
+}
+
+.light-theme .dms-folder-picker-row:selected {
+    background-color: @dms_primary_container_light;
+    color: @dms_on_primary_container_light;
+}
+

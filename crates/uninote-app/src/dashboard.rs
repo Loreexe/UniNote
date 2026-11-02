@@ -3,12 +3,14 @@ use crate::preferences::{
     next_available_note_path_in_dir, DashboardRecentStore, RecentDocumentMeta,
 };
 use gtk4::cairo::{Context, Format, ImageSurface};
+use gtk4::gdk;
 use gtk4::gio;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, DropDown, Entry, FileDialog, FlowBox, FlowBoxChild, GestureClick,
-    Label, Orientation, Picture, ScrolledWindow, SearchEntry, Window,
+    Align, Box as GtkBox, Button, DragSource, DropDown, DropTarget, Entry, FileDialog, FlowBox,
+    FlowBoxChild, GestureClick, Label, ListBox, ListBoxRow, Orientation, Picture, ScrolledWindow,
+    SearchEntry, Window,
 };
 use std::cell::RefCell;
 use std::fs;
@@ -548,6 +550,111 @@ pub fn is_safe_subpath(root: &Path, candidate: &Path) -> bool {
         return false;
     };
     canonical_candidate.starts_with(&canonical_root)
+}
+
+/// Sposta in modo atomico e sicuro un file da un percorso sorgente a una cartella di destinazione,
+/// gestendo eventuali collisioni di nome aggiungendo un suffisso progressivo ed eseguendo
+/// fallback a copy+remove se i filesystem sono distinti.
+pub fn move_document_to_folder(src_path: &Path, target_dir: &Path) -> Result<PathBuf, String> {
+    if !src_path.exists() {
+        return Err("Il file di origine non esiste".to_string());
+    }
+    if !target_dir.exists() {
+        std::fs::create_dir_all(target_dir)
+            .map_err(|e| format!("Impossibile creare la cartella di destinazione: {}", e))?;
+    }
+
+    let file_name = src_path
+        .file_name()
+        .ok_or_else(|| "Nome file non valido".to_string())?;
+
+    let mut dst_path = target_dir.join(file_name);
+    if dst_path == src_path {
+        return Ok(dst_path);
+    }
+
+    if dst_path.exists() {
+        let stem = src_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("documento");
+        let ext = src_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("uninote");
+
+        let mut idx = 1;
+        loop {
+            idx += 1;
+            let candidate = target_dir.join(format!("{} ({}).{}", stem, idx, ext));
+            if !candidate.exists() {
+                dst_path = candidate;
+                break;
+            }
+        }
+    }
+
+    if std::fs::rename(src_path, &dst_path).is_err() {
+        std::fs::copy(src_path, &dst_path)
+            .map_err(|e| format!("Errore durante lo spostamento del file: {}", e))?;
+        let _ = std::fs::remove_file(src_path);
+    }
+
+    Ok(dst_path)
+}
+
+/// Collega un controller `DropTarget` GTK4 a un contenitore cartella (nella sidebar o nel flowbox),
+/// consentendo di ricevere file trascinati da card di documenti e spostarli istantaneamente.
+pub fn attach_folder_drop_target(
+    widget: &GtkBox,
+    target_dir: PathBuf,
+    store: &Rc<RefCell<DashboardRecentStore>>,
+    refresh_cb: &Rc<dyn Fn()>,
+) {
+    let drop_target = DropTarget::new(glib::Type::STRING, gdk::DragAction::MOVE);
+    let store_clone = store.clone();
+    let ref_clone = refresh_cb.clone();
+    let target_clone = target_dir;
+    let widget_weak = widget.downgrade();
+    drop_target.connect_enter(move |_, _, _| {
+        if let Some(w) = widget_weak.upgrade() {
+            w.add_css_class("dms-drop-active");
+        }
+        gdk::DragAction::MOVE
+    });
+    let widget_weak2 = widget.downgrade();
+    drop_target.connect_leave(move |_| {
+        if let Some(w) = widget_weak2.upgrade() {
+            w.remove_css_class("dms-drop-active");
+        }
+    });
+    let widget_weak3 = widget.downgrade();
+    drop_target.connect_drop(move |_, val, _, _| {
+        if let Some(w) = widget_weak3.upgrade() {
+            w.remove_css_class("dms-drop-active");
+        }
+        if let Ok(src_path_str) = val.get::<String>() {
+            let src = PathBuf::from(&src_path_str);
+            if src.exists() && src.parent() != Some(&target_clone) {
+                if let Ok(new_path) = move_document_to_folder(&src, &target_clone) {
+                    let new_title = new_path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("Documento");
+                    store_clone.borrow_mut().move_or_rename_recent(
+                        &src_path_str,
+                        &new_path.to_string_lossy(),
+                        new_title,
+                    );
+                    let _ = store_clone.borrow().save();
+                    ref_clone();
+                    return true;
+                }
+            }
+        }
+        false
+    });
+    widget.add_controller(drop_target);
 }
 
 /// Esegue la scansione di una directory del filesystem, enumerando sottocartelle e file di appunti UniNote.
@@ -1638,6 +1745,7 @@ impl UniNoteDashboard {
             &cur_folder_borrow,
             &nav_cb,
             store,
+            &ref_cb,
         );
 
         Self::populate_breadcrumbs(
@@ -1668,6 +1776,7 @@ impl UniNoteDashboard {
         current_folder: &Path,
         nav_cb: &Rc<dyn Fn(PathBuf)>,
         store: &Rc<RefCell<DashboardRecentStore>>,
+        refresh_cb: &Rc<dyn Fn()>,
     ) {
         while let Some(child) = folder_list_box.first_child() {
             folder_list_box.remove(&child);
@@ -1723,6 +1832,7 @@ impl UniNoteDashboard {
             nav_root(rf.clone());
         });
         root_item.add_controller(gesture_root);
+        attach_folder_drop_target(&root_item, root_folder.to_path_buf(), store, refresh_cb);
         folder_list_box.append(&root_item);
 
         // 2. Sottocartelle ricorsive
@@ -1778,6 +1888,7 @@ impl UniNoteDashboard {
                 nav(target_p.clone());
             });
             item_box.add_controller(gesture);
+            attach_folder_drop_target(&item_box, path.clone(), store, refresh_cb);
             folder_list_box.append(&item_box);
         }
 
@@ -1843,6 +1954,7 @@ impl UniNoteDashboard {
                     nav(target_p.clone());
                 });
                 item_box.add_controller(gesture);
+                attach_folder_drop_target(&item_box, nc_dir.clone(), store, refresh_cb);
                 folder_list_box.append(&item_box);
 
                 let mut nc_subfolders = Vec::new();
@@ -1895,6 +2007,7 @@ impl UniNoteDashboard {
                         n(tp.clone());
                     });
                     sub_box.add_controller(g);
+                    attach_folder_drop_target(&sub_box, path.clone(), store, refresh_cb);
                     folder_list_box.append(&sub_box);
                 }
             }
@@ -1946,6 +2059,7 @@ impl UniNoteDashboard {
                     nav(target_p.clone());
                 });
                 item_box.add_controller(gesture);
+                attach_folder_drop_target(&item_box, gd_dir.clone(), store, refresh_cb);
                 folder_list_box.append(&item_box);
 
                 let mut gd_subfolders = Vec::new();
@@ -1998,6 +2112,7 @@ impl UniNoteDashboard {
                         n(tp.clone());
                     });
                     sub_box.add_controller(g);
+                    attach_folder_drop_target(&sub_box, path.clone(), store, refresh_cb);
                     folder_list_box.append(&sub_box);
                 }
             }
@@ -2725,8 +2840,382 @@ impl UniNoteDashboard {
         });
         lbl_title.add_controller(gesture_lbl);
 
+        // Collega DropTarget per ricevere note trascinate col cursore
+        attach_folder_drop_target(&card_box, folder.path.clone(), store, &refresh_cb);
+
         child.set_child(Some(&card_box));
         child
+    }
+
+    /// Mostra il dialogo Adwaita per spostare un documento tra cartelle e sottocartelle.
+    pub fn open_move_dialog(
+        meta: &RecentDocumentMeta,
+        store: &Rc<RefCell<DashboardRecentStore>>,
+        refresh_cb: Rc<dyn Fn()>,
+        parent_win: Option<&Window>,
+    ) {
+        let src_path = PathBuf::from(&meta.file_path);
+        let current_parent = src_path.parent().map(|p| p.to_path_buf());
+        let root_dir = PathBuf::from(&store.borrow().default_notes_dir);
+
+        let dlg = Window::builder()
+            .title("Sposta Documento — UniNote")
+            .modal(true)
+            .default_width(460)
+            .default_height(480)
+            .css_classes(["uninote-dialog", "dms-dialog"])
+            .build();
+
+        if let Some(p) = parent_win {
+            dlg.set_transient_for(Some(p));
+        }
+
+        let main_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(12)
+            .margin_start(20)
+            .margin_end(20)
+            .margin_top(20)
+            .margin_bottom(20)
+            .build();
+
+        let lbl_title = Label::builder()
+            .label(format!("Sposta \"{}\"", meta.title))
+            .css_classes(["heading"])
+            .xalign(0.0)
+            .ellipsize(gtk4::pango::EllipsizeMode::End)
+            .build();
+        main_box.append(&lbl_title);
+
+        let cur_dir_name = if current_parent.as_ref() == Some(&root_dir) {
+            "Tutti i Documenti (Cartella principale)".to_string()
+        } else {
+            current_parent
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .and_then(|s| s.to_str())
+                .unwrap_or("Sconosciuta")
+                .to_string()
+        };
+
+        let lbl_cur = Label::builder()
+            .label(format!("Posizione attuale: {}", cur_dir_name))
+            .css_classes(["dim-label"])
+            .xalign(0.0)
+            .build();
+        main_box.append(&lbl_cur);
+
+        let lbl_select = Label::builder()
+            .label("Seleziona cartella di destinazione:")
+            .css_classes(["caption"])
+            .xalign(0.0)
+            .margin_top(4)
+            .build();
+        main_box.append(&lbl_select);
+
+        // Raccoglie tutte le destinazioni possibili
+        let mut dests: Vec<(PathBuf, String, usize, bool)> = Vec::new();
+
+        // 1. Cartella Principale
+        let is_root_curr = current_parent.as_ref() == Some(&root_dir);
+        dests.push((
+            root_dir.clone(),
+            "Tutti i Documenti (Cartella principale)".to_string(),
+            0,
+            is_root_curr,
+        ));
+
+        // 2. Sottocartelle ricorsive
+        let mut subs = Vec::new();
+        Self::collect_subfolders_recursive(&root_dir, 1, &mut subs);
+        for (p, name, _, depth) in subs {
+            let is_curr = current_parent.as_ref() == Some(&p);
+            dests.push((p, name, depth, is_curr));
+        }
+
+        // 3. Nextcloud (se configurato)
+        let cloud_settings = crate::cloud::CloudSyncSettings::load();
+        if let Some(ref nc) = cloud_settings.nextcloud {
+            let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
+            if nc_dir.exists() {
+                let is_curr = current_parent.as_ref() == Some(&nc_dir);
+                dests.push((
+                    nc_dir.clone(),
+                    format!("Nextcloud ({})", nc.username),
+                    0,
+                    is_curr,
+                ));
+                let mut nc_subs = Vec::new();
+                Self::collect_subfolders_recursive(&nc_dir, 1, &mut nc_subs);
+                for (p, name, _, depth) in nc_subs {
+                    let is_curr = current_parent.as_ref() == Some(&p);
+                    dests.push((p, name, depth, is_curr));
+                }
+            }
+        }
+
+        // 4. Google Drive (se configurato)
+        if let Some(ref gd) = cloud_settings.google_drive {
+            let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
+            if gd_dir.exists() {
+                let is_curr = current_parent.as_ref() == Some(&gd_dir);
+                dests.push((
+                    gd_dir.clone(),
+                    format!("Google Drive ({})", gd.account_email),
+                    0,
+                    is_curr,
+                ));
+                let mut gd_subs = Vec::new();
+                Self::collect_subfolders_recursive(&gd_dir, 1, &mut gd_subs);
+                for (p, name, _, depth) in gd_subs {
+                    let is_curr = current_parent.as_ref() == Some(&p);
+                    dests.push((p, name, depth, is_curr));
+                }
+            }
+        }
+
+        let list_box = ListBox::builder()
+            .selection_mode(gtk4::SelectionMode::Single)
+            .css_classes(["dms-folder-picker-list"])
+            .build();
+
+        let dest_paths: Rc<RefCell<Vec<PathBuf>>> =
+            Rc::new(RefCell::new(dests.iter().map(|d| d.0.clone()).collect()));
+        let dest_is_curr: Rc<RefCell<Vec<bool>>> =
+            Rc::new(RefCell::new(dests.iter().map(|d| d.3).collect()));
+
+        for (_p, name, depth, is_curr) in &dests {
+            let row = ListBoxRow::new();
+            row.add_css_class("dms-folder-picker-row");
+            let hbox = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(10)
+                .margin_start(8 + (*depth as i32 * 14))
+                .margin_end(8)
+                .margin_top(6)
+                .margin_bottom(6)
+                .build();
+
+            let icon = create_icon(
+                if *is_curr {
+                    IconKind::FolderOpen
+                } else {
+                    IconKind::Folder
+                },
+                16,
+                None,
+            );
+            hbox.append(&icon);
+
+            let lbl = Label::builder()
+                .label(name)
+                .hexpand(true)
+                .xalign(0.0)
+                .ellipsize(gtk4::pango::EllipsizeMode::End)
+                .build();
+            hbox.append(&lbl);
+
+            if *is_curr {
+                let badge = Label::builder()
+                    .label("(attuale)")
+                    .css_classes(["dim-label", "dms-folder-badge"])
+                    .build();
+                hbox.append(&badge);
+            }
+
+            row.set_child(Some(&hbox));
+            list_box.append(&row);
+        }
+
+        let scroll = ScrolledWindow::builder()
+            .child(&list_box)
+            .vexpand(true)
+            .min_content_height(200)
+            .build();
+        main_box.append(&scroll);
+
+        // Barra per creazione al volo di una nuova cartella
+        let new_folder_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(8)
+            .margin_top(4)
+            .build();
+        let new_folder_entry = Entry::builder()
+            .placeholder_text("Nome nuova sottocartella...")
+            .hexpand(true)
+            .css_classes(["dms-entry"])
+            .build();
+        let btn_add_folder = Button::builder()
+            .label("+ Nuova Cartella")
+            .css_classes(["dms-action-btn"])
+            .build();
+        new_folder_box.append(&new_folder_entry);
+        new_folder_box.append(&btn_add_folder);
+        main_box.append(&new_folder_box);
+
+        // Pulsanti inferiori
+        let act_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(10)
+            .halign(Align::End)
+            .margin_top(8)
+            .build();
+
+        let btn_cancel = Button::builder()
+            .label("Annulla")
+            .css_classes(["dms-action-btn"])
+            .build();
+
+        let btn_move = Button::builder()
+            .label("Sposta qui")
+            .css_classes(["suggested-action", "dms-btn-primary"])
+            .sensitive(false)
+            .build();
+
+        act_box.append(&btn_cancel);
+        act_box.append(&btn_move);
+        main_box.append(&act_box);
+
+        dlg.set_child(Some(&main_box));
+
+        let selected_target: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+
+        let btn_move_ref = btn_move.clone();
+        let dest_paths_ref = dest_paths.clone();
+        let dest_is_curr_ref = dest_is_curr.clone();
+        let sel_target_ref = selected_target.clone();
+
+        list_box.connect_row_selected(move |_, row_opt| {
+            if let Some(row) = row_opt {
+                let idx = row.index() as usize;
+                let paths = dest_paths_ref.borrow();
+                let is_currs = dest_is_curr_ref.borrow();
+                if idx < paths.len() {
+                    let is_current = is_currs.get(idx).copied().unwrap_or(false);
+                    *sel_target_ref.borrow_mut() = Some(paths[idx].clone());
+                    btn_move_ref.set_sensitive(!is_current);
+                } else {
+                    btn_move_ref.set_sensitive(false);
+                }
+            } else {
+                btn_move_ref.set_sensitive(false);
+            }
+        });
+
+        let dlg_for_cancel = dlg.clone();
+        btn_cancel.connect_clicked(move |_| {
+            dlg_for_cancel.close();
+        });
+
+        // Esecuzione dello spostamento
+        let dlg_for_move = dlg.clone();
+        let meta_for_exec = meta.clone();
+        let store_for_exec = store.clone();
+        let ref_for_exec = refresh_cb;
+        let sel_for_exec = selected_target.clone();
+
+        let execute_move = move || {
+            let target_opt = sel_for_exec.borrow().clone();
+            if let Some(target_dir) = target_opt {
+                let src = PathBuf::from(&meta_for_exec.file_path);
+                if src.exists() && src.parent() != Some(&target_dir) {
+                    if let Ok(new_path) = move_document_to_folder(&src, &target_dir) {
+                        let new_title = new_path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(&meta_for_exec.title);
+                        store_for_exec.borrow_mut().move_or_rename_recent(
+                            &meta_for_exec.file_path,
+                            &new_path.to_string_lossy(),
+                            new_title,
+                        );
+                        let _ = store_for_exec.borrow().save();
+                        ref_for_exec();
+                    }
+                }
+            }
+            dlg_for_move.close();
+        };
+
+        let exec_clone = execute_move.clone();
+        btn_move.connect_clicked(move |_| {
+            exec_clone();
+        });
+
+        let exec_double = execute_move;
+        let dest_is_curr_double = dest_is_curr.clone();
+        list_box.connect_row_activated(move |_, row| {
+            let idx = row.index() as usize;
+            let is_currs = dest_is_curr_double.borrow();
+            if idx < is_currs.len() && !is_currs[idx] {
+                exec_double();
+            }
+        });
+
+        // Gestione creazione nuova cartella
+        let list_box_for_add = list_box;
+        let entry_for_add = new_folder_entry;
+        let sel_target_for_add = selected_target;
+        let root_for_add = root_dir;
+        let dest_paths_for_add = dest_paths;
+        let dest_is_curr_for_add = dest_is_curr;
+        let btn_move_for_add = btn_move;
+
+        let entry_input = entry_for_add.clone();
+        let add_folder_action = move || {
+            let raw_name = entry_input.text().trim().to_string();
+            if let Ok(clean_name) = sanitize_folder_name(&raw_name) {
+                let base_dir = sel_target_for_add
+                    .borrow()
+                    .clone()
+                    .unwrap_or_else(|| root_for_add.clone());
+                let new_dir = base_dir.join(&clean_name);
+                if std::fs::create_dir_all(&new_dir).is_ok() {
+                    let row = ListBoxRow::new();
+                    row.add_css_class("dms-folder-picker-row");
+                    let hbox = GtkBox::builder()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(10)
+                        .margin_start(16)
+                        .margin_end(8)
+                        .margin_top(6)
+                        .margin_bottom(6)
+                        .build();
+                    let icon = create_icon(IconKind::Folder, 16, None);
+                    hbox.append(&icon);
+                    let lbl = Label::builder()
+                        .label(&clean_name)
+                        .hexpand(true)
+                        .xalign(0.0)
+                        .build();
+                    hbox.append(&lbl);
+                    let badge = Label::builder()
+                        .label("(nuova)")
+                        .css_classes(["dim-label", "dms-folder-badge"])
+                        .build();
+                    hbox.append(&badge);
+                    row.set_child(Some(&hbox));
+
+                    dest_paths_for_add.borrow_mut().push(new_dir.clone());
+                    dest_is_curr_for_add.borrow_mut().push(false);
+                    list_box_for_add.append(&row);
+                    list_box_for_add.select_row(Some(&row));
+                    *sel_target_for_add.borrow_mut() = Some(new_dir);
+                    btn_move_for_add.set_sensitive(true);
+                    entry_input.set_text("");
+                }
+            }
+        };
+
+        let add_btn_clone = add_folder_action.clone();
+        btn_add_folder.connect_clicked(move |_| {
+            add_btn_clone();
+        });
+        entry_for_add.connect_activate(move |_| {
+            add_folder_action();
+        });
+
+        dlg.present();
     }
 
     /// Crea il widget grafico di una singola card quaderno conforme a DMS.
@@ -2767,6 +3256,15 @@ impl UniNoteDashboard {
             .css_classes(["dms-dashboard-card"])
             .can_target(true)
             .build();
+
+        // DragSource per consentire di trascinare il documento verso una cartella
+        let drag_src = DragSource::new();
+        drag_src.set_actions(gdk::DragAction::MOVE);
+        let fpath_drag = meta.file_path.clone();
+        drag_src.connect_prepare(move |_, _, _| {
+            Some(gdk::ContentProvider::for_value(&fpath_drag.to_value()))
+        });
+        card_box.add_controller(drag_src);
 
         // 1. Miniatura con altezza uniforme 260px (ContentFit::Cover scala la texture 240x340 impeccabilmente)
         let thumb_path = get_or_create_thumbnail_path(meta);
@@ -2855,10 +3353,12 @@ impl UniNoteDashboard {
 
         let btn_rename = make_menu_item(IconKind::Edit, "Rinomina", false);
         let btn_duplicate = make_menu_item(IconKind::Copy, "Duplica", false);
+        let btn_move = make_menu_item(IconKind::Folder, "Sposta in...", false);
         let btn_delete = make_menu_item(IconKind::Trash, "Elimina", true);
 
         menu_box.append(&btn_rename);
         menu_box.append(&btn_duplicate);
+        menu_box.append(&btn_move);
 
         let sep = gtk4::Separator::new(Orientation::Horizontal);
         sep.add_css_class("dms-menu-separator");
@@ -3016,6 +3516,22 @@ impl UniNoteDashboard {
             }
         });
 
+        // Azione Sposta in...
+        let pop_for_move = popover.clone();
+        let meta_for_move = meta.clone();
+        let store_for_move = store.clone();
+        let ref_move = refresh_cb.clone();
+        btn_move.connect_clicked(move |btn| {
+            pop_for_move.popdown();
+            let parent_win = btn.root().and_then(|r| r.downcast::<Window>().ok());
+            Self::open_move_dialog(
+                &meta_for_move,
+                &store_for_move,
+                ref_move.clone(),
+                parent_win.as_ref(),
+            );
+        });
+
         // Azione Elimina
         let pop_for_del = popover.clone();
         let meta_for_del = meta.clone();
@@ -3139,12 +3655,26 @@ impl UniNoteDashboard {
         let gesture = GestureClick::new();
         let target_path = PathBuf::from(&meta.file_path);
         let cb_clone = open_cb.clone();
-        gesture.connect_pressed(move |_, _, _, _| {
-            if let Some(ref cb) = *cb_clone.borrow() {
-                cb(target_path.clone());
+        let pop_picture = popover.clone();
+        gesture.connect_pressed(move |g, _, _, _| {
+            if g.current_button() == gdk::BUTTON_SECONDARY {
+                pop_picture.popup();
+            } else if g.current_button() == gdk::BUTTON_PRIMARY {
+                if let Some(ref cb) = *cb_clone.borrow() {
+                    cb(target_path.clone());
+                }
             }
         });
         picture.add_controller(gesture);
+
+        let gesture_info = GestureClick::new();
+        let pop_info = popover.clone();
+        gesture_info.connect_pressed(move |g, _, _, _| {
+            if g.current_button() == gdk::BUTTON_SECONDARY {
+                pop_info.popup();
+            }
+        });
+        info_box.add_controller(gesture_info);
 
         child.set_child(Some(&card_box));
         child

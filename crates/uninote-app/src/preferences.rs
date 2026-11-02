@@ -326,6 +326,45 @@ impl DashboardRecentStore {
         }
     }
 
+    /// Aggiorna o registra lo spostamento di un file recente verso una nuova destinazione cartella.
+    pub fn move_or_rename_recent(&mut self, old_path: &str, new_path: &str, new_title: &str) {
+        if let Some(doc) = self
+            .recent_files
+            .iter_mut()
+            .find(|r| r.file_path == old_path)
+        {
+            doc.file_path = new_path.to_string();
+            doc.title = new_title.to_string();
+            doc.last_modified_timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+        } else {
+            let p = Path::new(new_path);
+            let (format, page_count) =
+                if let Ok(doc_store) = uninote_storage::DocumentStore::open_or_create(p) {
+                    if let Ok(doc) = doc_store.load_document() {
+                        (doc.format, doc.pages.len())
+                    } else {
+                        (DocumentFormat::Notebook, 1)
+                    }
+                } else {
+                    (DocumentFormat::Notebook, 1)
+                };
+            self.add_recent(RecentDocumentMeta {
+                file_path: new_path.to_string(),
+                title: new_title.to_string(),
+                format,
+                last_modified_timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                page_count,
+                thumbnail_path: None,
+            });
+        }
+    }
+
     /// Aggiorna i percorsi dei documenti memorizzati quando una cartella viene rinominata.
     pub fn update_folder_rename(&mut self, old_dir: &Path, new_dir: &Path) {
         for doc in &mut self.recent_files {

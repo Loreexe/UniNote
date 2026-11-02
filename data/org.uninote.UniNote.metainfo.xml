@@ -47,6 +47,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.21" date="2026-11-02">
+      <description>
+        <p>Release v0.4.21: Spostamento file tra cartelle e sottocartelle: nuova azione contestuale "Sposta in..." con selezione gerarchica Adwaita e creazione rapida di sottocartelle, supporto completo a Drag and Drop sulle card delle cartelle e nella sidebar, e apertura contestuale al clic destro sulle card dei documenti.</p>
+      </description>
+    </release>
     <release version="0.4.20" date="2026-11-02">
       <description>
         <p>Release v0.4.20: Coerenza cromatica fedele al tema chiaro/scuro per tutte le copertine dei documenti e delle lavagne nella dashboard. Adattamento automatico contrasto tratti ink con luminanza Rec.709 (i tratti scuri diventano nitidi su fogli scuri e viceversa), coordinamento colori sfondi e rigature, rigenerazione istantanea al cambio tema e corretta sincronizzazione formato documento da disco.</p>

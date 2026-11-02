@@ -710,3 +710,100 @@ fn test_m2_sidebar_and_folder_cards_rendering() {
         let _ = fs::remove_dir_all(&root);
     });
 }
+
+#[test]
+fn test_move_document_to_folder_and_deduplication() {
+    let root = unique_dash_temp_path("move_test_root", "dir");
+    let folder_a = root.join("Cartella A");
+    let folder_b = root.join("Cartella B");
+    fs::create_dir_all(&folder_a).unwrap();
+    fs::create_dir_all(&folder_b).unwrap();
+
+    let file_1 = folder_a.join("Esercizio.uninote");
+    fs::write(&file_1, "note data 1").unwrap();
+
+    // Spostamento da A a B
+    let moved_1 = uninote_app::dashboard::move_document_to_folder(&file_1, &folder_b).unwrap();
+    assert_eq!(moved_1, folder_b.join("Esercizio.uninote"));
+    assert!(!file_1.exists());
+    assert!(moved_1.exists());
+    assert_eq!(fs::read_to_string(&moved_1).unwrap(), "note data 1");
+
+    // Creazione di un secondo file con lo stesso nome in A e spostamento in B (deve deduplicare con suffisso)
+    let file_2 = folder_a.join("Esercizio.uninote");
+    fs::write(&file_2, "note data 2").unwrap();
+
+    let moved_2 = uninote_app::dashboard::move_document_to_folder(&file_2, &folder_b).unwrap();
+    assert_eq!(moved_2, folder_b.join("Esercizio (2).uninote"));
+    assert!(!file_2.exists());
+    assert!(moved_2.exists());
+    assert_eq!(fs::read_to_string(&moved_2).unwrap(), "note data 2");
+    // Il primo file esiste ancora intatto
+    assert_eq!(fs::read_to_string(&moved_1).unwrap(), "note data 1");
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn test_move_or_rename_recent_in_store() {
+    let mut store = DashboardRecentStore::new();
+    let old_path = "/home/test/UniNote/Reti/Lezione.uninote";
+    let new_path = "/home/test/UniNote/Controlli/Lezione.uninote";
+
+    store.add_recent(RecentDocumentMeta {
+        file_path: old_path.to_string(),
+        title: "Lezione".to_string(),
+        format: DocumentFormat::Notebook,
+        last_modified_timestamp: 1000,
+        page_count: 3,
+        thumbnail_path: None,
+    });
+
+    assert_eq!(store.recent_files[0].file_path, old_path);
+
+    store.move_or_rename_recent(old_path, new_path, "Lezione Spostata");
+
+    assert_eq!(store.recent_files.len(), 1);
+    assert_eq!(store.recent_files[0].file_path, new_path);
+    assert_eq!(store.recent_files[0].title, "Lezione Spostata");
+}
+
+#[test]
+fn test_open_move_dialog_creation_on_gtk_thread() {
+    run_on_gtk_thread(|| {
+        let root = unique_dash_temp_path("dlg_move_root", "dir");
+        let sub = root.join("SubFolder");
+        fs::create_dir_all(&sub).unwrap();
+
+        let note = root.join("Appunti.uninote");
+        fs::write(&note, "data").unwrap();
+
+        let meta = RecentDocumentMeta {
+            file_path: note.to_string_lossy().to_string(),
+            title: "Appunti".to_string(),
+            format: DocumentFormat::Notebook,
+            last_modified_timestamp: 2000,
+            page_count: 1,
+            thumbnail_path: None,
+        };
+
+        let mut store_obj = DashboardRecentStore::new();
+        store_obj.default_notes_dir = root.to_string_lossy().to_string();
+        store_obj.add_recent(meta.clone());
+        let store = std::rc::Rc::new(std::cell::RefCell::new(store_obj));
+
+        // Invocazione del dialogo
+        let refreshed = std::rc::Rc::new(std::cell::RefCell::new(false));
+        let ref_clone = refreshed.clone();
+        UniNoteDashboard::open_move_dialog(
+            &meta,
+            &store,
+            std::rc::Rc::new(move || {
+                *ref_clone.borrow_mut() = true;
+            }),
+            None,
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    });
+}
