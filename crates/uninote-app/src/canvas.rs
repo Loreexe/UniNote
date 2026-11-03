@@ -18,8 +18,8 @@ use uninote_core::{
 use uninote_storage::{DocumentStore, SaveStatus, StorageWorker};
 use uninote_stroke::selection::SelectionMode;
 use uninote_stroke::{
-    DeviceKind, InputDisposition, InputPhase, InputSample, PalmRejectionEngine, PipelineMode,
-    RecordedSession, Rect, Stroke, StrokeBuilder, StrokeStyle, TouchMode,
+    DeviceKind, InputDisposition, InputPhase, InputSample, PalmRejectionEngine, PipelineMode, Rect,
+    Stroke, StrokeBuilder, StrokeStyle, TouchMode,
 };
 
 /// Specifica dinamica procedurale della griglia Cairo in base al livello di zoom.
@@ -296,7 +296,6 @@ pub struct CanvasState {
     pub pipeline_mode: PipelineMode,
     pub current_style: StrokeStyle,
     pub next_stroke_id: u64,
-    pub recorder: Option<RecordedSession>,
     pub last_sample_time: Option<Instant>,
     pub last_stylus_time: Option<Instant>,
     pub mouse_drag_start: Option<(f64, f64)>,
@@ -326,7 +325,6 @@ impl CanvasState {
             pipeline_mode: PipelineMode::CatmullRomSpline,
             current_style: StrokeStyle::default(),
             next_stroke_id: 1,
-            recorder: None,
             last_sample_time: None,
             last_stylus_time: None,
             mouse_drag_start: None,
@@ -379,27 +377,6 @@ impl CanvasState {
         self.persist_changes();
     }
 
-    #[allow(dead_code)]
-    pub fn clear_current_page(&mut self) {
-        if let Some(page) = self.document.pages.first_mut() {
-            let erased = page.items.clone();
-            if !erased.is_empty() {
-                let page_id = page.id;
-                self.history.execute(
-                    DocCommand::EraseItems {
-                        page_id,
-                        erased_items: erased,
-                    },
-                    &mut self.document,
-                );
-                self.persist_changes();
-            }
-        }
-        self.active_builder = None;
-        self.active_device = None;
-        self.mouse_drag_start = None;
-    }
-
     pub fn mark_saved(&mut self) {
         let rev = self.history.current_revision;
         self.history.mark_saved(rev);
@@ -413,11 +390,6 @@ impl CanvasState {
         if let Some(ref worker) = self.storage_worker {
             worker.save_revision(self.document.clone(), rev);
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn save_status(&self) -> SaveStatus {
-        self.save_status.clone()
     }
 }
 
@@ -633,8 +605,10 @@ impl NoteCanvas {
         deleted
     }
 
-    /// Sposta gli elementi selezionati in cima a tutti gli altri elementi della pagina ("Sposta sopra").
-    pub fn bring_to_front_selected(&self) -> bool {
+    /// Centralizza il riordino z-index degli elementi selezionati.
+    /// Se `to_front` è true, sposta la selezione sopra tutti gli altri elementi ("Sposta sopra").
+    /// Se `to_front` è false, sposta la selezione sotto tutti gli altri elementi ("Sposta sotto").
+    pub fn reorder_selected_z_index(&self, to_front: bool) -> bool {
         let mut st_guard = self.state.borrow_mut();
         let st = &mut *st_guard;
         if !st.selection.has_selection() {
@@ -667,19 +641,21 @@ impl NoteCanvas {
             return false;
         }
 
+        let (first_group, second_group): (&[&Item], &[&Item]) = if to_front {
+            (&non_selected[..], &selected[..])
+        } else {
+            (&selected[..], &non_selected[..])
+        };
+
         let mut changes: Vec<(ItemId, u64, u64)> = Vec::new();
         let mut next_z: u64 = 1;
-        for it in &non_selected {
-            if it.z_index != next_z {
-                changes.push((it.id, it.z_index, next_z));
+        for group in [first_group, second_group] {
+            for it in group {
+                if it.z_index != next_z {
+                    changes.push((it.id, it.z_index, next_z));
+                }
+                next_z += 1;
             }
-            next_z += 1;
-        }
-        for it in &selected {
-            if it.z_index != next_z {
-                changes.push((it.id, it.z_index, next_z));
-            }
-            next_z += 1;
         }
 
         if changes.is_empty() {
@@ -695,66 +671,14 @@ impl NoteCanvas {
         true
     }
 
+    /// Sposta gli elementi selezionati in cima a tutti gli altri elementi della pagina ("Sposta sopra").
+    pub fn bring_to_front_selected(&self) -> bool {
+        self.reorder_selected_z_index(true)
+    }
+
     /// Sposta gli elementi selezionati sotto a tutti gli altri elementi della pagina ("Sposta sotto").
     pub fn send_to_back_selected(&self) -> bool {
-        let mut st_guard = self.state.borrow_mut();
-        let st = &mut *st_guard;
-        if !st.selection.has_selection() {
-            return false;
-        }
-        let page_idx = match st.selection.page_index {
-            Some(idx) => idx,
-            None => return false,
-        };
-
-        let sel_set: std::collections::HashSet<ItemId> =
-            st.selection.selected_ids.iter().copied().collect();
-
-        let page = match st.document.pages.get_mut(page_idx) {
-            Some(p) => p,
-            None => return false,
-        };
-
-        let mut non_selected: Vec<&Item> = Vec::new();
-        let mut selected: Vec<&Item> = Vec::new();
-        for item in &page.items {
-            if sel_set.contains(&item.id) {
-                selected.push(item);
-            } else {
-                non_selected.push(item);
-            }
-        }
-
-        if selected.is_empty() || non_selected.is_empty() {
-            return false;
-        }
-
-        let mut changes: Vec<(ItemId, u64, u64)> = Vec::new();
-        let mut next_z: u64 = 1;
-        for it in &selected {
-            if it.z_index != next_z {
-                changes.push((it.id, it.z_index, next_z));
-            }
-            next_z += 1;
-        }
-        for it in &non_selected {
-            if it.z_index != next_z {
-                changes.push((it.id, it.z_index, next_z));
-            }
-            next_z += 1;
-        }
-
-        if changes.is_empty() {
-            return false;
-        }
-
-        let page_id = page.id;
-        let cmd = DocCommand::ReorderItemsZIndex { page_id, changes };
-        st.history.execute(cmd, &mut st.document);
-        st.persist_changes();
-        drop(st_guard);
-        self.area.queue_draw();
-        true
+        self.reorder_selected_z_index(false)
     }
 
     /// Duplica gli elementi selezionati creandone una copia con offset e auto-selezionandoli ("Duplica").
@@ -1760,7 +1684,6 @@ impl NoteCanvas {
         self.area.queue_draw();
     }
 
-    #[allow(dead_code)]
     pub fn open_file(&self, path: PathBuf) -> Result<(), String> {
         let store = DocumentStore::open_or_create(&path).map_err(|e| e.to_string())?;
         let doc = store.load_document().map_err(|e| e.to_string())?;
@@ -1829,7 +1752,6 @@ impl NoteCanvas {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn export_portable_copy(&self, target_path: PathBuf) -> Result<(), String> {
         let st = self.state.borrow();
         if let Some(ref path) = st.file_path {
@@ -2777,12 +2699,8 @@ impl NoteCanvas {
                     style.color.3 = 0.38;
                 }
                 let mut builder = StrokeBuilder::new(id, style, st.pipeline_mode);
-                builder.process_sample(sample.clone());
+                builder.process_sample(sample);
                 st.active_builder = Some(builder);
-
-                if let Some(ref mut rec) = st.recorder {
-                    rec.record_sample(sample);
-                }
 
                 let palm_state = st.palm_engine.current_state();
                 drop(st);
@@ -2972,11 +2890,7 @@ impl NoteCanvas {
                     DeviceKind::Stylus,
                     InputPhase::Move,
                 );
-                builder.process_sample(sample.clone());
-
-                if let Some(ref mut rec) = st.recorder {
-                    rec.record_sample(sample);
-                }
+                builder.process_sample(sample);
 
                 let (received, dropped) = builder.samples_stats();
                 let palm_state = st.palm_engine.current_state();
@@ -3034,13 +2948,9 @@ impl NoteCanvas {
             st.palm_engine.evaluate_sample(&sample);
 
             if let Some(mut builder) = st.active_builder.take() {
-                builder.process_sample(sample.clone());
+                builder.process_sample(sample);
                 let stroke = builder.finish();
                 Self::commit_finished_stroke(&mut st, stroke);
-
-                if let Some(ref mut rec) = st.recorder {
-                    rec.record_sample(sample);
-                }
             }
 
             st.last_sample_time = None;
@@ -3243,12 +3153,8 @@ impl NoteCanvas {
                         style.color.3 = 0.38;
                     }
                     let mut builder = StrokeBuilder::new(id, style, st.pipeline_mode);
-                    builder.process_sample(sample.clone());
+                    builder.process_sample(sample);
                     st.active_builder = Some(builder);
-
-                    if let Some(ref mut rec) = st.recorder {
-                        rec.record_sample(sample);
-                    }
 
                     drop(st);
                     hud.update_metrics(|m| {
@@ -3350,11 +3256,7 @@ impl NoteCanvas {
                         DeviceKind::Mouse,
                         InputPhase::Move,
                     );
-                    builder.process_sample(sample.clone());
-
-                    if let Some(ref mut rec) = st.recorder {
-                        rec.record_sample(sample);
-                    }
+                    builder.process_sample(sample);
                 }
             }
 
@@ -3424,13 +3326,9 @@ impl NoteCanvas {
                 st.palm_engine.evaluate_sample(&sample);
 
                 if let Some(mut builder) = st.active_builder.take() {
-                    builder.process_sample(sample.clone());
+                    builder.process_sample(sample);
                     let stroke = builder.finish();
                     Self::commit_finished_stroke(&mut st, stroke);
-
-                    if let Some(ref mut rec) = st.recorder {
-                        rec.record_sample(sample);
-                    }
                 }
             }
 

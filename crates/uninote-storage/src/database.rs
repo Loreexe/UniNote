@@ -1,6 +1,7 @@
 use crate::schema;
 use rusqlite::{params, Connection, Result, TransactionBehavior};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
 use uninote_core::{Document, DocumentFormat, ImageItem, Item, ItemKind, Page, PageBackground};
@@ -262,14 +263,46 @@ impl DocumentStore {
         let raw_pages: Vec<_> = page_rows.collect::<Result<Vec<_>, _>>()?;
         drop(page_stmt);
 
-        let mut count_stmt = self
-            .conn
-            .prepare_cached("SELECT COUNT(*) FROM items WHERE page_id = ?1")?;
+        let mut items_by_page: HashMap<String, Vec<Item>> = HashMap::with_capacity(raw_pages.len());
+        for (id_str, ..) in &raw_pages {
+            items_by_page.insert(id_str.clone(), Vec::new());
+        }
 
-        let mut item_stmt = self.conn.prepare_cached(
-            "SELECT id, z_index, item_type, data_json FROM items
-             WHERE page_id = ?1 ORDER BY z_index ASC",
-        )?;
+        if !raw_pages.is_empty() {
+            let mut item_stmt = self.conn.prepare_cached(
+                "SELECT page_id, id, z_index, item_type, data_json FROM items ORDER BY page_id, z_index ASC",
+            )?;
+
+            let mut item_rows = item_stmt.query([])?;
+            while let Some(row) = item_rows.next()? {
+                let page_id_str = row.get_ref(0)?.as_str()?;
+                if let Some(items) = items_by_page.get_mut(page_id_str) {
+                    let id: i64 = row.get(1)?;
+                    let z_index: i64 = row.get(2)?;
+                    let item_type = row.get_ref(3)?.as_str()?;
+                    if item_type == "stroke" {
+                        let data_json = row.get_ref(4)?.as_str()?;
+                        if let Ok(mut stroke) = serde_json::from_str::<Stroke>(data_json) {
+                            stroke.ensure_cache();
+                            items.push(Item {
+                                id: id as u64,
+                                z_index: z_index as u64,
+                                kind: ItemKind::Stroke(stroke),
+                            });
+                        }
+                    } else if item_type == "image" {
+                        let data_json = row.get_ref(4)?.as_str()?;
+                        if let Ok(image) = serde_json::from_str::<ImageItem>(data_json) {
+                            items.push(Item {
+                                id: id as u64,
+                                z_index: z_index as u64,
+                                kind: ItemKind::Image(image),
+                            });
+                        }
+                    }
+                }
+            }
+        }
 
         let mut pages = Vec::with_capacity(raw_pages.len());
         for (id_str, index, width, height, bg_type, bg_spacing, bg_extra) in raw_pages {
@@ -316,37 +349,7 @@ impl DocumentStore {
                 }
             };
 
-            let item_count: usize = count_stmt
-                .query_row(params![&id_str], |row| row.get(0))
-                .unwrap_or(0);
-
-            let mut items = Vec::with_capacity(item_count);
-            let mut item_rows = item_stmt.query(params![&id_str])?;
-            while let Some(row) = item_rows.next()? {
-                let id: i64 = row.get(0)?;
-                let z_index: i64 = row.get(1)?;
-                let item_type = row.get_ref(2)?.as_str()?;
-                if item_type == "stroke" {
-                    let data_json = row.get_ref(3)?.as_str()?;
-                    if let Ok(mut stroke) = serde_json::from_str::<Stroke>(data_json) {
-                        stroke.ensure_cache();
-                        items.push(Item {
-                            id: id as u64,
-                            z_index: z_index as u64,
-                            kind: ItemKind::Stroke(stroke),
-                        });
-                    }
-                } else if item_type == "image" {
-                    let data_json = row.get_ref(3)?.as_str()?;
-                    if let Ok(image) = serde_json::from_str::<ImageItem>(data_json) {
-                        items.push(Item {
-                            id: id as u64,
-                            z_index: z_index as u64,
-                            kind: ItemKind::Image(image),
-                        });
-                    }
-                }
-            }
+            let items = items_by_page.remove(&id_str).unwrap_or_default();
 
             let mut page = Page {
                 id: page_id,

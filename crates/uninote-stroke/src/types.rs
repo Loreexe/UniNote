@@ -259,18 +259,7 @@ impl Stroke {
 
     /// Costruttore di convenienza con punti noti che pre-popola immediatamente la cache geometrica.
     pub fn with_points(id: u64, style: StrokeStyle, points: Vec<StrokePoint>) -> Self {
-        let mut stroke = Self {
-            id,
-            style,
-            points,
-            raw_samples: Vec::new(),
-            is_dot: false,
-            mode: PipelineMode::default(),
-            cached_bbox: None,
-            cached_bezier: Vec::new(),
-        };
-        stroke.recompute_cache();
-        stroke
+        Self::with_points_and_mode(id, style, PipelineMode::default(), points)
     }
 
     /// Costruttore con punti e modalità specifica che pre-popola immediatamente la cache geometrica.

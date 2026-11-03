@@ -401,15 +401,12 @@ fn test_logo_zero_and_negative_dimensions_safe() {
 #[test]
 fn test_semver_version_badge_dynamic_binding() {
     let pkg_ver = env!("CARGO_PKG_VERSION");
-    assert_eq!(
-        pkg_ver, "0.4.22",
-        "CARGO_PKG_VERSION must be exactly 0.4.22"
-    );
+    assert_eq!(pkg_ver, "0.5.0", "CARGO_PKG_VERSION must be exactly 0.5.0");
 
     let badge_text = concat!("v", env!("CARGO_PKG_VERSION"));
     assert_eq!(
-        badge_text, "v0.4.22",
-        "Badge text in window.rs must evaluate to 'v0.4.22'"
+        badge_text, "v0.5.0",
+        "Badge text in window.rs must evaluate to 'v0.5.0'"
     );
 
     // Verify root Cargo.toml workspace version
@@ -423,7 +420,7 @@ fn test_semver_version_badge_dynamic_binding() {
         .unwrap_or_else(|e| panic!("Read {:?}: {:?}", root_cargo_path, e));
 
     assert!(
-        root_cargo.contains("version = \"0.4.22\""),
-        "Root Cargo.toml must declare version = \"0.4.22\""
+        root_cargo.contains("version = \"0.5.0\""),
+        "Root Cargo.toml must declare version = \"0.5.0\""
     );
 }

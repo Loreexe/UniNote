@@ -25,6 +25,7 @@ uuid = { version = "1.10", features = ["v4"] }
 [dev-dependencies]
 uuid = { version = "1.10", features = ["v4"] }
 cairo-rs = { version = "0.20", features = ["pdf", "png", "v1_16"] }
+uninote-core = { path = "../uninote-core", features = ["academic-dataset"] }
 
 [features]
 default = []

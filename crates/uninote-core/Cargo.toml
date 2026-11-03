@@ -12,4 +12,10 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 uninote-stroke = { path = "../uninote-stroke" }
 rstar = { version = "0.13", features = ["serde"] }
 
+[features]
+default = []
+academic-dataset = []
+dataset = ["academic-dataset"]
+
 [dev-dependencies]
+uninote-core = { path = ".", features = ["academic-dataset"] }

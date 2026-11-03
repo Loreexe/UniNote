@@ -47,6 +47,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.0" date="2026-11-02">
+      <description>
+        <p>Release v0.5.0: Ottimizzazioni prestazionali chiave con isolamento del generatore sintetico di dataset dal binario di release (PERF-001), caricamento batch ad alta efficienza degli elementi del documento da database SQLite con abbattimento dei round-trip SQL (PERF-002), unificazione completa dei dialoghi modali e consolidamento dell'architettura.</p>
+      </description>
+    </release>
     <release version="0.4.22" date="2026-11-02">
       <description>
         <p>Release v0.4.22: Risoluzione del problema di apertura immediata del documento durante l'avvio del drag per spostarlo (gestione fluida del drag and drop con isolamento click e thumbnail mobile sotto il cursore), e correzione dell'isolamento delle sottocartelle nella dashboard per cui i file spostati in sottocartelle non compaiono erroneamente nella vista principale.</p>

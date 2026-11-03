@@ -269,6 +269,6 @@ fn test_t2_r7_semantic_version_format() {
     let parts: Vec<&str> = ver.split('.').collect();
     assert_eq!(parts.len(), 3);
     assert_eq!(parts[0], "0");
-    assert_eq!(parts[1], "4");
-    assert_eq!(parts[2], "22");
+    assert_eq!(parts[1], "5");
+    assert_eq!(parts[2], "0");
 }

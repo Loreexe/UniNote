@@ -124,6 +124,90 @@ pub fn format_badge_label(format: DocumentFormat) -> &'static str {
     }
 }
 
+/// Mostra una finestra di dialogo modale di conferma per azioni distruttive o conferme DMS.
+pub fn show_confirmation_dialog<F>(
+    parent: Option<&Window>,
+    title: &str,
+    message: &str,
+    confirm_label: &str,
+    is_destructive: bool,
+    on_confirm: F,
+) where
+    F: FnOnce() + 'static,
+{
+    let dlg = Window::builder()
+        .title(title)
+        .modal(true)
+        .default_width(400)
+        .default_height(160)
+        .css_classes(["uninote-dialog", "dms-dialog"])
+        .build();
+
+    if let Some(p) = parent {
+        dlg.set_transient_for(Some(p));
+    }
+
+    let dlg_box = GtkBox::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(14)
+        .margin_start(20)
+        .margin_end(20)
+        .margin_top(20)
+        .margin_bottom(20)
+        .build();
+
+    let lbl = Label::builder()
+        .label(message)
+        .wrap(true)
+        .xalign(0.0)
+        .css_classes(["dim-label"])
+        .build();
+    dlg_box.append(&lbl);
+
+    let act_box = GtkBox::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(10)
+        .halign(Align::End)
+        .build();
+
+    let btn_cancel = Button::builder()
+        .label("Annulla")
+        .css_classes(["dms-action-btn"])
+        .build();
+
+    let confirm_builder = Button::builder().label(confirm_label);
+    let btn_confirm = if is_destructive {
+        confirm_builder
+            .css_classes(["destructive-action", "dms-btn-primary"])
+            .build()
+    } else {
+        confirm_builder
+            .css_classes(["suggested-action", "dms-btn-primary"])
+            .build()
+    };
+
+    act_box.append(&btn_cancel);
+    act_box.append(&btn_confirm);
+    dlg_box.append(&act_box);
+    dlg.set_child(Some(&dlg_box));
+
+    let dlg_cancel = dlg.clone();
+    btn_cancel.connect_clicked(move |_| {
+        dlg_cancel.close();
+    });
+
+    let dlg_conf = dlg.clone();
+    let on_confirm_cell = std::rc::Rc::new(std::cell::RefCell::new(Some(on_confirm)));
+    btn_confirm.connect_clicked(move |_| {
+        dlg_conf.close();
+        if let Some(cb) = on_confirm_cell.borrow_mut().take() {
+            cb();
+        }
+    });
+
+    dlg.present();
+}
+
 /// Genera la miniatura per il documento renderizzando la prima pagina (o fallback a sfondo procedurale).
 pub fn render_document_thumbnail(
     doc: &uninote_core::Document,
@@ -2374,8 +2458,6 @@ impl UniNoteDashboard {
                     &resolved_meta,
                     open_cb,
                     store,
-                    flow_box,
-                    empty_box,
                     refresh_cb.clone(),
                 );
                 flow_box.append(&card);
@@ -2431,14 +2513,8 @@ impl UniNoteDashboard {
                     }
                 }
 
-                let card = Self::create_card_with_refresh(
-                    &meta,
-                    open_cb,
-                    store,
-                    flow_box,
-                    empty_box,
-                    refresh_cb.clone(),
-                );
+                let card =
+                    Self::create_card_with_refresh(&meta, open_cb, store, refresh_cb.clone());
                 flow_box.append(&card);
                 displayed_count += 1;
             }
@@ -2463,8 +2539,6 @@ impl UniNoteDashboard {
                             &resolved_meta,
                             open_cb,
                             store,
-                            flow_box,
-                            empty_box,
                             refresh_cb.clone(),
                         );
                         flow_box.append(&card);
@@ -2485,10 +2559,28 @@ impl UniNoteDashboard {
 
     /// Restituisce l'etichetta testuale del badge DMS per il formato documento specificato.
     pub fn format_badge_label(format: DocumentFormat) -> &'static str {
-        match format {
-            DocumentFormat::Notebook => "Quaderno A4",
-            DocumentFormat::Whiteboard => "Lavagna Infinita",
-        }
+        format_badge_label(format)
+    }
+
+    /// Mostra una finestra di dialogo modale di conferma per azioni distruttive o conferme DMS.
+    pub fn show_confirmation_dialog<F>(
+        parent: Option<&Window>,
+        title: &str,
+        message: &str,
+        confirm_label: &str,
+        is_destructive: bool,
+        on_confirm: F,
+    ) where
+        F: FnOnce() + 'static,
+    {
+        show_confirmation_dialog(
+            parent,
+            title,
+            message,
+            confirm_label,
+            is_destructive,
+            on_confirm,
+        )
     }
 
     /// Crea il widget grafico di una card per una cartella nella `GtkFlowBox`.
@@ -2731,77 +2823,27 @@ impl UniNoteDashboard {
         btn_delete.connect_clicked(move |btn| {
             pop_for_del.popdown();
             let parent_win = btn.root().and_then(|r| r.downcast::<Window>().ok());
-
-            let dlg = Window::builder()
-                .title("Elimina Cartella — UniNote")
-                .modal(true)
-                .default_width(400)
-                .default_height(160)
-                .css_classes(["uninote-dialog", "dms-dialog"])
-                .build();
-
-            if let Some(ref p) = parent_win {
-                dlg.set_transient_for(Some(p));
-            }
-
-            let dlg_box = GtkBox::builder()
-                .orientation(Orientation::Vertical)
-                .spacing(14)
-                .margin_start(20)
-                .margin_end(20)
-                .margin_top(20)
-                .margin_bottom(20)
-                .build();
-
-            let lbl = Label::builder()
-                .label(format!(
-                    "Sei sicuro di voler eliminare la cartella \"{}\" e tutti i file contenuti?",
-                    folder_for_del.name
-                ))
-                .wrap(true)
-                .xalign(0.0)
-                .build();
-            dlg_box.append(&lbl);
-
-            let act_box = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .spacing(10)
-                .halign(Align::End)
-                .build();
-
-            let btn_cancel = Button::builder()
-                .label("Annulla")
-                .css_classes(["dms-action-btn"])
-                .build();
-
-            let btn_confirm = Button::builder()
-                .label("Elimina")
-                .css_classes(["destructive-action", "dms-btn-primary"])
-                .build();
-
-            act_box.append(&btn_cancel);
-            act_box.append(&btn_confirm);
-            dlg_box.append(&act_box);
-            dlg.set_child(Some(&dlg_box));
-
-            let dlg_cancel = dlg.clone();
-            btn_cancel.connect_clicked(move |_| {
-                dlg_cancel.close();
-            });
-
-            let dlg_conf = dlg.clone();
             let f_del = folder_for_del.clone();
             let st_del = store_for_del.clone();
             let ref_cb = ref_for_del.clone();
-            btn_confirm.connect_clicked(move |_| {
-                let _ = std::fs::remove_dir_all(&f_del.path);
-                st_del.borrow_mut().remove_recents_under(&f_del.path);
-                let _ = st_del.borrow().save();
-                dlg_conf.close();
-                ref_cb();
-            });
+            let msg = format!(
+                "Sei sicuro di voler eliminare la cartella \"{}\" e tutti i file contenuti?",
+                f_del.name
+            );
 
-            dlg.present();
+            show_confirmation_dialog(
+                parent_win.as_ref(),
+                "Elimina Cartella — UniNote",
+                &msg,
+                "Elimina",
+                true,
+                move || {
+                    let _ = std::fs::remove_dir_all(&f_del.path);
+                    st_del.borrow_mut().remove_recents_under(&f_del.path);
+                    let _ = st_del.borrow().save();
+                    ref_cb();
+                },
+            );
         });
 
         title_row.append(&btn_menu);
@@ -3221,20 +3263,7 @@ impl UniNoteDashboard {
     /// Crea il widget grafico di una singola card quaderno conforme a DMS.
     pub fn create_card(meta: &RecentDocumentMeta, open_cb: &OpenDocCallback) -> FlowBoxChild {
         let store = Rc::new(RefCell::new(DashboardRecentStore::new()));
-        let flow_box = FlowBox::new();
-        let empty_box = GtkBox::new(Orientation::Vertical, 0);
-        Self::create_card_full(meta, open_cb, &store, &flow_box, &empty_box)
-    }
-
-    /// Crea il widget grafico di una singola card quaderno conforme a DMS con supporto a store e re-rendering flowbox.
-    pub fn create_card_full(
-        meta: &RecentDocumentMeta,
-        open_cb: &OpenDocCallback,
-        store: &Rc<RefCell<DashboardRecentStore>>,
-        flow_box: &FlowBox,
-        empty_box: &GtkBox,
-    ) -> FlowBoxChild {
-        Self::create_card_with_refresh(meta, open_cb, store, flow_box, empty_box, Rc::new(|| {}))
+        Self::create_card_with_refresh(meta, open_cb, &store, Rc::new(|| {}))
     }
 
     /// Crea il widget grafico di una singola card quaderno conforme a DMS con callback di refresh completo.
@@ -3242,8 +3271,6 @@ impl UniNoteDashboard {
         meta: &RecentDocumentMeta,
         open_cb: &OpenDocCallback,
         store: &Rc<RefCell<DashboardRecentStore>>,
-        _flow_box: &FlowBox,
-        _empty_box: &GtkBox,
         refresh_cb: Rc<dyn Fn()>,
     ) -> FlowBoxChild {
         let child = FlowBoxChild::new();
@@ -3570,79 +3597,28 @@ impl UniNoteDashboard {
         btn_delete.connect_clicked(move |btn| {
             pop_for_del.popdown();
             let parent_win = btn.root().and_then(|r| r.downcast::<Window>().ok());
-
-            let dlg = Window::builder()
-                .title("Elimina Documento — UniNote")
-                .modal(true)
-                .default_width(400)
-                .default_height(160)
-                .css_classes(["uninote-dialog", "dms-dialog"])
-                .build();
-
-            if let Some(ref p) = parent_win {
-                dlg.set_transient_for(Some(p));
-            }
-
-            let dlg_box = GtkBox::builder()
-                .orientation(Orientation::Vertical)
-                .spacing(14)
-                .margin_start(20)
-                .margin_end(20)
-                .margin_top(20)
-                .margin_bottom(20)
-                .build();
-
-            let lbl_msg = Label::builder()
-                .label(format!(
-                    "Vuoi davvero eliminare definitivamente \"{}\"?",
-                    meta_for_del.title
-                ))
-                .wrap(true)
-                .xalign(0.0)
-                .css_classes(["dim-label"])
-                .build();
-            dlg_box.append(&lbl_msg);
-
-            let act_box = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .spacing(10)
-                .halign(Align::End)
-                .build();
-
-            let btn_cancel = Button::builder()
-                .label("Annulla")
-                .css_classes(["dms-action-btn"])
-                .build();
-
-            let btn_confirm = Button::builder()
-                .label("Elimina")
-                .css_classes(["destructive-action", "dms-btn-primary"])
-                .build();
-
-            act_box.append(&btn_cancel);
-            act_box.append(&btn_confirm);
-            dlg_box.append(&act_box);
-            dlg.set_child(Some(&dlg_box));
-
-            let dlg_cancel = dlg.clone();
-            btn_cancel.connect_clicked(move |_| {
-                dlg_cancel.close();
-            });
-
-            let dlg_conf = dlg.clone();
             let m_del = meta_for_del.clone();
             let st_del = store_for_del.clone();
             let ref_cb = ref_del.clone();
-            btn_confirm.connect_clicked(move |_| {
-                let p = PathBuf::from(&m_del.file_path);
-                let _ = std::fs::remove_file(&p);
-                st_del.borrow_mut().remove_recent(&m_del.file_path);
-                let _ = st_del.borrow().save();
-                dlg_conf.close();
-                ref_cb();
-            });
+            let msg = format!(
+                "Vuoi davvero eliminare definitivamente \"{}\"?",
+                m_del.title
+            );
 
-            dlg.present();
+            show_confirmation_dialog(
+                parent_win.as_ref(),
+                "Elimina Documento — UniNote",
+                &msg,
+                "Elimina",
+                true,
+                move || {
+                    let p = PathBuf::from(&m_del.file_path);
+                    let _ = std::fs::remove_file(&p);
+                    st_del.borrow_mut().remove_recent(&m_del.file_path);
+                    let _ = st_del.borrow().save();
+                    ref_cb();
+                },
+            );
         });
 
         title_row.append(&btn_menu);

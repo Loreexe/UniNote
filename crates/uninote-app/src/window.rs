@@ -874,96 +874,82 @@ impl UniNoteWindow {
             .build();
         export_box.append(&lbl_group2);
 
-        // Documento PDF (.pdf) - Chiaro / Stampa
-        let card_pdf = make_export_item(IconKind::Page, "Esporta in PDF (Chiaro)", ".pdf");
-        let c_pdf = canvas.clone();
-        let win_pdf = window.clone();
-        let exp_pop_ref_pdf = export_popover.clone();
-        card_pdf.connect_clicked(move |_| {
-            exp_pop_ref_pdf.popdown();
-            let doc_title = c_pdf.state().borrow().document.title.clone();
-            let initial_file = if doc_title.trim().is_empty() {
-                "quaderno.pdf".to_string()
+        let make_pdf_export_item = |is_dark: bool| -> Button {
+            let (label, suffix, dialog_title, log_label) = if is_dark {
+                (
+                    "Esporta in PDF (Scuro)",
+                    "_scuro",
+                    "Esporta Documento PDF (Scuro / Come a schermo)",
+                    "Scuro",
+                )
             } else {
-                format!("{}.pdf", doc_title)
+                (
+                    "Esporta in PDF (Chiaro)",
+                    "",
+                    "Esporta Documento PDF (Chiaro / Stampa)",
+                    "Chiaro",
+                )
             };
 
-            let dialog = FileDialog::builder()
-                .title("Esporta Documento PDF (Chiaro / Stampa)")
-                .initial_name(&initial_file)
-                .modal(true)
-                .build();
+            let card = make_export_item(IconKind::Page, label, ".pdf");
+            let c_pdf = canvas.clone();
+            let win_pdf = window.clone();
+            let exp_pop_ref = export_popover.clone();
+            card.connect_clicked(move |_| {
+                exp_pop_ref.popdown();
+                let doc_title = c_pdf.state().borrow().document.title.clone();
+                let initial_file = if doc_title.trim().is_empty() {
+                    if is_dark {
+                        "quaderno_scuro.pdf".to_string()
+                    } else {
+                        "quaderno.pdf".to_string()
+                    }
+                } else {
+                    format!("{}{}.pdf", doc_title, suffix)
+                };
 
-            let filter = gtk4::FileFilter::new();
-            filter.set_name(Some("Documento PDF (*.pdf)"));
-            filter.add_pattern("*.pdf");
-            filter.add_mime_type("application/pdf");
-            let filters = gio::ListStore::new::<gtk4::FileFilter>();
-            filters.append(&filter);
-            dialog.set_filters(Some(&filters));
+                let dialog = FileDialog::builder()
+                    .title(dialog_title)
+                    .initial_name(&initial_file)
+                    .modal(true)
+                    .build();
 
-            let c_ref = c_pdf.clone();
-            dialog.save(Some(&win_pdf), gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        let mut export_path = path;
-                        if export_path.extension().is_none() {
-                            export_path.set_extension("pdf");
-                        }
-                        let options = crate::pdf_export::PdfExportOptions { is_dark: false };
-                        if let Err(e) = c_ref.export_pdf_with_options(&export_path, &options) {
-                            eprintln!("Errore durante l'esportazione PDF (Chiaro): {}", e);
+                let filter = gtk4::FileFilter::new();
+                filter.set_name(Some("Documento PDF (*.pdf)"));
+                filter.add_pattern("*.pdf");
+                filter.add_mime_type("application/pdf");
+                let filters = gio::ListStore::new::<gtk4::FileFilter>();
+                filters.append(&filter);
+                dialog.set_filters(Some(&filters));
+
+                let c_ref = c_pdf.clone();
+                dialog.save(Some(&win_pdf), gio::Cancellable::NONE, move |res| {
+                    if let Ok(file) = res {
+                        if let Some(path) = file.path() {
+                            let mut export_path = path;
+                            if export_path.extension().is_none() {
+                                export_path.set_extension("pdf");
+                            }
+                            let options = crate::pdf_export::PdfExportOptions { is_dark };
+                            if let Err(e) = c_ref.export_pdf_with_options(&export_path, &options) {
+                                eprintln!(
+                                    "Errore durante l'esportazione PDF ({}): {}",
+                                    log_label, e
+                                );
+                            }
                         }
                     }
-                }
+                });
             });
-        });
+            card
+        };
+
+        // Documento PDF (.pdf) - Chiaro / Stampa
+        let card_pdf = make_pdf_export_item(false);
         export_box.append(&card_pdf);
 
         // Documento PDF (.pdf) - Scuro / Come a schermo
-        let card_pdf_dark = make_export_item(IconKind::Page, "Esporta in PDF (Scuro)", ".pdf");
-        let c_pdf_dark = canvas.clone();
-        let win_pdf_dark = window.clone();
-        let exp_pop_ref_pdf_dark = export_popover.clone();
-        card_pdf_dark.connect_clicked(move |_| {
-            exp_pop_ref_pdf_dark.popdown();
-            let doc_title = c_pdf_dark.state().borrow().document.title.clone();
-            let initial_file = if doc_title.trim().is_empty() {
-                "quaderno_scuro.pdf".to_string()
-            } else {
-                format!("{}_scuro.pdf", doc_title)
-            };
-
-            let dialog = FileDialog::builder()
-                .title("Esporta Documento PDF (Scuro / Come a schermo)")
-                .initial_name(&initial_file)
-                .modal(true)
-                .build();
-
-            let filter = gtk4::FileFilter::new();
-            filter.set_name(Some("Documento PDF (*.pdf)"));
-            filter.add_pattern("*.pdf");
-            filter.add_mime_type("application/pdf");
-            let filters = gio::ListStore::new::<gtk4::FileFilter>();
-            filters.append(&filter);
-            dialog.set_filters(Some(&filters));
-
-            let c_ref = c_pdf_dark.clone();
-            dialog.save(Some(&win_pdf_dark), gio::Cancellable::NONE, move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        let mut export_path = path;
-                        if export_path.extension().is_none() {
-                            export_path.set_extension("pdf");
-                        }
-                        let options = crate::pdf_export::PdfExportOptions { is_dark: true };
-                        if let Err(e) = c_ref.export_pdf_with_options(&export_path, &options) {
-                            eprintln!("Errore durante l'esportazione PDF (Scuro): {}", e);
-                        }
-                    }
-                }
-            });
-        });
+        let card_pdf_dark = make_pdf_export_item(true);
         export_box.append(&card_pdf_dark);
 
         // Pacchetto Portabile (.uninote)
