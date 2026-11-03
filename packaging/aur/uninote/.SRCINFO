@@ -16,7 +16,7 @@ pkgbase = uninote
 	provides = uninote
 	conflicts = uninote-git
 	options = !lto
-	source = uninote-0.4.11.tar.gz::https://github.com/Loreexe/UniNote/archive/refs/tags/v0.4.11.tar.gz
+	source = uninote-0.5.0.tar.gz::https://github.com/Loreexe/UniNote/archive/refs/tags/v0.5.0.tar.gz
 	sha256sums = b1f798db33a3b5abc4ae8239f4f0051d93764e25abfbb4aae94d133d97b4e63b
 
 pkgname = uninote
