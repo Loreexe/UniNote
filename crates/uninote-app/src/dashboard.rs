@@ -25,7 +25,7 @@ pub fn thumbnail_cache_dir() -> PathBuf {
 
 /// Genera o restituisce il percorso della miniatura PNG associata al documento.
 pub fn is_dark_theme_active() -> bool {
-    if gtk4::is_initialized() {
+    if gtk4::is_initialized_main_thread() {
         libadwaita::StyleManager::default().is_dark()
     } else {
         true
