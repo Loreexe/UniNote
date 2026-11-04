@@ -35,6 +35,7 @@ pub enum IconKind {
     FolderPlus,
     FolderOpen,
     Cloud,
+    LaserPointer,
 }
 
 /// Crea una `DrawingArea` GTK4 che disegna l'icona vettoriale indicata con Cairo.
@@ -105,6 +106,7 @@ pub fn create_icon(kind: IconKind, size: i32, custom_color: Option<gdk::RGBA>) -
             IconKind::FolderPlus => draw_folder_plus(cr),
             IconKind::FolderOpen => draw_folder_open(cr),
             IconKind::Cloud => draw_cloud(cr),
+            IconKind::LaserPointer => draw_laser_pointer(cr),
         }
 
         cr.restore().expect("cairo restore");
@@ -568,6 +570,54 @@ fn draw_cloud(cr: &cairo::Context) {
     let _ = cr.stroke();
 }
 
+fn draw_laser_pointer(cr: &cairo::Context) {
+    let _ = cr.save();
+
+    cr.set_line_cap(cairo::LineCap::Round);
+    cr.set_line_join(cairo::LineJoin::Round);
+    cr.set_line_width(2.0);
+
+    // 1. Elsa della Spada Laser (impugnatura metallica pulita in basso a sinistra)
+    // Pomello alla base
+    cr.move_to(2.8, 20.2);
+    cr.line_to(3.8, 21.2);
+    let _ = cr.stroke();
+
+    // Fusto solido dell'elsa
+    cr.move_to(3.5, 20.5);
+    cr.line_to(8.0, 16.0);
+    let _ = cr.stroke();
+
+    // Emettitore / Guardia ortogonale pulita a 45°
+    cr.move_to(6.8, 14.8);
+    cr.line_to(9.2, 17.2);
+    let _ = cr.stroke();
+
+    // 2. Lama di energia laser a capsula affusolata (stile Star Wars / Lucide)
+    // Asse centrale da (8.0, 16.0) a (19.5, 4.5) con calotta d'energia in testa
+    let nx = 0.90;
+    let ny = 0.90;
+    let p0_x = 8.0;
+    let p0_y = 16.0;
+    let p1_x = 19.5;
+    let p1_y = 4.5;
+
+    cr.move_to(p0_x - nx, p0_y - ny);
+    cr.line_to(p1_x - nx, p1_y - ny);
+    cr.arc(
+        p1_x,
+        p1_y,
+        1.28,
+        -3.0 * std::f64::consts::PI / 4.0,
+        std::f64::consts::PI / 4.0,
+    );
+    cr.line_to(p0_x + nx, p0_y + ny);
+    cr.close_path();
+    let _ = cr.stroke();
+
+    let _ = cr.restore();
+}
+
 /// Disegna il logo ufficiale UniNote: Monogramma 'U' accademico fuso con un pennino stilografico di precisione.
 fn draw_app_logo(cr: &cairo::Context, w: f64, h: f64) {
     if w <= 0.0 || h <= 0.0 {
@@ -793,6 +843,7 @@ mod tests {
             ("folder_plus", draw_folder_plus),
             ("folder_open", draw_folder_open),
             ("cloud", draw_cloud),
+            ("laser_pointer", draw_laser_pointer),
         ] {
             let surface = ImageSurface::create(Format::ARgb32, 24, 24).expect("surface create");
             let cr = cairo::Context::new(&surface).expect("cairo context");

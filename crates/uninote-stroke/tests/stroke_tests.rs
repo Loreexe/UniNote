@@ -1,7 +1,7 @@
 use uninote_stroke::{
-    catmull_rom_to_bezier, sample_catmull_rom_spline, DeviceKind, InputDisposition, InputPhase,
-    InputSample, OneEuroConfig, OneEuroPointFilter, PalmRejectionEngine, PalmState, PipelineMode,
-    RecordedSession, Stroke, StrokeBuilder, StrokePoint, StrokeStyle, TouchMode,
+    catmull_rom_to_bezier, dot_max_travel, sample_catmull_rom_spline, DeviceKind, InputDisposition,
+    InputPhase, InputSample, OneEuroConfig, OneEuroPointFilter, PalmRejectionEngine, PalmState,
+    PipelineMode, RecordedSession, Stroke, StrokeBuilder, StrokePoint, StrokeStyle, TouchMode,
 };
 
 #[test]
@@ -33,6 +33,109 @@ fn test_stroke_discrete_dot() {
         "Dovrebbe essere riconosciuto come punto isolato"
     );
     assert_eq!(stroke.points.len(), 1);
+}
+
+#[test]
+fn test_stroke_short_line_with_fine_pen_is_not_dot() {
+    // Regressione BUG-002: con penna Micro (0.3 pt) o Fine (1.0 pt), un tratto breve (1.5 pt)
+    // non deve collassare in un punto isolato (is_dot = true), ma preservare traiettoria e Bézier.
+    let micro_style = StrokeStyle {
+        color: (0.1, 0.1, 0.1, 1.0),
+        base_width: 0.3,
+        min_width_factor: 0.4,
+        max_width_factor: 1.8,
+    };
+    let mut builder = StrokeBuilder::new(10, micro_style, PipelineMode::CatmullRomSpline);
+
+    builder.process_sample(InputSample::new(
+        (100.0, 100.0),
+        Some(0.5),
+        1_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Down,
+    ));
+
+    builder.process_sample(InputSample::new(
+        (101.5, 100.0),
+        Some(0.5),
+        2_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Move,
+    ));
+
+    builder.process_sample(InputSample::new(
+        (101.5, 100.0),
+        Some(0.5),
+        3_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Up,
+    ));
+
+    let stroke = builder.finish();
+    assert!(
+        !stroke.is_dot,
+        "Un tratto di 1.5 pt con penna 0.3 pt deve essere un tratto, non un punto"
+    );
+    assert_eq!(stroke.points.len(), 2);
+    assert_eq!(
+        stroke.cached_bezier.len(),
+        1,
+        "Deve avere 1 segmento Bézier valido memorizzato in cache"
+    );
+}
+
+#[test]
+fn test_stroke_micro_tap_with_fine_pen_is_dot() {
+    // Un vero tap sul posto con micro-jitter <= 0.15 pt deve rimanere classificato come dot
+    let micro_style = StrokeStyle {
+        color: (0.1, 0.1, 0.1, 1.0),
+        base_width: 0.3,
+        min_width_factor: 0.4,
+        max_width_factor: 1.8,
+    };
+    let mut builder = StrokeBuilder::new(11, micro_style, PipelineMode::CatmullRomSpline);
+
+    builder.process_sample(InputSample::new(
+        (100.0, 100.0),
+        Some(0.5),
+        1_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Down,
+    ));
+
+    builder.process_sample(InputSample::new(
+        (100.1, 100.05),
+        Some(0.5),
+        2_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Move,
+    ));
+
+    builder.process_sample(InputSample::new(
+        (100.1, 100.05),
+        Some(0.5),
+        3_000_000,
+        DeviceKind::Stylus,
+        InputPhase::Up,
+    ));
+
+    let stroke = builder.finish();
+    assert!(
+        stroke.is_dot,
+        "Un micro-tap di 0.11 pt deve essere classificato come dot"
+    );
+}
+
+#[test]
+fn test_dot_max_travel_scaling() {
+    // Verifica clamping e proporzionalità
+    assert!((dot_max_travel(0.25) - 0.20).abs() < 1e-6);
+    assert!((dot_max_travel(0.3) - 0.20).abs() < 1e-6);
+    assert!((dot_max_travel(1.0) - 0.60).abs() < 1e-6);
+    assert!((dot_max_travel(2.0) - 1.20).abs() < 1e-6);
+    assert!((dot_max_travel(2.8) - 1.68).abs() < 1e-6);
+    assert!((dot_max_travel(4.0) - 1.80).abs() < 1e-6);
+    assert!((dot_max_travel(14.0) - 1.80).abs() < 1e-6);
 }
 
 #[test]

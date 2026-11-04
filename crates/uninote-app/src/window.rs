@@ -72,6 +72,8 @@ impl UniNoteWindow {
         canvas.set_eraser_mode(initial_eraser_mode);
         let initial_eraser_radius = prefs.borrow().eraser_radius;
         canvas.set_eraser_radius(initial_eraser_radius);
+        let initial_laser_width = prefs.borrow().laser_width;
+        canvas.set_laser_width(initial_laser_width);
 
         let initial_slot_idx = prefs.borrow().active_slot_index;
         let initial_hex = if let Some(slot) = prefs.borrow().slots.get(initial_slot_idx) {
@@ -461,12 +463,18 @@ impl UniNoteWindow {
                 "Testo & Formule (Markdown/LaTeX)",
             ),
             (IconKind::Line, ActiveTool::Line, "Linea Dritta"),
-            (IconKind::Shapes, ActiveTool::Shapes, "Riconoscimento Forme"),
+            (
+                IconKind::LaserPointer,
+                ActiveTool::LaserPointer,
+                "Puntatore Laser (Scia Effimera)",
+            ),
         ];
 
         let tool_buttons: Rc<RefCell<Vec<Button>>> = Rc::new(RefCell::new(Vec::new()));
         let eraser_popover = Popover::builder().css_classes(["dms-popover"]).build();
         let mut eraser_btn_opt: Option<Button> = None;
+        let laser_popover = Popover::builder().css_classes(["dms-popover"]).build();
+        let mut laser_btn_opt: Option<Button> = None;
 
         for (i, (icon_kind, tool_kind, tooltip)) in tools.into_iter().enumerate() {
             let initial_tip = if tool_kind == ActiveTool::Eraser {
@@ -487,6 +495,9 @@ impl UniNoteWindow {
             if tool_kind == ActiveTool::Eraser {
                 eraser_btn_opt = Some(btn.clone());
             }
+            if tool_kind == ActiveTool::LaserPointer {
+                laser_btn_opt = Some(btn.clone());
+            }
 
             if i == 0 {
                 btn.add_css_class("active");
@@ -496,6 +507,7 @@ impl UniNoteWindow {
             let all_tools = tool_buttons.clone();
             let btn_self = btn.clone();
             let pop_click = eraser_popover.clone();
+            let laser_pop_click = laser_popover.clone();
 
             btn.connect_clicked(move |_| {
                 let is_already_active = btn_self.has_css_class("active");
@@ -516,6 +528,8 @@ impl UniNoteWindow {
                     c_tool.set_selection_mode(new_mode);
                 } else if tool_kind == ActiveTool::Eraser && is_already_active {
                     pop_click.popup();
+                } else if tool_kind == ActiveTool::LaserPointer && is_already_active {
+                    laser_pop_click.popup();
                 } else {
                     c_tool.set_active_tool(tool_kind);
                 }
@@ -535,6 +549,7 @@ impl UniNoteWindow {
                 ActiveTool::Select => 3,
                 ActiveTool::Text => 4,
                 ActiveTool::Line => 5,
+                ActiveTool::LaserPointer => 6,
                 ActiveTool::Shapes => 6,
             };
             for (idx, b) in all_tools_sync.borrow().iter().enumerate() {
@@ -747,6 +762,191 @@ impl UniNoteWindow {
         });
 
         eraser_popover.set_child(Some(&eraser_pop_box));
+
+        // --- Popover Puntatore Laser (Regolazione Spessore e Preset) ---
+        let laser_btn = laser_btn_opt.expect("laser pointer button must exist");
+        laser_popover.set_parent(&laser_btn);
+
+        let right_click_laser = GestureClick::builder()
+            .button(gdk::BUTTON_SECONDARY)
+            .build();
+        let pop_rc_laser = laser_popover.clone();
+        let tools_rc_laser = tool_buttons.clone();
+        let btn_rc_laser = laser_btn.clone();
+        let canvas_rc_laser = canvas.clone();
+        right_click_laser.connect_pressed(move |gesture, _n, _x, _y| {
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
+            for b in tools_rc_laser.borrow().iter() {
+                b.remove_css_class("active");
+            }
+            btn_rc_laser.add_css_class("active");
+            canvas_rc_laser.set_active_tool(ActiveTool::LaserPointer);
+            pop_rc_laser.popup();
+        });
+        laser_btn.add_controller(right_click_laser);
+
+        let long_press_laser = GestureLongPress::new();
+        long_press_laser.set_touch_only(false);
+        let pop_lp_laser = laser_popover.clone();
+        let tools_lp_laser = tool_buttons.clone();
+        let btn_lp_laser = laser_btn.clone();
+        let canvas_lp_laser = canvas.clone();
+        long_press_laser.connect_pressed(move |_gesture, _x, _y| {
+            for b in tools_lp_laser.borrow().iter() {
+                b.remove_css_class("active");
+            }
+            btn_lp_laser.add_css_class("active");
+            canvas_lp_laser.set_active_tool(ActiveTool::LaserPointer);
+            pop_lp_laser.popup();
+        });
+        laser_btn.add_controller(long_press_laser);
+
+        let laser_pop_box = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(10)
+            .margin_start(10)
+            .margin_end(10)
+            .margin_top(8)
+            .margin_bottom(8)
+            .build();
+
+        let laser_title_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(8)
+            .build();
+        let lbl_laser_title = Label::builder()
+            .label("Puntatore Laser")
+            .xalign(0.0)
+            .hexpand(true)
+            .css_classes(["brand-title"])
+            .build();
+        laser_title_box.append(&lbl_laser_title);
+
+        let lbl_laser_val = Label::builder()
+            .label(format!("{:.1} pt", initial_laser_width))
+            .xalign(1.0)
+            .css_classes(["thick-value"])
+            .build();
+        laser_title_box.append(&lbl_laser_val);
+        laser_pop_box.append(&laser_title_box);
+
+        let lbl_laser_section = Label::builder()
+            .label("SPESSORE FASCIO")
+            .xalign(0.0)
+            .css_classes(["dms-popover-section-title"])
+            .build();
+        laser_pop_box.append(&lbl_laser_section);
+
+        let laser_scale = Scale::with_range(Orientation::Horizontal, 1.5, 20.0, 0.5);
+        laser_scale.set_value(initial_laser_width);
+        laser_scale.set_width_request(220);
+        laser_scale.set_css_classes(&["dms-pill-scale"]);
+
+        // Preview live del raggio laser con Cairo
+        let laser_preview = DrawingArea::builder()
+            .content_width(220)
+            .content_height(28)
+            .css_classes(["caliber-preview"])
+            .build();
+
+        let scale_prev_clone = laser_scale.clone();
+        laser_preview.set_draw_func(move |_area, cr, width, height| {
+            let w = width as f64;
+            let h = height as f64;
+            let width_pt = scale_prev_clone.value();
+            let cy = h / 2.0;
+            let pad_x = 24.0;
+
+            cr.set_line_cap(cairo::LineCap::Round);
+
+            // Glow rosso rubino saturo
+            let glow_w = (width_pt * 2.8).clamp(3.0, 32.0);
+            cr.set_line_width(glow_w);
+            cr.set_source_rgba(1.0, 0.0, 0.05, 0.50);
+            cr.move_to(pad_x, cy);
+            cr.line_to(w - pad_x, cy);
+            let _ = cr.stroke();
+
+            // Fascio principale rosso fuoco intenso
+            let core_w = width_pt.clamp(1.5, 20.0);
+            cr.set_line_width(core_w);
+            cr.set_source_rgba(1.0, 0.03, 0.07, 0.95);
+            cr.move_to(pad_x, cy);
+            cr.line_to(w - pad_x, cy);
+            let _ = cr.stroke();
+
+            // Anima calda
+            if core_w >= 2.5 {
+                cr.set_line_width(core_w * 0.40);
+                cr.set_source_rgba(1.0, 0.32, 0.28, 0.98);
+                cr.move_to(pad_x, cy);
+                cr.line_to(w - pad_x, cy);
+                let _ = cr.stroke();
+            }
+        });
+        laser_pop_box.append(&laser_preview);
+        laser_pop_box.append(&laser_scale);
+
+        // Chip preset rapidi: Fine (2.5), Normale (5.0), Spesso (8.0), Largo (14.0)
+        let laser_presets_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(6)
+            .homogeneous(true)
+            .build();
+
+        let laser_presets_data: [(&str, f64); 4] = [
+            ("Fine", 2.5),
+            ("Normale", 5.0),
+            ("Spesso", 8.0),
+            ("Largo", 14.0),
+        ];
+
+        let laser_preset_buttons: Rc<RefCell<Vec<(Button, f64)>>> =
+            Rc::new(RefCell::new(Vec::new()));
+
+        for (name, preset_val) in laser_presets_data {
+            let p_btn = Button::builder()
+                .label(name)
+                .tooltip_text(format!("{:.1} pt", preset_val))
+                .css_classes(["dms-preset-chip"])
+                .build();
+            if (initial_laser_width - preset_val).abs() < 0.25 {
+                p_btn.add_css_class("active");
+            }
+            let s_ref = laser_scale.clone();
+            p_btn.connect_clicked(move |_| {
+                s_ref.set_value(preset_val);
+            });
+            laser_presets_box.append(&p_btn);
+            laser_preset_buttons.borrow_mut().push((p_btn, preset_val));
+        }
+        laser_pop_box.append(&laser_presets_box);
+
+        let c_scale_laser = canvas.clone();
+        let val_lbl_laser = lbl_laser_val.clone();
+        let laser_prev_clone = laser_preview.clone();
+        let preset_btns_laser = laser_preset_buttons.clone();
+        let prefs_scale_laser = prefs.clone();
+
+        laser_scale.connect_value_changed(move |scale| {
+            let val = scale.value();
+            c_scale_laser.set_laser_width(val);
+            val_lbl_laser.set_label(&format!("{:.1} pt", val));
+            laser_prev_clone.queue_draw();
+
+            for (btn, preset_val) in preset_btns_laser.borrow().iter() {
+                if (val - preset_val).abs() < 0.25 {
+                    btn.add_css_class("active");
+                } else {
+                    btn.remove_css_class("active");
+                }
+            }
+
+            prefs_scale_laser.borrow_mut().laser_width = val;
+            let _ = prefs_scale_laser.borrow().save();
+        });
+
+        laser_popover.set_child(Some(&laser_pop_box));
 
         overlay.add_overlay(&island_box);
 
@@ -2143,6 +2343,7 @@ impl UniNoteWindow {
         let p3_init = settings_popover.clone();
         let p4_init = grid_popover.clone();
         let p5_init = eraser_popover.clone();
+        let p6_init = laser_popover.clone();
         let is_dark_init = libadwaita::StyleManager::default().is_dark();
         if !is_dark_init {
             win_init.add_css_class("light-theme");
@@ -2151,6 +2352,7 @@ impl UniNoteWindow {
             p3_init.add_css_class("light-theme");
             p4_init.add_css_class("light-theme");
             p5_init.add_css_class("light-theme");
+            p6_init.add_css_class("light-theme");
         }
 
         let win_sm = window.clone();
@@ -2159,6 +2361,7 @@ impl UniNoteWindow {
         let p3_sm = settings_popover.clone();
         let p4_sm = grid_popover.clone();
         let p5_sm = eraser_popover.clone();
+        let p6_sm = laser_popover.clone();
         let d_sm = dashboard.clone();
         libadwaita::StyleManager::default().connect_dark_notify(move |sm| {
             let is_dark = sm.is_dark();
@@ -2169,6 +2372,7 @@ impl UniNoteWindow {
                 p3_sm.remove_css_class("light-theme");
                 p4_sm.remove_css_class("light-theme");
                 p5_sm.remove_css_class("light-theme");
+                p6_sm.remove_css_class("light-theme");
             } else {
                 win_sm.add_css_class("light-theme");
                 p1_sm.add_css_class("light-theme");
@@ -2176,6 +2380,7 @@ impl UniNoteWindow {
                 p3_sm.add_css_class("light-theme");
                 p4_sm.add_css_class("light-theme");
                 p5_sm.add_css_class("light-theme");
+                p6_sm.add_css_class("light-theme");
             }
             d_sm.refresh();
         });

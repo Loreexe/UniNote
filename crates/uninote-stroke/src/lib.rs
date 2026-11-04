@@ -10,8 +10,8 @@ pub mod types;
 
 pub use filter::{OneEuroConfig, OneEuroPointFilter, OneEuroScalar};
 pub use geometry::{
-    catmull_rom_to_bezier, compute_width, distance, is_discrete_dot, sample_catmull_rom_spline,
-    CubicBezierSegment,
+    catmull_rom_to_bezier, compute_width, distance, dot_max_travel, is_discrete_dot,
+    sample_catmull_rom_spline, CubicBezierSegment,
 };
 pub use palm::{InputDisposition, PalmRejectionEngine, PalmState, TouchMode, PROXIMITY_TIMEOUT_NS};
 pub use pipeline::StrokeBuilder;

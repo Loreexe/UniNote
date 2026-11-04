@@ -24,6 +24,13 @@ pub fn distance(p1: (f64, f64), p2: (f64, f64)) -> f64 {
     (dx * dx + dy * dy).sqrt()
 }
 
+/// Calcola la soglia dinamica di spostamento massimo per classificare un tratto
+/// a più punti come punto isolato (dot/tap con micro-jitter), proporzionale allo spessore base.
+#[inline]
+pub fn dot_max_travel(base_width: f64) -> f64 {
+    (base_width * 0.6).clamp(0.20, 1.8)
+}
+
 /// Verifica se una sequenza di punti rappresenta un punto isolato (dot/click rapido).
 pub fn is_discrete_dot(points: &[StrokePoint], max_travel_px: f64) -> bool {
     if points.is_empty() {

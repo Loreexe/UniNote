@@ -48,6 +48,8 @@ pub struct AppPreferences {
     pub eraser_mode: EraserMode,
     #[serde(default = "default_eraser_radius")]
     pub eraser_radius: f64,
+    #[serde(default = "default_laser_width")]
+    pub laser_width: f64,
 }
 
 fn default_eraser_mode() -> EraserMode {
@@ -56,6 +58,10 @@ fn default_eraser_mode() -> EraserMode {
 
 fn default_eraser_radius() -> f64 {
     16.0
+}
+
+fn default_laser_width() -> f64 {
+    5.0
 }
 
 impl Default for AppPreferences {
@@ -73,6 +79,7 @@ impl Default for AppPreferences {
             ],
             eraser_mode: EraserMode::WholeStroke,
             eraser_radius: 16.0,
+            laser_width: 5.0,
         }
     }
 }
@@ -106,6 +113,11 @@ impl AppPreferences {
             prefs.eraser_radius = 16.0;
         } else {
             prefs.eraser_radius = prefs.eraser_radius.clamp(4.0, 64.0);
+        }
+        if !prefs.laser_width.is_finite() {
+            prefs.laser_width = 5.0;
+        } else {
+            prefs.laser_width = prefs.laser_width.clamp(1.5, 24.0);
         }
         Ok(prefs)
     }

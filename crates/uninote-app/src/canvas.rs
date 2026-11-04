@@ -81,6 +81,22 @@ pub enum ActiveTool {
     Line,
     Shapes,
     Select,
+    LaserPointer,
+}
+
+/// Singolo punto campionato nella scia volatile del puntatore laser con timestamp assoluto.
+#[derive(Debug, Clone)]
+pub struct LaserPoint {
+    pub x: f64,
+    pub y: f64,
+    pub timestamp_ns: u64,
+}
+
+/// Buffer volatile della scia del puntatore laser con stato di disegno attivo.
+#[derive(Debug, Clone, Default)]
+pub struct LaserTrail {
+    pub points: Vec<LaserPoint>,
+    pub is_active: bool,
 }
 
 /// Stato della selezione interattiva su canvas (Lazo libero e Rettangolo diagonale).
@@ -302,6 +318,9 @@ pub struct CanvasState {
     pub mouse_pan_start: Option<(f64, f64)>,
     pub tip_pressure_threshold: f64,
     pub pdf_cache: std::cell::RefCell<crate::pdf_cache::PdfCacheManager>,
+    pub laser_trail: LaserTrail,
+    pub laser_tick_active: bool,
+    pub laser_width: f64,
 }
 
 impl CanvasState {
@@ -331,6 +350,9 @@ impl CanvasState {
             mouse_pan_start: None,
             tip_pressure_threshold: 0.06,
             pdf_cache: std::cell::RefCell::new(crate::pdf_cache::PdfCacheManager::default_120hz()),
+            laser_trail: LaserTrail::default(),
+            laser_tick_active: false,
+            laser_width: 5.0,
         }
     }
 
@@ -519,6 +541,10 @@ impl NoteCanvas {
         if tool != ActiveTool::Eraser {
             st.eraser_pointer = None;
         }
+        if tool != ActiveTool::LaserPointer {
+            st.laser_trail.points.clear();
+            st.laser_trail.is_active = false;
+        }
         let tool_name = match tool {
             ActiveTool::Pen => "Penna",
             ActiveTool::Eraser => match st.eraser_mode {
@@ -530,6 +556,7 @@ impl NoteCanvas {
             ActiveTool::Line => "Linea Dritta",
             ActiveTool::Shapes => "Forme",
             ActiveTool::Select => "Selezione (Lazo / Rettangolo)",
+            ActiveTool::LaserPointer => "Puntatore Laser",
         };
         self.hud
             .update_metrics(|m| m.current_tool = tool_name.to_string());
@@ -537,6 +564,19 @@ impl NoteCanvas {
         drop(st);
         self.area.queue_draw();
         self.notify_tool_changed(tool);
+    }
+
+    pub fn active_tool(&self) -> ActiveTool {
+        self.state.borrow().active_tool
+    }
+
+    pub fn laser_width(&self) -> f64 {
+        self.state.borrow().laser_width
+    }
+
+    pub fn set_laser_width(&self, width: f64) {
+        self.state.borrow_mut().laser_width = width.clamp(1.5, 24.0);
+        self.area.queue_draw();
     }
 
     pub fn eraser_mode(&self) -> EraserMode {
@@ -1862,6 +1902,7 @@ impl NoteCanvas {
     fn setup_drawing(&self) {
         let state_clone = self.state.clone();
         let hud_clone = self.hud.clone();
+        let app_start = self.app_start;
 
         self.area.set_draw_func(move |_area, cr, width, height| {
             let start_render = Instant::now();
@@ -2279,6 +2320,16 @@ impl NoteCanvas {
                 }
             }
 
+            // 6. Disegno scia effimera del puntatore laser (overlay con coordinate in spazio documento)
+            if !st.laser_trail.points.is_empty() {
+                let now_ns = app_start.elapsed().as_nanos() as u64;
+                let _ = cr.save();
+                cr.translate(vp.offset_x, vp.offset_y);
+                cr.scale(vp.zoom, vp.zoom);
+                Self::draw_laser_trail(cr, &st.laser_trail, now_ns, vp.zoom, st.laser_width);
+                let _ = cr.restore();
+            }
+
             // 4. Aggiornamento metriche di rendering HUD (zero-overhead quando nascosto)
             if hud_clone.is_visible() {
                 let render_duration = start_render.elapsed().as_micros() as u64;
@@ -2611,11 +2662,13 @@ impl NoteCanvas {
         let area_clone = self.area.clone();
         let hud_clone = self.hud.clone();
         let app_start = self.app_start;
+        let canvas_clone = self.clone();
 
         // Down
         let state = state_clone.clone();
         let area = area_clone.clone();
         let hud = hud_clone.clone();
+        let canvas_down = canvas_clone.clone();
         stylus.connect_down(move |gesture, x, y| {
             gesture.set_state(gtk4::EventSequenceState::Claimed);
             let pressure = gesture.axis(gdk::AxisUse::Pressure);
@@ -2627,6 +2680,21 @@ impl NoteCanvas {
             st.active_device = Some(DeviceKind::Stylus);
 
             let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
+
+            // Gestione Strumento Puntatore Laser (Stylus Down)
+            if st.active_tool == ActiveTool::LaserPointer {
+                st.laser_trail.points.clear();
+                st.laser_trail.points.push(LaserPoint {
+                    x: doc_x,
+                    y: doc_y,
+                    timestamp_ns: now_ns,
+                });
+                st.laser_trail.is_active = true;
+                drop(st);
+                canvas_down.ensure_laser_tick_active();
+                area.queue_draw();
+                return;
+            }
 
             // Gestione Strumento Selezione (Stylus Down)
             if st.active_tool == ActiveTool::Select {
@@ -2720,6 +2788,7 @@ impl NoteCanvas {
         let state = state_clone.clone();
         let area = area_clone.clone();
         let hud = hud_clone.clone();
+        let canvas_motion = canvas_clone.clone();
         stylus.connect_motion(move |gesture, x, y| {
             gesture.set_state(gtk4::EventSequenceState::Claimed);
             let pressure = gesture.axis(gdk::AxisUse::Pressure);
@@ -2731,6 +2800,35 @@ impl NoteCanvas {
             st.last_stylus_time = Some(now);
 
             let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
+
+            // Gestione Strumento Puntatore Laser (Stylus Motion)
+            if st.active_tool == ActiveTool::LaserPointer {
+                if st.laser_trail.is_active {
+                    let should_add = match st.laser_trail.points.last() {
+                        Some(last) => {
+                            let dx = doc_x - last.x;
+                            let dy = doc_y - last.y;
+                            dx * dx + dy * dy >= 1.44 // dist >= 1.2 pt
+                        }
+                        None => true,
+                    };
+                    if should_add {
+                        st.laser_trail.points.push(LaserPoint {
+                            x: doc_x,
+                            y: doc_y,
+                            timestamp_ns: now_ns,
+                        });
+                        drop(st_guard);
+                        canvas_motion.ensure_laser_tick_active();
+                        area.queue_draw();
+                    } else {
+                        drop(st_guard);
+                    }
+                } else {
+                    drop(st_guard);
+                }
+                return;
+            }
 
             // Gestione Strumento Selezione (Stylus Motion)
             if st.active_tool == ActiveTool::Select {
@@ -2930,6 +3028,14 @@ impl NoteCanvas {
 
             let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
 
+            // Gestione Strumento Puntatore Laser (Stylus Up)
+            if st.active_tool == ActiveTool::LaserPointer {
+                st.laser_trail.is_active = false;
+                drop(st);
+                area.queue_draw();
+                return;
+            }
+
             // Gestione Strumento Selezione (Stylus Up)
             if st.active_tool == ActiveTool::Select {
                 Self::handle_selection_up(&mut st);
@@ -2978,6 +3084,9 @@ impl NoteCanvas {
                 st.history.end_batch();
                 st.persist_changes();
             }
+            if st.active_tool == ActiveTool::LaserPointer {
+                st.laser_trail.is_active = false;
+            }
             st.palm_engine.on_pen_proximity(true, now_ns);
 
             let closed_stroke = if let Some(builder) = st.active_builder.take() {
@@ -3016,7 +3125,7 @@ impl NoteCanvas {
         let state = state_clone.clone();
         let area = area_clone.clone();
         let hud = hud_clone.clone();
-        let canvas_drag_clone = canvas_clone.clone();
+        let canvas_begin = canvas_clone.clone();
         drag.connect_drag_begin(move |gesture, start_x, start_y| {
             // Ignora categoricamente tocchi dal touchscreen (la mano/palmo non deve mai disegnare tratti)
             if gesture.current_sequence().is_some() {
@@ -3093,9 +3202,9 @@ impl NoteCanvas {
                     drop(st);
                     area.queue_draw();
                     if hit_image {
-                        canvas_drag_clone.notify_tool_changed(ActiveTool::Select);
+                        canvas_begin.notify_tool_changed(ActiveTool::Select);
                     }
-                    canvas_drag_clone.show_selection_context_menu(start_x, start_y);
+                    canvas_begin.show_selection_context_menu(start_x, start_y);
                     return;
                 }
 
@@ -3113,6 +3222,21 @@ impl NoteCanvas {
                 st.mouse_drag_start = Some((start_x, start_y));
                 let (doc_x, doc_y) = st.viewport.screen_to_document((start_x, start_y));
                 let now_ns = app_start.elapsed().as_nanos() as u64;
+
+                // Gestione Strumento Puntatore Laser (Mouse Drag Begin)
+                if st.active_tool == ActiveTool::LaserPointer {
+                    st.laser_trail.points.clear();
+                    st.laser_trail.points.push(LaserPoint {
+                        x: doc_x,
+                        y: doc_y,
+                        timestamp_ns: now_ns,
+                    });
+                    st.laser_trail.is_active = true;
+                    drop(st);
+                    canvas_begin.ensure_laser_tick_active();
+                    area.queue_draw();
+                    return;
+                }
 
                 // Gestione Strumento Selezione (Mouse Drag Begin)
                 if st.active_tool == ActiveTool::Select {
@@ -3169,6 +3293,7 @@ impl NoteCanvas {
         // Drag Update
         let state = state_clone.clone();
         let area = area_clone.clone();
+        let canvas_update = canvas_clone.clone();
         drag.connect_drag_update(move |gesture, offset_x, offset_y| {
             if gesture.current_sequence().is_some() {
                 return;
@@ -3206,6 +3331,35 @@ impl NoteCanvas {
                 let cur_screen_y = start_y + offset_y;
                 let (doc_x, doc_y) = st.viewport.screen_to_document((cur_screen_x, cur_screen_y));
                 let now_ns = app_start.elapsed().as_nanos() as u64;
+
+                // Gestione Strumento Puntatore Laser (Mouse Drag Update)
+                if st.active_tool == ActiveTool::LaserPointer {
+                    if st.laser_trail.is_active {
+                        let should_add = match st.laser_trail.points.last() {
+                            Some(last) => {
+                                let dx = doc_x - last.x;
+                                let dy = doc_y - last.y;
+                                dx * dx + dy * dy >= 1.44 // dist >= 1.2 pt
+                            }
+                            None => true,
+                        };
+                        if should_add {
+                            st.laser_trail.points.push(LaserPoint {
+                                x: doc_x,
+                                y: doc_y,
+                                timestamp_ns: now_ns,
+                            });
+                            drop(st_guard);
+                            canvas_update.ensure_laser_tick_active();
+                            area.queue_draw();
+                        } else {
+                            drop(st_guard);
+                        }
+                    } else {
+                        drop(st_guard);
+                    }
+                    return;
+                }
 
                 // Gestione Strumento Selezione (Mouse Drag Update)
                 if st.active_tool == ActiveTool::Select {
@@ -3293,6 +3447,14 @@ impl NoteCanvas {
                 let cur_y = start_y + offset_y;
                 let (doc_x, doc_y) = st.viewport.screen_to_document((cur_x, cur_y));
                 let now_ns = app_start.elapsed().as_nanos() as u64;
+
+                // Gestione Strumento Puntatore Laser (Mouse Drag End)
+                if st.active_tool == ActiveTool::LaserPointer {
+                    st.laser_trail.is_active = false;
+                    drop(st);
+                    area.queue_draw();
+                    return;
+                }
 
                 // Gestione Strumento Selezione (Mouse Drag End)
                 if st.active_tool == ActiveTool::Select {
@@ -4467,6 +4629,193 @@ impl NoteCanvas {
             cr.set_source_rgba(0.15, 0.18, 0.22, 0.70);
             cr.set_line_width(1.5);
             let _ = cr.stroke();
+        }
+
+        let _ = cr.restore();
+    }
+
+    /// Attiva il tick callback a 60/120 Hz solo fintanto che ci sono punti laser da dissolvere o lo strumento è attivo.
+    pub fn ensure_laser_tick_active(&self) {
+        let mut st = self.state.borrow_mut();
+        if st.laser_tick_active {
+            return;
+        }
+        st.laser_tick_active = true;
+
+        let state_clone = self.state.clone();
+        let app_start = self.app_start;
+        let area = self.area.clone();
+
+        self.area.add_tick_callback(move |_widget, _frame_clock| {
+            let mut st = state_clone.borrow_mut();
+            let now_ns = app_start.elapsed().as_nanos() as u64;
+            const LIFESPAN_NS: u64 = 1_200_000_000;
+
+            // Pruning dei punti laser la cui durata ha superato 1.2s
+            st.laser_trail
+                .points
+                .retain(|p| now_ns.saturating_sub(p.timestamp_ns) < LIFESPAN_NS);
+
+            if st.laser_trail.points.is_empty() && !st.laser_trail.is_active {
+                st.laser_tick_active = false;
+                area.queue_draw();
+                return glib::ControlFlow::Break;
+            }
+
+            area.queue_draw();
+            glib::ControlFlow::Continue
+        });
+    }
+
+    /// Disegna la scia volatile del puntatore laser con effetto neon glow a passate separate e spline Catmull-Rom continua.
+    pub fn draw_laser_trail(
+        cr: &gtk4::cairo::Context,
+        trail: &LaserTrail,
+        now_ns: u64,
+        zoom: f64,
+        base_laser_width: f64,
+    ) {
+        if trail.points.is_empty() {
+            return;
+        }
+
+        const LIFESPAN_NS: u64 = 1_200_000_000;
+        let points = &trail.points;
+        let n = points.len();
+
+        let core_width = (base_laser_width / zoom).clamp(1.2, 32.0);
+
+        // 4 layer continui di diffusione ottica (Point Spread Function coerente):
+        // Nessun filo sottile staccato o gradino brusco; il fascio è un raggio laser
+        // compatto, potente, rosso fuoco brillante al centro e morbidamente diffuso all'esterno.
+        let layers = [
+            (core_width * 1.85, 1.0, 0.02, 0.05, 0.18),
+            (core_width * 1.40, 1.0, 0.02, 0.05, 0.38),
+            (core_width, 1.0, 0.04, 0.06, 0.88),
+            (core_width * 0.65, 1.0, 0.20, 0.16, 0.96),
+        ];
+
+        if n == 1 {
+            let p = &points[0];
+            let age_ns = now_ns.saturating_sub(p.timestamp_ns);
+            if age_ns < LIFESPAN_NS {
+                let alpha = (1.0 - (age_ns as f64 / LIFESPAN_NS as f64)).clamp(0.0, 1.0);
+                let _ = cr.save();
+                for &(w, r, g, b, alpha_mult) in &layers {
+                    cr.set_source_rgba(r, g, b, alpha * alpha_mult);
+                    cr.arc(p.x, p.y, w * 0.5, 0.0, 2.0 * std::f64::consts::PI);
+                    let _ = cr.fill();
+                }
+                let _ = cr.restore();
+            }
+            return;
+        }
+
+        // Calcola in anticipo i punti di controllo di Bézier cubica centripeta per tutti i segmenti (continuità C^1 fluida)
+        struct BezierSeg {
+            p0: (f64, f64),
+            cp1: (f64, f64),
+            cp2: (f64, f64),
+            p1: (f64, f64),
+            alpha: f64,
+        }
+
+        let mut segs = Vec::with_capacity(n - 1);
+        for i in 0..(n - 1) {
+            let p_i = (points[i].x, points[i].y);
+            let p_ip1 = (points[i + 1].x, points[i + 1].y);
+
+            let age0 = now_ns.saturating_sub(points[i].timestamp_ns);
+            let age1 = now_ns.saturating_sub(points[i + 1].timestamp_ns);
+            let avg_age = (age0 + age1) / 2;
+
+            if avg_age >= LIFESPAN_NS {
+                continue;
+            }
+
+            let alpha = (1.0 - (avg_age as f64 / LIFESPAN_NS as f64)).clamp(0.0, 1.0);
+
+            let p_prev = if i == 0 {
+                (2.0 * p_i.0 - p_ip1.0, 2.0 * p_i.1 - p_ip1.1)
+            } else {
+                (points[i - 1].x, points[i - 1].y)
+            };
+
+            let p_next = if i + 1 == n - 1 {
+                (2.0 * p_ip1.0 - p_i.0, 2.0 * p_ip1.1 - p_i.1)
+            } else {
+                (points[i + 2].x, points[i + 2].y)
+            };
+
+            let cp1 = (
+                p_i.0 + (p_ip1.0 - p_prev.0) / 6.0,
+                p_i.1 + (p_ip1.1 - p_prev.1) / 6.0,
+            );
+            let cp2 = (
+                p_ip1.0 - (p_next.0 - p_i.0) / 6.0,
+                p_ip1.1 - (p_next.1 - p_i.1) / 6.0,
+            );
+
+            segs.push(BezierSeg {
+                p0: p_i,
+                cp1,
+                cp2,
+                p1: p_ip1,
+                alpha,
+            });
+        }
+
+        if segs.is_empty() {
+            return;
+        }
+
+        let first_p0 = segs[0].p0;
+        let first_alpha = segs[0].alpha;
+        let last_p1 = segs.last().unwrap().p1;
+        let last_alpha = segs.last().unwrap().alpha;
+
+        let _ = cr.save();
+        cr.set_line_cap(gtk4::cairo::LineCap::Butt);
+        cr.set_line_join(gtk4::cairo::LineJoin::Round);
+
+        for &(width, r, g, b, alpha_mult) in &layers {
+            cr.set_line_width(width);
+            for seg in &segs {
+                if seg.alpha <= 0.01 {
+                    continue;
+                }
+                cr.set_source_rgba(r, g, b, seg.alpha * alpha_mult);
+                cr.move_to(seg.p0.0, seg.p0.1);
+                cr.curve_to(
+                    seg.cp1.0, seg.cp1.1, seg.cp2.0, seg.cp2.1, seg.p1.0, seg.p1.1,
+                );
+                let _ = cr.stroke();
+            }
+
+            // Cap arrotondato naturale SOLO alla punta attiva dello stilo/laser
+            let cap_radius = width * 0.5;
+            cr.set_source_rgba(r, g, b, last_alpha * alpha_mult);
+            cr.arc(
+                last_p1.0,
+                last_p1.1,
+                cap_radius,
+                0.0,
+                2.0 * std::f64::consts::PI,
+            );
+            let _ = cr.fill();
+
+            // Cap arrotondato alla coda solo se la coda è ancora visibile (non svanita)
+            if first_alpha > 0.05 {
+                cr.set_source_rgba(r, g, b, first_alpha * alpha_mult);
+                cr.arc(
+                    first_p0.0,
+                    first_p0.1,
+                    cap_radius,
+                    0.0,
+                    2.0 * std::f64::consts::PI,
+                );
+                let _ = cr.fill();
+            }
         }
 
         let _ = cr.restore();

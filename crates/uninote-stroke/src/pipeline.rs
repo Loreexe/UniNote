@@ -1,5 +1,5 @@
 use crate::filter::{OneEuroConfig, OneEuroPointFilter, OneEuroScalar};
-use crate::geometry::{compute_width, is_discrete_dot};
+use crate::geometry::{compute_width, dot_max_travel, is_discrete_dot};
 pub use crate::types::PipelineMode;
 use crate::types::{DeviceKind, InputPhase, InputSample, Rect, Stroke, StrokePoint, StrokeStyle};
 
@@ -163,8 +163,9 @@ impl StrokeBuilder {
             }
 
             InputPhase::Up => {
-                // Finalizzazione del tratto
-                self.stroke.is_dot = is_discrete_dot(&self.stroke.points, 2.5);
+                // Finalizzazione del tratto: calcola soglia dinamica proporzionale al calibro base della penna
+                let max_travel = dot_max_travel(self.stroke.style.base_width);
+                self.stroke.is_dot = is_discrete_dot(&self.stroke.points, max_travel);
                 None
             }
 
@@ -189,7 +190,8 @@ impl StrokeBuilder {
             break;
         }
 
-        self.stroke.is_dot = is_discrete_dot(&self.stroke.points, 2.5);
+        let max_travel = dot_max_travel(self.stroke.style.base_width);
+        self.stroke.is_dot = is_discrete_dot(&self.stroke.points, max_travel);
         self.stroke.recompute_cache();
         self.stroke
     }
