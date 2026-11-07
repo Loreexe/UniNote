@@ -3,7 +3,7 @@ use libadwaita::prelude::*;
 use libadwaita::Application;
 use uninote_app::preferences::{DashboardRecentStore, RecentDocumentMeta};
 use uninote_app::UniNoteWindow;
-use uninote_core::model::DocumentFormat;
+use uninote_core::model::{DocumentFormat, PageBackground};
 
 const APP_ID: &str = "org.uninote.UniNote";
 
@@ -45,8 +45,30 @@ fn main() -> glib::ExitCode {
             }
         }
 
-        // Presenta la finestra principale persistente (la quale include dashboard.connect_import_pdf internamente)
-        let win = UniNoteWindow::new(app);
+        // Azioni desktop (org.uninote.UniNote.desktop): creano subito un documento vuoto.
+        let wants_notebook = std::env::args().any(|arg| arg == "--new-notebook");
+        let wants_whiteboard = std::env::args().any(|arg| arg == "--new-whiteboard");
+
+        let win = if wants_notebook || wants_whiteboard {
+            let store = DashboardRecentStore::load();
+            let _ = store.ensure_default_notes_dir();
+            let (title, _) = store.next_available_note_path();
+            let (format, background) = if wants_whiteboard {
+                (DocumentFormat::Whiteboard, PageBackground::Blank)
+            } else {
+                (
+                    DocumentFormat::Notebook,
+                    PageBackground::Ruled {
+                        line_spacing: 22.68,
+                        margin_left: 35.0,
+                    },
+                )
+            };
+            UniNoteWindow::create_document(app, &title, format, background)
+        } else {
+            // Presenta la finestra principale persistente (la quale include dashboard.connect_import_pdf internamente)
+            UniNoteWindow::new(app)
+        };
         win.present();
     });
 

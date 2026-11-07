@@ -1,7 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{
-    Align, Box as GtkBox, Button, Entry, Label, Orientation, PasswordEntry, ScrolledWindow, Window,
-};
+use gtk4::{Align, Box as GtkBox, Button, Entry, Label, Orientation, ScrolledWindow, Window};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -136,7 +134,7 @@ pub struct ConnectCloudDialog {
 impl ConnectCloudDialog {
     pub fn new<F: Fn() + 'static>(parent: Option<&impl IsA<Window>>, on_changed: F) -> Self {
         let window = Window::builder()
-            .title("Collega Servizi Cloud")
+            .title("Cartelle Cloud")
             .modal(true)
             .default_width(460)
             .default_height(520)
@@ -170,14 +168,14 @@ impl ConnectCloudDialog {
             .build();
         title_box.append(
             &Label::builder()
-                .label("Sincronizzazione Cloud")
+                .label("Cartelle Cloud locali")
                 .css_classes(["title-2", "heading"])
                 .xalign(0.0)
                 .build(),
         );
         title_box.append(
             &Label::builder()
-                .label("Accedi direttamente ai tuoi quaderni remoti")
+                .label("UniNote usa le cartelle sincronizzate dal client desktop")
                 .css_classes(["dim-label"])
                 .xalign(0.0)
                 .build(),
@@ -198,7 +196,7 @@ impl ConnectCloudDialog {
 
         let on_changed_rc = Rc::new(on_changed);
 
-        // 1. Scheda Nextcloud (WebDAV)
+        // 1. Scheda Nextcloud (cartella locale)
         let nc_card = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(10)
@@ -214,7 +212,7 @@ impl ConnectCloudDialog {
         nc_title_box.append(&create_icon(IconKind::Cloud, 20, None));
         nc_title_box.append(
             &Label::builder()
-                .label("Nextcloud (WebDAV)")
+                .label("Nextcloud")
                 .css_classes(["heading"])
                 .xalign(0.0)
                 .hexpand(true)
@@ -229,9 +227,6 @@ impl ConnectCloudDialog {
             .placeholder_text("URL Server (es. https://cloud.esempio.it)")
             .build();
         let nc_user_entry = Entry::builder().placeholder_text("Nome Utente").build();
-        let nc_pass_entry = PasswordEntry::builder()
-            .placeholder_text("Password Applicativa / Token")
-            .build();
         let btn_nc_action = Button::builder().build();
 
         let refresh_nc_ui = {
@@ -239,29 +234,26 @@ impl ConnectCloudDialog {
             let nc_status_lbl = nc_status_lbl.clone();
             let nc_url_entry = nc_url_entry.clone();
             let nc_user_entry = nc_user_entry.clone();
-            let nc_pass_entry = nc_pass_entry.clone();
             let btn_nc_action = btn_nc_action.clone();
 
             Rc::new(move || {
                 let st = settings.borrow();
                 if let Some(ref nc) = st.nextcloud {
                     nc_status_lbl.set_label(&format!(
-                        "Stato: Connesso a {} ({})",
+                        "Cartella attiva: {} ({})",
                         nc.server_url, nc.username
                     ));
                     nc_status_lbl.set_css_classes(&["success-label"]);
                     nc_url_entry.set_visible(false);
                     nc_user_entry.set_visible(false);
-                    nc_pass_entry.set_visible(false);
-                    btn_nc_action.set_label("Disconnetti Nextcloud");
+                    btn_nc_action.set_label("Disattiva Nextcloud");
                     btn_nc_action.set_css_classes(&["destructive-action"]);
                 } else {
-                    nc_status_lbl.set_label("Stato: Non collegato");
+                    nc_status_lbl.set_label("Stato: cartella non attiva");
                     nc_status_lbl.set_css_classes(&["dim-label"]);
                     nc_url_entry.set_visible(true);
                     nc_user_entry.set_visible(true);
-                    nc_pass_entry.set_visible(true);
-                    btn_nc_action.set_label("Collega Nextcloud");
+                    btn_nc_action.set_label("Attiva cartella Nextcloud");
                     btn_nc_action.set_css_classes(&["suggested-action"]);
                 }
             })
@@ -273,7 +265,6 @@ impl ConnectCloudDialog {
         let on_changed_nc = on_changed_rc.clone();
         let nc_url_clone = nc_url_entry.clone();
         let nc_user_clone = nc_user_entry.clone();
-        let nc_pass_clone = nc_pass_entry.clone();
 
         btn_nc_action.connect_clicked(move |_| {
             let is_connected = settings_nc_click.borrow().nextcloud.is_some();
@@ -288,7 +279,6 @@ impl ConnectCloudDialog {
                 let _ = settings_nc_click
                     .borrow_mut()
                     .connect_nextcloud(&url, &user);
-                nc_pass_clone.set_text("");
             }
             refresh_nc_click();
             on_changed_nc();
@@ -297,11 +287,10 @@ impl ConnectCloudDialog {
         nc_card.append(&nc_status_lbl);
         nc_card.append(&nc_url_entry);
         nc_card.append(&nc_user_entry);
-        nc_card.append(&nc_pass_entry);
         nc_card.append(&btn_nc_action);
         list_box.append(&nc_card);
 
-        // 2. Scheda Google Drive (OAuth2)
+        // 2. Scheda Google Drive (cartella locale)
         let gd_card = GtkBox::builder()
             .orientation(Orientation::Vertical)
             .spacing(10)
@@ -317,7 +306,7 @@ impl ConnectCloudDialog {
         gd_title_box.append(&create_icon(IconKind::Cloud, 20, None));
         gd_title_box.append(
             &Label::builder()
-                .label("Google Drive (OAuth2)")
+                .label("Google Drive")
                 .css_classes(["heading"])
                 .xalign(0.0)
                 .hexpand(true)
@@ -327,7 +316,7 @@ impl ConnectCloudDialog {
 
         let gd_status_lbl = Label::builder().xalign(0.0).build();
         let gd_email_entry = Entry::builder()
-            .placeholder_text("Email Account Google")
+            .placeholder_text("Email account (solo etichetta locale)")
             .build();
         let btn_gd_action = Button::builder().build();
 
@@ -340,16 +329,16 @@ impl ConnectCloudDialog {
             Rc::new(move || {
                 let st = settings.borrow();
                 if let Some(ref gd) = st.google_drive {
-                    gd_status_lbl.set_label(&format!("Stato: Connesso come {}", gd.account_email));
+                    gd_status_lbl.set_label(&format!("Cartella attiva: {}", gd.account_email));
                     gd_status_lbl.set_css_classes(&["success-label"]);
                     gd_email_entry.set_visible(false);
-                    btn_gd_action.set_label("Disconnetti Google Drive");
+                    btn_gd_action.set_label("Disattiva Google Drive");
                     btn_gd_action.set_css_classes(&["destructive-action"]);
                 } else {
-                    gd_status_lbl.set_label("Stato: Non collegato");
+                    gd_status_lbl.set_label("Stato: cartella non attiva");
                     gd_status_lbl.set_css_classes(&["dim-label"]);
                     gd_email_entry.set_visible(true);
-                    btn_gd_action.set_label("Accedi con Google");
+                    btn_gd_action.set_label("Attiva cartella Google Drive");
                     btn_gd_action.set_css_classes(&["suggested-action"]);
                 }
             })

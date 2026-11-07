@@ -47,6 +47,11 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.2" date="2026-11-04">
+      <description>
+        <p>Release v0.5.2: nuovo strumento Puntatore Laser volatile con scia al plasma e spessore regolabile, correzione della classificazione dei tratti brevi con penne a calibro ultra-fine (BUG-002). Include inoltre il dialogo Cloud senza credenziali (le cartelle sono locali e sincronizzate dal client desktop) e le azioni del launcher "Nuovo Quaderno A4" e "Nuova Lavagna Infinita" ora operative.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-11-02">
       <description>
         <p>Release v0.5.0: Ottimizzazioni prestazionali chiave con isolamento del generatore sintetico di dataset dal binario di release (PERF-001), caricamento batch ad alta efficienza degli elementi del documento da database SQLite con abbattimento dei round-trip SQL (PERF-002), unificazione completa dei dialoghi modali e consolidamento dell'architettura.</p>

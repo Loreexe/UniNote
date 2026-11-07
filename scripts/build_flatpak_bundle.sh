@@ -8,9 +8,12 @@ APP_ID="org.uninote.UniNote"
 BUILD_DIR="${ROOT_DIR}/build/flatpak-build"
 REPO_DIR="${ROOT_DIR}/build/flatpak-repo"
 BUNDLE_FILE="${DIST_DIR}/${APP_ID}.flatpak"
+# Stato/cache di flatpak-builder fuori dal repository: evita che decine di
+# migliaia di file temporanei finiscano nella cartella sincronizzata da Nextcloud.
+STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/uninote-flatpak"
 
 echo "=== Compilazione Bundle Flatpak UniNote (${APP_ID}) ==="
-mkdir -p "${DIST_DIR}" "${BUILD_DIR}" "${REPO_DIR}"
+mkdir -p "${DIST_DIR}" "${BUILD_DIR}" "${REPO_DIR}" "${STATE_DIR}"
 
 # Verifica presenza flatpak-builder
 if ! command -v flatpak-builder >/dev/null 2>&1; then
@@ -28,6 +31,7 @@ fi
 
 echo "-> Compilazione Flatpak tramite flatpak-builder..."
 flatpak-builder --force-clean --user --disable-rofiles-fuse \
+    --state-dir="${STATE_DIR}" \
     --repo="${REPO_DIR}" \
     "${BUILD_DIR}" \
     "${MANIFEST}"
