@@ -44,22 +44,22 @@ Unlike conventional note-taking suites that rely on heavy Electron/Chromium runt
 ### 1. Hub Accademico & Dashboard Documenti
 
 *Sidebar cartelle, card con miniature Cairo vettoriali, ricerca istantanea, spostamento file e azioni rapide di creazione.*<br />
-<img src="docs/screenshots/01_dashboard.png" alt="UniNote Dashboard" width="90%" />
+<img src="docs/screenshots/01_dashboard.png?v=0.5.2" alt="UniNote Dashboard" width="90%" />
 
 ### 2. Quaderno A4, Slide PDF e Screenshot
 
 *Inchiostrazione fluida a 120Hz con spline Catmull-Rom, evidenziatore, forme geometriche, annotazioni su slide e screenshot incollati come asset hash-addressed.*<br />
-<img src="docs/screenshots/02_quaderno.png" alt="UniNote Quaderno A4" width="90%" />
+<img src="docs/screenshots/02_quaderno.png?v=0.5.2" alt="UniNote Quaderno A4" width="90%" />
 
 ### 3. Lavagna Infinita
 
 *Spazio cartesiano continuo* $(-\infty, +\infty)$*, griglia procedurale dinamica, diagrammi a più colori e pulsante di ricentratura rapida del contenuto.*<br />
-<img src="docs/screenshots/03_lavagna_infinita.png" alt="UniNote Lavagna Infinita" width="90%" />
+<img src="docs/screenshots/03_lavagna_infinita.png?v=0.5.2" alt="UniNote Lavagna Infinita" width="90%" />
 
 ### 4. Impostazioni a 5 Schede & Scheda GitHub
 
 *Preferenze Adwaita per Hardware MPP, Aspetto DMS, Strumenti, Scorciatoie e GitHub, con opzioni avanzate, preset stilo e verifica aggiornamenti.*<br />
-<img src="docs/screenshots/04_impostazioni.png" alt="UniNote Impostazioni" width="78%" />
+<img src="docs/screenshots/04_impostazioni.png?v=0.5.2" alt="UniNote Impostazioni" width="78%" />
 
 </div>
 
