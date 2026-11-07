@@ -6,7 +6,7 @@
 
 **An Academic Freehand Note-Taking & Vector PDF Slide Annotation Suite for Linux**
 
-![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)![Rust](https://img.shields.io/badge/Rust-2021_Edition_\(MSRV_1.80+\)-orange.svg?logo=rust)![GUI](https://img.shields.io/badge/GUI-GTK4_%26_Libadwaita-4a90e2.svg?logo=gnome)![Version](https://img.shields.io/badge/Version-0.5.0-teal.svg)![Arch Linux](https://img.shields.io/badge/Arch_Linux-uninote-blue.svg?logo=archlinux)![Flatpak](https://img.shields.io/badge/Flatpak-org.uninote.UniNote-2b7bb9.svg?logo=flatpak)![CI](https://github.com/Loreexe/UniNote/actions/workflows/ci.yml/badge.svg)![Wayland](https://img.shields.io/badge/Display-Wayland_Native-purple.svg)![Architecture](https://img.shields.io/badge/Architecture-4_Decoupled_Crates-success.svg)
+![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)![Rust](https://img.shields.io/badge/Rust-2021_Edition_\(MSRV_1.80+\)-orange.svg?logo=rust)![GUI](https://img.shields.io/badge/GUI-GTK4_%26_Libadwaita-4a90e2.svg?logo=gnome)![Version](https://img.shields.io/badge/Version-0.5.2-teal.svg)![Arch Linux](https://img.shields.io/badge/Arch_Linux-uninote-blue.svg?logo=archlinux)![Flatpak](https://img.shields.io/badge/Flatpak-org.uninote.UniNote-2b7bb9.svg?logo=flatpak)![CI](https://github.com/Loreexe/UniNote/actions/workflows/ci.yml/badge.svg)![Wayland](https://img.shields.io/badge/Display-Wayland_Native-purple.svg)![Architecture](https://img.shields.io/badge/Architecture-4_Decoupled_Crates-success.svg)
 
 [Screenshots](#-screenshots--interface-showcase) •
 [Packaging & Install](#-packaging--quick-install) •
@@ -23,15 +23,17 @@
 
 **UniNote** is a native, high-performance Linux desktop application engineered specifically for university STEM lectures, mathematical derivations, academic research, and engineering design. Built from the ground up in **Rust (2021 Edition)**, **GTK 4 (v4.10+)**, **Libadwaita (0.7)**, and **Cairo**, UniNote bridges the divide between modern high-frequency digitizer hardware (Microsoft Pen Protocol 2.0/2.5, ELAN digitizers on 2-in-1 laptops, Wacom EMR/AES tablets) and the modern Linux Wayland desktop (Niri, GNOME, Sway, Hyprland).
 
-Unlike conventional note-taking suites that rely on heavy Electron/Chromium runtimes or lossy raster bitmap canvases, UniNote maintains an uncompromising **pure vector pipeline**:
+Unlike conventional note-taking suites that rely on heavy Electron/Chromium runtimes or lossy raster bitmap canvases, UniNote maintains an uncompromising **pure vector stroke pipeline** (raster storage is used only for explicitly pasted screenshots):
 
-- **120Hz Sub-Millisecond Inking Engine**: Predictive centripetal Catmull-Rom splines converted analytically to piecewise cubic Bézier curves, paired with an adaptive One Euro ($1€$) filter and dynamic pressure width synthesis.
+- **120Hz Sub-Millisecond Inking Engine**: Centripetal Catmull-Rom splines converted analytically to piecewise cubic Bézier curves, paired with an adaptive One Euro ($1€$) filter, zero-allocation Bézier caching, and dynamic pressure width synthesis.
 - **Hardware-Calibrated Digitizer Protection**: Strict physical impact latching (`pending_down`), instantaneous anti-hover cutoff upon stylus liftoff, capacitive blip rejection ($<0.065$ pressure peak), and a 4-state palm rejection machine with automatic proximity decay.
-- **Infinite Whiteboard & Discrete Metric A4 Notebooks**: Unbounded Cartesian $(-\infty, +\infty)$ ideation with dynamic procedural zoom-adaptive grid alongside calibrated A4 notebooks (Warm Natural White, 8mm Ruled with margin, 5mm Metric Grid).
+- **Infinite Whiteboard & Discrete Metric A4 Notebooks**: Unbounded Cartesian $(-\infty, +\infty)$ ideation with dynamic procedural zoom-adaptive grid alongside calibrated A4 notebooks (Warm Natural White, 8mm Ruled with margin, 5mm Metric Grid), continuous zoom from $25\%$ to $1000\%$.
 - **University PDF Document Flow**: Native non-destructive slide and handout annotation via `poppler-glib` with a dual-tier 120Hz Cairo cache (< 200 µs blit time) and typographic multi-page vector export via `cairo::PdfSurface`.
-- **Spatial Selection & Geometric Synthesis**: Freehand polygonal lasso and rectangular marquee with Ray-Casting containment, real-time 120Hz interactive drag translation, and atomic undo/redo commands.
-- **Crash-Resilient Storage**: Embedded SQLite 3 in Write-Ahead Logging (`WAL`) mode with asynchronous background thread persistence and single-file consolidated backup export via the SQLite Online Backup API.
-- **Dank Material Shell (DMS) / Material You (M3) Interface**: Full-bleed floating island UI with adaptive dark/light theme switching, Matugen vibrant color token synchronization, and pure vector Cairo iconography.
+- **Spatial Selection, Images & Geometric Manipulation**: Freehand lasso and rectangular marquee accelerated by a 2D R*-Tree, 8 interactive resize handles, affine scale/rotate, copy/cut/paste, and pasted PNG screenshots stored as hash-addressed `ItemKind::Image`.
+- **Eraser, Laser Pointer & Atomic Editing**: Analytical Bézier–circle stroke slicing with per-gesture undo batching, plus a volatile laser pointer whose plasma trail dissolves in 1.2 s without touching Undo/Redo, SQLite, or PDF export.
+- **Crash-Resilient Storage**: Embedded SQLite 3 in Write-Ahead Logging (`WAL`) mode with Schema V3 (`assets` hash-addressed table), asynchronous background thread persistence, prepared statements, and single-file consolidated backup export via the SQLite Online Backup API.
+- **Dashboard, Local Cloud Folders & Desktop Actions**: Folder sidebar with real filesystem subfolders, drag & drop between folders, Cairo thumbnails, instant search, local Nextcloud/Google Drive folders without credentials, and `--new-notebook` / `--new-whiteboard` launcher actions.
+- **Dank Material Shell (DMS) / Material You (M3) Interface**: Full-bleed floating island UI with adaptive dark/light theme switching, Matugen vibrant color token synchronization, dynamic pen dock, 5-tab Adwaita preferences, and pure vector Cairo iconography.
 
 ---
 
@@ -41,18 +43,23 @@ Unlike conventional note-taking suites that rely on heavy Electron/Chromium runt
 
 ### 1. Hub Accademico & Dashboard Documenti
 
-*Visualizzazione a schede con miniature Cairo vettoriali, ricerca istantanea e azioni rapide di creazione.*<br />
+*Sidebar cartelle, card con miniature Cairo vettoriali, ricerca istantanea, spostamento file e azioni rapide di creazione.*<br />
 <img src="docs/screenshots/01_dashboard.png" alt="UniNote Dashboard" width="90%" />
 
-### 2. Quaderno A4 Standard
+### 2. Quaderno A4, Slide PDF e Screenshot
 
-*Inchiostrazione fluida a 120Hz con spline Catmull-Rom, evidenziatore uniforme a passata singola e isola strumenti Dank Material Shell.*<br />
+*Inchiostrazione fluida a 120Hz con spline Catmull-Rom, evidenziatore, forme geometriche, annotazioni su slide e screenshot incollati come asset hash-addressed.*<br />
 <img src="docs/screenshots/02_quaderno.png" alt="UniNote Quaderno A4" width="90%" />
 
 ### 3. Lavagna Infinita
 
-*Spazio cartesiano continuo* $(-\infty, +\infty)$*, griglia procedurale dinamica e pulsante di ricentratura rapida all'origine.*<br />
+*Spazio cartesiano continuo* $(-\infty, +\infty)$*, griglia procedurale dinamica, diagrammi a più colori e pulsante di ricentratura rapida del contenuto.*<br />
 <img src="docs/screenshots/03_lavagna_infinita.png" alt="UniNote Lavagna Infinita" width="90%" />
+
+### 4. Impostazioni a 5 Schede & Scheda GitHub
+
+*Preferenze Adwaita per Hardware MPP, Aspetto DMS, Strumenti, Scorciatoie e GitHub, con opzioni avanzate, preset stilo e verifica aggiornamenti.*<br />
+<img src="docs/screenshots/04_impostazioni.png" alt="UniNote Impostazioni" width="78%" />
 
 </div>
 
@@ -64,16 +71,22 @@ UniNote is organized as a Cargo virtual workspace consisting of **four decoupled
 
 ```
 UniNote/
-├── Cargo.toml                      # Workspace manifest (Rust 2021, GPL-3.0, Version 0.2.1)
+├── Cargo.toml                      # Workspace manifest (Rust 2021, GPL-3.0, Version 0.5.2)
 ├── LICENSE                         # Verbatim GNU General Public License v3.0
+├── README.md                       # This document
+├── data/                           # FreeDesktop XDG assets (.desktop, metainfo, MIME, hicolor icons)
+├── packaging/                      # AUR recipes, Flatpak manifest and release-notes/vX.Y.Z.md
+├── scripts/                        # Icon generation and Arch/Flatpak packaging helpers
+├── docs/                           # README branding and application screenshots
+├── .github/workflows/              # CI (fmt, clippy, headless tests) and release pipeline
 ├── design/                         # Dank Material Shell (DMS) UI/UX prototyping (FigCraft)
 │   ├── uninote.figcraft            # Native vector UI design document
 │   └── previews/                   # 2x HiDPI preview renders
 └── crates/
-    ├── uninote-core/               # Mathematical document model & coordinate spaces
-    ├── uninote-stroke/             # Inking physics, filtering, palm rejection & selection
-    ├── uninote-storage/            # SQLite WAL persistence & asynchronous worker
-    └── uninote-app/                # GTK4/Libadwaita shell, Cairo canvas, PDF & DMS UI
+    ├── uninote-core/               # Document model, R*-Tree spatial index, viewport and atomic commands
+    ├── uninote-stroke/             # Catmull-Rom/Bézier geometry, filters, palm rejection, slicing, selection
+    ├── uninote-storage/            # SQLite WAL persistence (Schema V3 + assets) and asynchronous worker
+    └── uninote-app/                # GTK4/Libadwaita shell, Cairo canvas, PDF, images, dashboard & settings
 ```
 
 ### Data Flow & Component Topology
@@ -84,9 +97,10 @@ UniNote/
 |                               (uninote-app)                                   |
 |  - GtkApplication / Libadwaita (DMS Floating Islands & Matugen Tokens)        |
 |  - 120Hz Continuous Cairo Canvas & Procedural Zoom-Adaptive Whiteboard Grid   |
-|  - Academic Dashboard (GtkFlowBox Grid, Cairo Thumbnails 240x340 px)          |
-|  - Multi-Tab Settings Window (AdwPreferencesWindow: Hardware, DMS, Shapes)    |
-|  - Poppler PDF Engine (Dual-Tier Cache, Sharpness at Rest, Vector PDF Export) |
+|  - Executive R*-Tree Culling (>90% off-screen) & Zero-Alloc Bézier Rendering  |
+|  - Academic Dashboard (Folder Sidebar, GtkFlowBox, Cairo Thumbnails 240x340)  |
+|  - 5-Tab Settings Window (Hardware MPP, DMS, Tools, Shortcuts, GitHub)        |
+|  - Poppler PDF Engine, Image Cache and Volatile LaserTrail                    |
 +---------------------------------------+---------------------------------------+
                                         |
                 +-----------------------+-----------------------+
@@ -98,8 +112,9 @@ UniNote/
 |    (Notebook A4 / Whiteboard) |               |  - One Euro Filter (1€)       |
 |  - Continuous Viewport & Pan  |               |  - Palm Rejection Machine     |
 |  - Affine Coordinate Spaces   |               |  - MPP Anti-Hover & Anti-Blip |
-|  - Monotonic Atomic Commands  |               |  - Perfect Shape Synthesis    |
-|    (DocCommand::MoveItems)    |               |  - SelectionEngine (Ray-Cast) |
+|  - R*-Tree PageSpatialIndex   |               |  - Analytical Bézier Slicing  |
+|  - Atomic Commands (Move,     |               |  - Perfect Shape Synthesis    |
+|    Paste, Transform, Slice)   |               |  - SelectionEngine (Ray-Cast) |
 +---------------+---------------+               +---------------+---------------+
                 |                                               |
                 +-----------------------+-----------------------+
@@ -108,9 +123,9 @@ UniNote/
 +-------------------------------------------------------------------------------+
 |                                uninote-storage                                |
 |  - SQLite 3 Engine (WAL Mode, synchronous = NORMAL, busy_timeout = 5000)      |
-|  - Schema V2 (Background Extra, Metadata Format, Document Format Migration)   |
-|  - Dedicated Background Thread Worker (Non-blocking Graphics Pipeline)        |
-|  - SQLite Online Backup API for Atomic Consolidated .uninote Exports          |
+|  - Schema V3 (assets hash-addressed, metadata, V1→V3 migrations)              |
+|  - Prepared Statements, Buffer Reuse & Immediate Transactions                 |
+|  - Dedicated Background Worker + Online Backup API for .uninote Exports       |
 +-------------------------------------------------------------------------------+
 ```
 
@@ -127,15 +142,19 @@ UniNote/
   - *Anti-Hover Liftoff Cutoff*: Drops air samples immediately upon pressure falling below threshold, preventing diagonal trailing spikes on detached letters (`E`, `T`, `F`).
   - *Anti-Blip Capacitive Filter*: Discards spurious capacitive touch noise with pressure peaks below $0.065$.
 - **Robust Palm Rejection State Machine**: 4-state engine (`Idle`, `PenProximity`, `PenDrawing`, `PenCooldown`) with automatic proximity decay (300ms timeout) and active/suppressed touch slot isolation.
-- **Live Diagnostic Telemetry HUD (**`F12`**)**: Real-time display of digitizer sampling rate (Hz), compositor framerate (FPS), Cairo vector draw latency ($\mu\text{s}$), instantaneous pressure, and rejected sample count.
+- **Zero-Allocation Bézier Cache**: `cached_bbox` and `cached_bezier` are computed once at stroke completion and borrowed by the Cairo render loop, eliminating per-frame heap allocations during continuous 120Hz drawing.
+- **Live Diagnostic Telemetry HUD (**`F12`**)**: Real-time display of digitizer sampling rate (Hz), compositor framerate (FPS), Cairo vector draw latency ($\mu\text{s}$), instantaneous pressure, rejected sample count, visible vs. total strokes, and culling percentage. The HUD is zero-overhead when hidden.
 
-### 2. Spatial Selection & Geometric Manipulation
+### 2. Spatial Selection, Images & Geometric Manipulation
 
-- **Dual Selection Modalities**: Freehand closed-loop **Lasso** and diagonal **Rectangular Marquee** (`ActiveTool::Select`).
+- **Dual Selection Modalities**: Freehand closed-loop **Lasso** and diagonal **Rectangular Marquee** (`ActiveTool::Select`), pre-filtered through the page's 2D R*-Tree.
 - **Ray-Casting Algorithm**: Jordan curve theorem (Even-Odd parity) testing stroke point clouds: a stroke is captured if $\ge 80\%$ of its points fall inside the polygon or if its bounding box is fully enclosed.
-- **Live Cyan Dashed Bounding Box (**`#6DD2FF`**)**: Renders with sub-pixel sharpness and includes a central centroid grab handle for drag translation.
-- **Interactive Drag Translation at 120Hz**: Selected strokes translate smoothly in real time without floating-point precision drift.
-- **Atomic Undo/Redo Integration**: Drag translation commits an atomic `DocCommand::MoveItems` with invertible forward and reverse displacement vectors $(\Delta x, \Delta y)$, fully undoable via `Ctrl+Z`.
+- **Live Cyan Dashed Bounding Box (**`#6DD2FF`**)**: Renders with sub-pixel sharpness and includes **8 interactive handles** (4 circular corner nodes and 4 median pills) for proportional or free resize.
+- **Interactive Drag Translation at 120Hz**: Selected strokes and images translate smoothly in real time without floating-point precision drift.
+- **Affine Transformations & Style Mutation**: `DocCommand::TransformItems` applies scale/rotation with opposite-corner anchoring, while `DocCommand::ModifyItemsStyle` recolors or reweights selected strokes; both are fully undoable.
+- **Clipboard & Context Menu**: `Ctrl+C` / `Ctrl+X` / `Ctrl+V` move strokes and images between documents through an in-memory cache and `GdkClipboard` IPC, with cascading paste offsets. Right-click or long-press opens a context menu with z-order (move above/below), copy, duplicate, and delete.
+- **Screenshot & Image Items**: PNG images pasted from the clipboard become `ItemKind::Image` items backed by deduplicated SHA-256 assets, selectable with the same 8 handles and included in thumbnails and PDF export.
+- **Atomic Undo/Redo Integration**: Translation, transform, paste, style mutation, and batch deletion commit reversible `DocCommand` variants, fully undoable via `Ctrl+Z`.
 - **Rapid Batch Deletion**: Instant deletion of all selected items via the `Delete` or `Backspace` key.
 
 ### 3. Infinite Whiteboard & Calibrated A4 Notebooks
@@ -150,26 +169,33 @@ UniNote/
     - *Mathematical Grid*: 5mm ($14.17\,\text{pt}$) metric grid with sub-pixel line calibration.
 - **Infinite Whiteboard Format**:
   - Unbounded Cartesian plane $(x, y) \in (-\infty, +\infty)$ without discrete page boundaries.
-  - Procedural dynamic zoom-adaptive Cairo grid/dots that scale and fade seamlessly across zoom octaves ($20\% \text{--} 500\%$).
+  - Procedural dynamic zoom-adaptive Cairo grid/dots that scale and fade seamlessly across zoom octaves ($25\% \text{--} 1000\%$).
   - One-click *Center Content* command to fit the global bounding box of all drawn strokes to the current window.
   - Dynamic tight bounding-box calculation for vector PDF export of unbounded whiteboard diagrams.
+- **Precision Tools & Volatile Laser**:
+  - Continuous zoom from **25% to 1000%** (10x) with touch, trackpad, and bottom-dock controls.
+  - Pen caliber from **0.25 pt to 12 pt**, with a dynamic `dot_max_travel` threshold that preserves intentional accents, apostrophes, and short dashes on fine tips (BUG-002 fix).
+  - Eraser can remove a whole stroke or slice only the intersected Bézier segments, with a live circular radius indicator and a single undo step per gesture.
+  - **Volatile Laser Pointer**: a plasma trail that dissolves in 1.2 s, with a 1.5–20 pt width popover; it never enters Undo/Redo, SQLite, thumbnails, or PDF export.
 
 ### 4. Academic Dashboard & Settings Hub
 
-- **UniNoteDashboard (**`GtkFlowBox`**)**:
-  - Responsive visual card grid displaying recent documents.
-  - Real-time Cairo vector thumbnails ($240 \times 340\,\text{px}$) with local disk caching.
-  - Semantic format badges (*Quaderno A4* vs *Lavagna Infinita*).
+- **UniNoteDashboard (**`GtkFlowBox` + Folder Sidebar**)**:
+  - Responsive visual card grid displaying documents and folders with a Nautilus-style split sidebar.
+  - Real-time Cairo vector thumbnails ($240 \times 340\,\text{px}$) with theme-aware dark/light disk caching, including pasted images.
+  - Semantic format badges (*Quaderno A4* vs *Lavagna Infinita*), page count, and modification data.
   - Instant live search bar filtering notebooks by title or modification timestamp.
-  - Dedicated `$XDG_DOCUMENTS_DIR/UniNote` default notebook workspace with automatic directory provisioning.
+  - Real filesystem subfolders under `$XDG_DOCUMENTS_DIR/UniNote` with breadcrumbs, contextual creation, rename/duplicate/delete, and drag & drop between folders.
+  - Local Nextcloud and Google Drive folders synchronized by the desktop client, with no credentials, tokens, or network calls stored by UniNote.
   - Sanitized recent files history (up to 30 items) with automatic pruning of removed files.
 - **CreateDocumentDialog**:
   - Modal dialog with rich visual cards for selecting between Notebook A4 and Infinite Whiteboard modes.
 - **UniNoteSettingsWindow (**`AdwPreferencesWindow`**)**:
-  - *Hardware Digitizer & Stylus Tab*: Contact threshold slider (default 0.05), live pressure testing bar, sensitivity curve selector (Linear, Soft, Hard), anti-hover toggle, 1€ filter tuning, palm rejection timeouts, and F12 HUD overlay toggle.
-  - *Appearance & DMS Tab*: Desktop theme sync, OLED Pure Black (`#0A151A`), Natural Light theme, ITU-R Rec. 709 perceptual ink adaptation toggle, ruling contrast, and floating bar opacity.
-  - *Tools & Shapes Tab*: Line orthogonal snap angle (default 8°), Ramer-Douglas-Peucker (RDP) polygon tolerance, rectangle/ellipse 90° snap (12°), and pen dock color presets.
-  - *Shortcuts & Stylus Buttons Tab*: Keybinding customization and stylus barrel button mapping (Eraser, Lasso, Color Picker).
+  - *Hardware Digitizer & Stylus Tab*: Quick presets and an optional **Advanced Options** toggle that reveals contact threshold slider (default 0.05), live pressure test bar, raw pressure curve, anti-hover/anti-blip filters, 1€ filter tuning, palm rejection timeouts, and F12 HUD toggle.
+  - *Appearance & DMS Tab*: System/Light/Dark theme selector, OLED Pure Black (`#0A151A`), Natural Light theme, ITU-R Rec. 709 perceptual ink adaptation toggle, dark ruling contrast, and floating bar opacity.
+  - *Tools & Shapes Tab*: Line orthogonal snap angle (default 8°), Ramer-Douglas-Peucker (RDP) polygon tolerance, rectangle/ellipse 90° snap, and pen dock color presets.
+  - *Shortcuts & Stylus Buttons Tab*: Keybinding customization and stylus barrel button mapping (eraser, lasso, color picker).
+  - *GitHub Tab*: Official repository, issue tracker, GPL-3.0 license link, dynamic version badge, and a safe update check against the public GitHub Releases API.
 
 ### 5. University PDF Document Flow
 
@@ -180,23 +206,34 @@ UniNote/
 - **Dual-Tier 120Hz Cairo Cache Architecture**:
   - *Tier 1 (RAM Raster Surface)*: 2x HiDPI raster cache with LRU eviction for instantaneous blitting (< 200 µs) during rapid panning and zooming.
   - *Tier 2 (Poppler Vector Handles)*: Retains live vector page handles for lossless scaling.
-  - *Sharpness at Rest*: Automatically re-rasterizes at high resolutions (up to 5x native scale) as soon as pan/zoom gestures settle.
-- **High-Definition Tipographic Vector PDF Export (**`cairo::PdfSurface`**)**:
-  - Generates multi-page vector PDFs preserving native Poppler backgrounds and student freehand annotations.
+  - *Explicit High-Zoom Refresh*: `PdfCacheManager::update_raster_scale` can re-rasterize a page at up to 10x native scale when a sharper high-zoom view is required; normal rendering uses the 2x HiDPI cache.
+- **High-Definition Typographic Vector PDF Export (**`cairo::PdfSurface`**)**:
+  - Generates multi-page vector PDFs preserving native Poppler backgrounds and student freehand annotations, including pasted screenshots and image items.
   - Freehand strokes are written as pure cubic Bézier vectors (`cr.curve_to`) preserving dynamic pressure widths, colors, and highlighter transparency ($\alpha = 0.38$). Zero rasterization or blurriness at 300+ DPI.
+  - Light/Dark export modes preserve perceptive contrast for light inks and highlighters; multipage notebooks no longer produce blank pages, and pasted images are re-rendered into every exported page.
 
 ### 6. Dank Material Shell (DMS) & Dynamic Theming
 
 - **Ergonomic Floating Island Layout**:
-  - *Floating Inking Island (Top Pill)*: 9 quick-access controls (Undo, Redo, Stroke Width popover with live Cairo preview and 5 presets, Pen, Eraser, Highlighter, Text, Straight Line, Shape Recognition).
-  - *Floating Pen Dock (Left Margin)*: Vertical pill with interactive drag handle and 5 customizable ink slots (Electric Cyan `#6DD2FF`, Warm White `#D9E4EB`, Coral `#FFB4AB`, Mint Green `#79D9A5`, Academic Gold `#FFD875`) plus a color picker palette dialog (`+`).
-  - *Floating Bottom Navigation Dock*: Page stepper (`‹ Foglio X di Y ›`), `+ Pagina` button, paper background selector, and zoom controls.
+  - *Floating Inking Island (Top Pill)*: Undo, Redo, Stroke Width popover with live Cairo preview and 5 presets, plus 7 tools (Pen, Eraser, Highlighter, Selection, Text/Formula, Straight Line, Laser Pointer) and dedicated eraser/laser width popovers.
+  - *Floating Pen Dock (Left Margin)*: Vertical pill with interactive 120Hz drag handle, customizable ink slots (Electric Cyan `#6DD2FF`, Warm White `#D9E4EB`, Coral `#FFB4AB`, Mint Green `#79D9A5`, Academic Gold `#FFD875`), color picker dialog (`+`), and safe slot removal that always preserves at least one pen.
+  - *Floating Bottom Navigation Dock*: Page stepper (`‹ Foglio X di Y ›`) or *Center Content* for whiteboards, `+ Pagina` button, paper background selector, and zoom controls (25%–1000%).
 - **Matugen M3 Dynamic Color Synchronization**:
   - Automatically matches system-wide Material You / Dank Material Shell themes (`~/.config/gtk-4.0/dank-colors.css`).
   - *Dark Canvas*: Deep slate background (`#0A151A`), dark pages (`#172126`), calibrated soft cyan rulings, and ITU-R Rec. 709 luminance-adapted inks.
-  - *Light Canvas*: Natural warm background (`#FAF9F6`), classic notebooks lines, and deep contrast inks.
+  - *Light Canvas*: Natural warm background (`#FAF9F6`), classic notebook lines, and deep contrast inks.
+  - Theme changes propagate live to the canvas, dashboard thumbnails, floating islands, popovers, menus, and the settings window.
 - **Pure Vector Cairo Iconography (**`icons.rs`**)**:
-  - All icons (pen, eraser, highlighter, shapes, lasso, settings gear, brand squircle logo) are rendered directly via Cairo vector instructions, eliminating external SVG files, librsvg runtime overhead, and scaling artifacts.
+  - All icons (pen, eraser, highlighter, lasso, laser sword, settings gear, folder tree, brand squircle logo) are rendered directly via Cairo vector instructions, eliminating external SVG files, librsvg runtime overhead, and scaling artifacts.
+
+### 7. Advanced Editing, Portability & Storage
+
+- **Portable `.uninote` Documents**: A single SQLite WAL file embeds pages, strokes, metadata, and deduplicated image assets, so screenshots travel with the notebook. PDF-backed pages keep a non-destructive reference to the original PDF file, which must remain accessible on the target device.
+- **Schema V3 & Assets**: Transactional migrations from V1/V2 to `SCHEMA_VERSION = 3` add the `assets (hash, mime_type, data, created_at)` table; images are stored once per SHA-256 hash and referenced by `ItemKind::Image`.
+- **High-Throughput Persistence**: `prepare_cached` statements, `TransactionBehavior::Immediate`, reusable JSON buffers, pre-allocated loads, and a dedicated background worker save 10,000 strokes in roughly 33 ms while keeping the 120Hz UI responsive.
+- **Portable Backup**: The SQLite Online Backup API produces a consolidated, self-contained copy of the current document on demand.
+- **Release-Minded Builds**: The `academic-dataset` feature flag excludes the deterministic 1k/10k/50k stroke generator from release binaries (PERF-001), while multi-row ordered loading reduces SQL round-trips (PERF-002).
+- **Desktop Integration**: The `.desktop` file exposes quick actions for new notebooks and whiteboards (`--new-notebook`, `--new-whiteboard`), and XDG icons/metainfo are installed by the Arch, Flatpak, and tarball packages.
 
 ---
 
@@ -207,13 +244,13 @@ UniNote/
 Installa direttamente il pacchetto binario `.pkg.tar.zst` precompilato scaricato dalle [Releases](https://github.com/Loreexe/UniNote/releases):
 
 ```bash
-sudo pacman -U uninote-0.5.0-1-x86_64.pkg.tar.zst
+sudo pacman -U uninote-0.5.2-1-x86_64.pkg.tar.zst
 ```
 
 Oppure compila e installa in locale dal repository tramite `makepkg`:
 
 ```bash
-# Versione stabile (v0.5.0):
+# Versione stabile (v0.5.2):
 cd packaging/aur/uninote && makepkg -si
 
 # Oppure versione di sviluppo (branch main):
@@ -234,7 +271,20 @@ Ed eseguilo con:
 flatpak run org.uninote.UniNote
 ```
 
-### 3. Installazione Locale di Sistema da Sorgenti
+### 3. Portable Tarball (Linux x86_64)
+
+Scarica `uninote-v0.5.2-linux-x86_64.tar.gz` (e il relativo `.sha256`) dalle [Releases](https://github.com/Loreexe/UniNote/releases), poi installa con lo script incluso:
+
+```bash
+sha256sum -c uninote-v0.5.2-linux-x86_64.tar.gz.sha256
+tar -xzf uninote-v0.5.2-linux-x86_64.tar.gz
+cd uninote-v0.5.2-linux-x86_64
+./install.sh          # PREFIX=/usr/local per impostazione predefinita
+```
+
+Il tarball include il binario, le icone XDG, il file `.desktop`, il metainfo e la licenza.
+
+### 4. Installazione Locale di Sistema da Sorgenti
 
 Se hai clonato il repository, puoi installarlo direttamente in `/usr/local`:
 
@@ -329,10 +379,17 @@ cargo build --workspace --release
 
 ### Run the Full Automated Test Suite
 
-UniNote includes **475 automated unit, adversarial, stress, and end-to-end integration tests**:
+UniNote includes **1160 automated unit, adversarial, stress, benchmark, and end-to-end integration tests** across the four crates:
 
 ```bash
+# Run the full workspace suite:
 cargo test --workspace
+
+# Run the deterministic headless Cairo benchmarks (render, pan/zoom, eraser, selection, WAL):
+cargo test -p uninote-app --test m5_deterministic_benchmarks -- --nocapture
+
+# Reproduce the CI run without an active display server:
+xvfb-run --auto-servernum cargo test --workspace
 ```
 
 ### Code Formatting & Static Analysis
@@ -355,17 +412,21 @@ cargo clippy --workspace --all-targets -- -D warnings
 |                             | `Ctrl + O`                      | Open file dialog (`.uninote` or `.pdf`)                          |
 |                             | `Ctrl + S`                      | Save current notebook to disk                                    |
 |                             | `Ctrl + H`                      | Return to Academic Dashboard                                     |
-| **History & Editing**       | `Ctrl + Z`                      | Undo last stroke, shape, or selection translation                |
+| **History & Editing**       | `Ctrl + Z`                      | Undo last stroke, slice, paste, transform, or gesture             |
 |                             | `Ctrl + Y` / `Ctrl + Shift + Z` | Redo last undone action                                          |
+|                             | `Ctrl + C` / `Ctrl + X`         | Copy or cut selected strokes and images                          |
+|                             | `Ctrl + V`                      | Paste strokes/images or a PNG screenshot from the clipboard       |
 |                             | `Delete` / `Backspace`          | Batch delete all currently selected items                        |
-| **Viewport & Navigation**   | `Pinch-to-Zoom`                 | Smooth two-finger continuous zoom ($20\% \text{--} 500\%$)       |
+|                             | `Right Click` / `Long Press`    | Context menu: z-order, copy, duplicate, delete                    |
+| **Viewport & Navigation**   | `Pinch-to-Zoom`                 | Smooth two-finger continuous zoom ($25\% \text{--} 1000\%$)      |
 |                             | `Two-Finger Drag`               | Fluid two-finger pan across continuous canvas                    |
 |                             | `Ctrl + 0`                      | Reset viewport zoom to $100\%$                                   |
 |                             | `Trackpad Two-Finger Scroll`    | Smooth vertical & horizontal canvas panning                      |
 | **Tools & Stylus**          | `Stylus Barrel Button 1`        | Instant eraser toggle or selection tool                          |
 |                             | `Stylus Eraser Tip`             | Hardware eraser automatic detection                              |
 |                             | `Left Dock Handle Drag`         | Fluidly reposition pen dock along the left edge                  |
-| **Diagnostics & Telemetry** | `F12`                           | Toggle diagnostic HUD overlay (Hz, FPS, $\mu\text{s}$, pressure) |
+|                             | `Eraser / Laser Popovers`       | Choose whole-stroke vs. segment eraser, or laser width 1.5–20 pt |
+| **Diagnostics & Telemetry** | `F12`                           | Toggle HUD (Hz, FPS, $\mu\text{s}$, pressure, culling)           |
 
 ---
 
@@ -409,7 +470,7 @@ $$
 f_c = f_{c,\min} + \beta \|\dot{x}\|
 $$
 
-where $f_{c,\min} = 1.0\,\text{Hz}$ filters resting tremor, and $\beta = 0.007$ expands filter bandwidth proportionally to stroke speed.
+where the default positional filter uses $f_{c,\min} = 4.5\,\text{Hz}$ to suppress resting tremor, and $\beta = 0.04$ expands filter bandwidth proportionally to stroke speed.
 
 ### 3. Ray-Casting Algorithm for Freehand Selection
 
@@ -433,7 +494,39 @@ $$
 Y = 0.2126\,R + 0.7152\,G + 0.0722\,B
 $$
 
-Inks with low luminance ($Y < 0.28$) and low chroma are non-destructively projected to high-contrast ice white (`#ECEFF4`), while saturated dark chromatic inks are mapped to bright pastel equivalents.
+Inks with low luminance ($Y < 0.35$) and low chroma ($< 0.12$) are non-destructively projected to high-contrast ice white (`#ECEFF4`), while saturated dark chromatic inks are lifted to bright pastel equivalents. On light sheets, off-white inks are inverted to graphite (`#172126`) so annotations remain legible in both themes.
+
+### 5. Analytical Bézier–Circle Slicing for the Eraser
+
+Each cubic segment is written in Bernstein form:
+
+$$
+B(t) = (1-t)^3 P_0 + 3(1-t)^2 t P_1 + 3(1-t)t^2 P_2 + t^3 P_3, \quad t \in [0,1]
+$$
+
+For an eraser circle centered at $C$ with radius $r$, intersections satisfy:
+
+$$
+f(t) = \|B(t) - C\|^2 - r^2 = 0
+$$
+
+UniNote brackets each root on the chord, refines it with Newton–Raphson:
+
+$$
+t_{n+1} = t_n - \frac{f(t_n)}{f'(t_n)}
+$$
+
+and splits the curve with de Casteljau's algorithm at the refined parameter, producing two exact sub-curves with preserved pressure samples and Bézier caches. An entire eraser drag is recorded as one atomic undo batch.
+
+### 6. R*-Tree Culling and Affine Bézier Invariance
+
+Strokes and images are indexed by their axis-aligned bounding boxes in an `rstar` R*-Tree. A Cairo frame queries only the boxes intersecting the viewport rectangle:
+
+$$
+\mathcal{V} = \{ i \mid \mathrm{AABB}(i) \cap \mathrm{Viewport} \neq \varnothing \}
+$$
+
+yielding $O(\log N + k)$ queries instead of $O(N)$ scanning, and typically discarding more than $90\%$ of items on dense zoomed documents. Because cubic Bézier curves are affine-invariant in their control points, translation, scaling, and rotation are applied directly to $P_0, P_1, P_2, P_3$ with zero re-fitting and no change in curve shape.
 
 ---
 
@@ -466,7 +559,7 @@ If you use UniNote in your university coursework, academic research, or software
 @software{uninote2026,
   author       = {{UniNote Developers}},
   title        = {{UniNote: An Academic Freehand Note-Taking and Vector PDF Annotation Suite for Linux}},
-  version      = {0.5.0},
+  version      = {0.5.2},
   year         = {2026},
   url          = {https://github.com/Loreexe/UniNote},
   license      = {GPL-3.0}
