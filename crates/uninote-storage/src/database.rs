@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
-use uninote_core::{Document, DocumentFormat, ImageItem, Item, ItemKind, Page, PageBackground};
+use uninote_core::{
+    Document, DocumentFormat, ImageItem, Item, ItemKind, Page, PageBackground, TextItem,
+};
 use uninote_stroke::Stroke;
 use uuid::Uuid;
 
@@ -173,6 +175,17 @@ impl DocumentStore {
 
                         ("image", b_str, s_str)
                     }
+                    ItemKind::Text(text) => {
+                        bbox_buf.clear();
+                        let _ = serde_json::to_writer(&mut bbox_buf, &text.bbox);
+                        let b_str = std::str::from_utf8(&bbox_buf).unwrap_or("{}");
+
+                        json_buf.clear();
+                        let _ = serde_json::to_writer(&mut json_buf, text);
+                        let s_str = std::str::from_utf8(&json_buf).unwrap_or("{}");
+
+                        ("text", b_str, s_str)
+                    }
                 };
 
                 item_stmt.execute(params![
@@ -297,6 +310,15 @@ impl DocumentStore {
                                 id: id as u64,
                                 z_index: z_index as u64,
                                 kind: ItemKind::Image(image),
+                            });
+                        }
+                    } else if item_type == "text" {
+                        let data_json = row.get_ref(4)?.as_str()?;
+                        if let Ok(text) = serde_json::from_str::<TextItem>(data_json) {
+                            items.push(Item {
+                                id: id as u64,
+                                z_index: z_index as u64,
+                                kind: ItemKind::Text(text),
                             });
                         }
                     }

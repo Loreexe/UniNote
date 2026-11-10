@@ -153,6 +153,11 @@ impl Page {
         self.items.iter().filter_map(|it| it.as_image())
     }
 
+    /// Itera su tutti gli elementi di testo o formule matematiche presenti nella pagina.
+    pub fn texts(&self) -> impl Iterator<Item = &TextItem> {
+        self.items.iter().filter_map(|it| it.as_text())
+    }
+
     /// Ricostruisce l'indice spaziale 2D R-Tree a partire da tutti gli elementi della pagina.
     pub fn rebuild_spatial_index(&mut self) {
         self.spatial_index = PageSpatialIndex::bulk_load(&self.items);
@@ -293,6 +298,142 @@ impl ImageItem {
     }
 }
 
+/// Livello gerarchico di un elemento di testo nella pagina.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TextLayer {
+    /// Formula sul layer di fondo (sotto inchiostro, evidenziatori e immagini per annotarvi sopra)
+    Underlay,
+    /// Casella di testo ordinaria (condivide lo z-index con tratti e immagini)
+    #[default]
+    Normal,
+}
+
+fn default_font_size() -> f64 {
+    16.0
+}
+
+fn default_text_color() -> [f64; 4] {
+    [0.0, 0.0, 0.0, 1.0]
+}
+
+/// Rappresentazione di una casella di testo o formula matematica.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextItem {
+    pub id: Uuid,
+    pub page_id: Uuid,
+    pub bbox: Rect,
+    pub z_index: i64,
+    pub raw_text: String,
+    #[serde(default)]
+    pub layer: TextLayer,
+    #[serde(default = "default_font_size")]
+    pub font_size: f64,
+    #[serde(default = "default_text_color")]
+    pub text_color: [f64; 4],
+    #[serde(default)]
+    pub background_fill: Option<[f64; 4]>,
+    #[serde(default)]
+    pub border_color: Option<[f64; 4]>,
+}
+
+impl TextItem {
+    /// Costruisce una nuova casella di testo con ID autogenerato.
+    pub fn new(page_id: Uuid, raw_text: impl Into<String>, bbox: Rect, layer: TextLayer) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            page_id,
+            bbox,
+            z_index: 0,
+            raw_text: raw_text.into(),
+            layer,
+            font_size: default_font_size(),
+            text_color: default_text_color(),
+            background_fill: None,
+            border_color: None,
+        }
+    }
+
+    /// Costruttore completo con tutti i parametri espliciti.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_id(
+        id: Uuid,
+        page_id: Uuid,
+        raw_text: impl Into<String>,
+        bbox: Rect,
+        z_index: i64,
+        layer: TextLayer,
+        font_size: f64,
+        text_color: [f64; 4],
+        background_fill: Option<[f64; 4]>,
+        border_color: Option<[f64; 4]>,
+    ) -> Self {
+        Self {
+            id,
+            page_id,
+            bbox,
+            z_index,
+            raw_text: raw_text.into(),
+            layer,
+            font_size: if font_size.is_finite() && font_size > 0.0 {
+                font_size
+            } else {
+                default_font_size()
+            },
+            text_color,
+            background_fill,
+            border_color,
+        }
+    }
+
+    /// Larghezza corrente in punti del bounding box.
+    #[inline]
+    pub fn width(&self) -> f64 {
+        self.bbox.width()
+    }
+
+    /// Altezza corrente in punti del bounding box.
+    #[inline]
+    pub fn height(&self) -> f64 {
+        self.bbox.height()
+    }
+
+    /// Restituisce `true` se il testo appartiene al livello di fondo (sotto i tratti).
+    #[inline]
+    pub fn is_underlay(&self) -> bool {
+        self.layer == TextLayer::Underlay
+    }
+
+    /// Trasla il bounding box in-place con zero allocazioni heap.
+    #[inline]
+    pub fn translate(&mut self, dx: f64, dy: f64) {
+        if !dx.is_finite() || !dy.is_finite() {
+            return;
+        }
+        self.bbox = self.bbox.translate(dx, dy);
+    }
+
+    /// Scala il bounding box rispetto al perno (origin_x, origin_y).
+    pub fn scale(&mut self, sx: f64, sy: f64, origin_x: f64, origin_y: f64) {
+        if !sx.is_finite() || !sy.is_finite() || !origin_x.is_finite() || !origin_y.is_finite() {
+            return;
+        }
+        let x1 = origin_x + (self.bbox.min_x - origin_x) * sx;
+        let x2 = origin_x + (self.bbox.max_x - origin_x) * sx;
+        let y1 = origin_y + (self.bbox.min_y - origin_y) * sy;
+        let y2 = origin_y + (self.bbox.max_y - origin_y) * sy;
+        self.bbox = Rect::new(x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2));
+        if sx.is_finite() && sx > 0.0 && sx == sy {
+            self.font_size = (self.font_size * sx).clamp(6.0, 120.0);
+        }
+    }
+
+    /// Scala proporzionale uniforme attorno al perno.
+    #[inline]
+    pub fn scale_proportional(&mut self, scale: f64, origin_x: f64, origin_y: f64) {
+        self.scale(scale, scale, origin_x, origin_y);
+    }
+}
+
 /// Elemento grafico presente su una pagina.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Item {
@@ -315,6 +456,14 @@ impl Item {
             id,
             z_index,
             kind: ItemKind::Image(image),
+        }
+    }
+
+    pub fn new_text(id: ItemId, z_index: u64, text: TextItem) -> Self {
+        Self {
+            id,
+            z_index,
+            kind: ItemKind::Text(text),
         }
     }
 
@@ -357,6 +506,16 @@ impl Item {
     }
 
     #[inline]
+    pub fn as_text(&self) -> Option<&TextItem> {
+        self.kind.as_text()
+    }
+
+    #[inline]
+    pub fn as_text_mut(&mut self) -> Option<&mut TextItem> {
+        self.kind.as_text_mut()
+    }
+
+    #[inline]
     pub fn is_stroke(&self) -> bool {
         matches!(self.kind, ItemKind::Stroke(_))
     }
@@ -365,6 +524,11 @@ impl Item {
     pub fn is_image(&self) -> bool {
         matches!(self.kind, ItemKind::Image(_))
     }
+
+    #[inline]
+    pub fn is_text(&self) -> bool {
+        matches!(self.kind, ItemKind::Text(_))
+    }
 }
 
 /// Tipologia di contenuto di un Item.
@@ -372,6 +536,7 @@ impl Item {
 pub enum ItemKind {
     Stroke(Stroke),
     Image(ImageItem),
+    Text(TextItem),
 }
 
 impl ItemKind {
@@ -380,6 +545,7 @@ impl ItemKind {
         match self {
             ItemKind::Stroke(s) => s.bounding_box(),
             ItemKind::Image(img) => Some(img.bbox),
+            ItemKind::Text(t) => Some(t.bbox),
         }
     }
 
@@ -388,6 +554,7 @@ impl ItemKind {
         match self {
             ItemKind::Stroke(s) => s.translate(dx, dy),
             ItemKind::Image(img) => img.translate(dx, dy),
+            ItemKind::Text(t) => t.translate(dx, dy),
         }
     }
 
@@ -396,6 +563,7 @@ impl ItemKind {
         match self {
             ItemKind::Stroke(s) => s.scale(sx, sy, origin_x, origin_y),
             ItemKind::Image(img) => img.scale(sx, sy, origin_x, origin_y),
+            ItemKind::Text(t) => t.scale(sx, sy, origin_x, origin_y),
         }
     }
 
@@ -427,6 +595,22 @@ impl ItemKind {
     pub fn as_image_mut(&mut self) -> Option<&mut ImageItem> {
         match self {
             ItemKind::Image(img) => Some(img),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_text(&self) -> Option<&TextItem> {
+        match self {
+            ItemKind::Text(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_text_mut(&mut self) -> Option<&mut TextItem> {
+        match self {
+            ItemKind::Text(t) => Some(t),
             _ => None,
         }
     }

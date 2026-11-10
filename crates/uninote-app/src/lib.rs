@@ -6,11 +6,14 @@ pub mod dashboard;
 pub mod hud;
 pub mod icons;
 pub mod image_cache;
+pub mod markdown_renderer;
+pub mod math_renderer;
 pub mod pdf_cache;
 pub mod pdf_export;
 pub mod preferences;
 pub mod selection;
 pub mod settings;
+pub mod text_overlay;
 pub mod window;
 
 pub use canvas::{ActiveTool, NoteCanvas};

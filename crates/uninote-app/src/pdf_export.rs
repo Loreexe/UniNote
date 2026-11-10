@@ -531,6 +531,9 @@ fn render_strokes(
                     }
                 }
             }
+            ItemKind::Text(ref text) => {
+                crate::markdown_renderer::draw_text_item(cr, text, is_dark);
+            }
         }
     }
 

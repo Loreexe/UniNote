@@ -77,6 +77,7 @@ pub enum ActiveTool {
     Pen,
     Eraser,
     Highlighter,
+    MathUnderlay,
     Text,
     Line,
     Shapes,
@@ -552,7 +553,8 @@ impl NoteCanvas {
                 EraserMode::Segment => "Gomma (Per Segmento)",
             },
             ActiveTool::Highlighter => "Evidenziatore",
-            ActiveTool::Text => "Testo",
+            ActiveTool::MathUnderlay => "Formula LaTeX di Fondo",
+            ActiveTool::Text => "Casella di Testo",
             ActiveTool::Line => "Linea Dritta",
             ActiveTool::Shapes => "Forme",
             ActiveTool::Select => "Selezione (Lazo / Rettangolo)",
@@ -1336,6 +1338,11 @@ impl NoteCanvas {
                     image.z_index = item_clone.z_index as i64;
                     image.translate(dx, dy);
                 }
+                ItemKind::Text(ref mut text) => {
+                    text.page_id = target_page_id;
+                    text.z_index = item_clone.z_index as i64;
+                    text.translate(dx, dy);
+                }
             }
             if let Some(b) = item_clone.bounding_box() {
                 union_bbox = Some(match union_bbox {
@@ -2115,6 +2122,7 @@ impl NoteCanvas {
                                     .spatial_index
                                     .locate_in_envelope(vis_min_x, vis_min_y, vis_max_x, vis_max_y);
                                 visible_strokes += visible_items.len();
+                                // Passata 1: Formule LaTeX di Fondo (sotto a tutto)
                                 for spatial_item in &visible_items {
                                     let item_opt = page
                                         .items
@@ -2131,14 +2139,46 @@ impl NoteCanvas {
                                         });
 
                                     if let Some(item) = item_opt {
-                                        Self::draw_item_with_selection(
-                                            cr,
-                                            item,
-                                            &st.selection,
-                                            &st,
-                                            current_mode,
-                                            is_dark,
-                                        );
+                                        if Self::item_is_underlay(item) {
+                                            Self::draw_item_with_selection(
+                                                cr,
+                                                item,
+                                                &st.selection,
+                                                &st,
+                                                current_mode,
+                                                is_dark,
+                                            );
+                                        }
+                                    }
+                                }
+
+                                // Passata 2: Tratti, immagini e caselle di testo al livello ordinario
+                                for spatial_item in &visible_items {
+                                    let item_opt = page
+                                        .items
+                                        .binary_search_by_key(
+                                            &(spatial_item.z_index, spatial_item.item_id),
+                                            |it| (it.z_index, it.id),
+                                        )
+                                        .ok()
+                                        .map(|idx| &page.items[idx])
+                                        .or_else(|| {
+                                            page.items
+                                                .iter()
+                                                .find(|it| it.id == spatial_item.item_id)
+                                        });
+
+                                    if let Some(item) = item_opt {
+                                        if !Self::item_is_underlay(item) {
+                                            Self::draw_item_with_selection(
+                                                cr,
+                                                item,
+                                                &st.selection,
+                                                &st,
+                                                current_mode,
+                                                is_dark,
+                                            );
+                                        }
                                     }
                                 }
 
@@ -2168,14 +2208,28 @@ impl NoteCanvas {
                             // Fallback sicuro su scansione lineare se l'indice non è ancora popolato
                             visible_strokes += page.items.len();
                             for item in &page.items {
-                                Self::draw_item_with_selection(
-                                    cr,
-                                    item,
-                                    &st.selection,
-                                    &st,
-                                    current_mode,
-                                    is_dark,
-                                );
+                                if Self::item_is_underlay(item) {
+                                    Self::draw_item_with_selection(
+                                        cr,
+                                        item,
+                                        &st.selection,
+                                        &st,
+                                        current_mode,
+                                        is_dark,
+                                    );
+                                }
+                            }
+                            for item in &page.items {
+                                if !Self::item_is_underlay(item) {
+                                    Self::draw_item_with_selection(
+                                        cr,
+                                        item,
+                                        &st.selection,
+                                        &st,
+                                        current_mode,
+                                        is_dark,
+                                    );
+                                }
                             }
                         }
                         let _ = cr.restore();
@@ -2228,6 +2282,7 @@ impl NoteCanvas {
                                 .spatial_index
                                 .locate_in_envelope(doc_left, doc_top, doc_right, doc_bottom);
                             visible_strokes += visible_items.len();
+                            // Passata 1: Formule LaTeX di Fondo (sotto a tutto)
                             for spatial_item in &visible_items {
                                 let item_opt = page
                                     .items
@@ -2242,14 +2297,44 @@ impl NoteCanvas {
                                     });
 
                                 if let Some(item) = item_opt {
-                                    Self::draw_item_with_selection(
-                                        cr,
-                                        item,
-                                        &st.selection,
-                                        &st,
-                                        current_mode,
-                                        is_dark,
-                                    );
+                                    if Self::item_is_underlay(item) {
+                                        Self::draw_item_with_selection(
+                                            cr,
+                                            item,
+                                            &st.selection,
+                                            &st,
+                                            current_mode,
+                                            is_dark,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Passata 2: Tratti, immagini e caselle di testo al livello ordinario
+                            for spatial_item in &visible_items {
+                                let item_opt = page
+                                    .items
+                                    .binary_search_by_key(
+                                        &(spatial_item.z_index, spatial_item.item_id),
+                                        |it| (it.z_index, it.id),
+                                    )
+                                    .ok()
+                                    .map(|idx| &page.items[idx])
+                                    .or_else(|| {
+                                        page.items.iter().find(|it| it.id == spatial_item.item_id)
+                                    });
+
+                                if let Some(item) = item_opt {
+                                    if !Self::item_is_underlay(item) {
+                                        Self::draw_item_with_selection(
+                                            cr,
+                                            item,
+                                            &st.selection,
+                                            &st,
+                                            current_mode,
+                                            is_dark,
+                                        );
+                                    }
                                 }
                             }
 
@@ -2361,6 +2446,14 @@ impl NoteCanvas {
     }
 
     #[inline]
+    fn item_is_underlay(item: &uninote_core::Item) -> bool {
+        match &item.kind {
+            ItemKind::Text(t) => t.is_underlay(),
+            _ => false,
+        }
+    }
+
+    #[inline]
     pub fn draw_item_with_selection(
         cr: &gtk4::cairo::Context,
         item: &uninote_core::Item,
@@ -2376,6 +2469,40 @@ impl NoteCanvas {
             ItemKind::Image(image) => {
                 Self::draw_image_with_selection(cr, image, item.id, selection, st);
             }
+            ItemKind::Text(text) => {
+                Self::draw_text_with_selection(cr, text, item.id, selection, is_dark);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn draw_text_with_selection(
+        cr: &gtk4::cairo::Context,
+        text: &uninote_core::model::TextItem,
+        item_id: u64,
+        selection: &SelectionState,
+        is_dark: bool,
+    ) {
+        let is_selected_drag = selection.is_dragging && selection.selected_ids.contains(&item_id);
+        if is_selected_drag {
+            let _ = cr.save();
+            match selection.drag_kind {
+                SelectionDragKind::Translate => {
+                    cr.translate(selection.drag_offset.0, selection.drag_offset.1);
+                }
+                SelectionDragKind::ScaleHandle(_) => {
+                    let (ox, oy) = selection.scale_anchor;
+                    let (sx, sy) = selection.scale_factors;
+                    cr.translate(ox, oy);
+                    cr.scale(sx, sy);
+                    cr.translate(-ox, -oy);
+                }
+                SelectionDragKind::None => {}
+            }
+            crate::markdown_renderer::draw_text_item(cr, text, is_dark);
+            let _ = cr.restore();
+        } else {
+            crate::markdown_renderer::draw_text_item(cr, text, is_dark);
         }
     }
 
@@ -2711,6 +2838,69 @@ impl NoteCanvas {
                 Self::handle_selection_down(&mut st, (doc_x, doc_y), is_shift);
                 drop(st);
                 area.queue_draw();
+                return;
+            }
+
+            // Gestione Strumento Formula LaTeX di Fondo (Stylus Down)
+            if st.active_tool == ActiveTool::MathUnderlay {
+                let page_idx = match st.document.format {
+                    DocumentFormat::Whiteboard => 0,
+                    DocumentFormat::Notebook => {
+                        Viewport::find_page_index_at_y(doc_y, st.document.pages.len())
+                    }
+                };
+                let existing = if let Some(page) = st.document.pages.get(page_idx) {
+                    page.items.iter().rev().find_map(|it| {
+                        if let ItemKind::Text(ref t) = it.kind {
+                            if t.is_underlay() && t.bbox.normalized().contains_point(doc_x, doc_y) {
+                                return Some((it.id, t.clone()));
+                            }
+                        }
+                        None
+                    })
+                } else {
+                    None
+                };
+                drop(st);
+                crate::text_overlay::show_math_underlay_popover(
+                    &area,
+                    state.clone(),
+                    (x, y),
+                    (doc_x, doc_y),
+                    existing,
+                );
+                return;
+            }
+
+            // Gestione Strumento Casella di Testo (Stylus Down)
+            if st.active_tool == ActiveTool::Text {
+                let page_idx = match st.document.format {
+                    DocumentFormat::Whiteboard => 0,
+                    DocumentFormat::Notebook => {
+                        Viewport::find_page_index_at_y(doc_y, st.document.pages.len())
+                    }
+                };
+                let existing = if let Some(page) = st.document.pages.get(page_idx) {
+                    page.items.iter().rev().find_map(|it| {
+                        if let ItemKind::Text(ref t) = it.kind {
+                            if !t.is_underlay() && t.bbox.normalized().contains_point(doc_x, doc_y)
+                            {
+                                return Some((it.id, t.clone()));
+                            }
+                        }
+                        None
+                    })
+                } else {
+                    None
+                };
+                drop(st);
+                crate::text_overlay::show_text_box_popover(
+                    &area,
+                    state.clone(),
+                    (x, y),
+                    (doc_x, doc_y),
+                    existing,
+                );
                 return;
             }
 
@@ -3245,6 +3435,72 @@ impl NoteCanvas {
                     return;
                 }
 
+                // Gestione Strumento Formula LaTeX di Fondo (Mouse Click)
+                if st.active_tool == ActiveTool::MathUnderlay {
+                    let page_idx = match st.document.format {
+                        DocumentFormat::Whiteboard => 0,
+                        DocumentFormat::Notebook => {
+                            Viewport::find_page_index_at_y(doc_y, st.document.pages.len())
+                        }
+                    };
+                    let existing = if let Some(page) = st.document.pages.get(page_idx) {
+                        page.items.iter().rev().find_map(|it| {
+                            if let ItemKind::Text(ref t) = it.kind {
+                                if t.is_underlay()
+                                    && t.bbox.normalized().contains_point(doc_x, doc_y)
+                                {
+                                    return Some((it.id, t.clone()));
+                                }
+                            }
+                            None
+                        })
+                    } else {
+                        None
+                    };
+                    drop(st);
+                    crate::text_overlay::show_math_underlay_popover(
+                        &area,
+                        state.clone(),
+                        (start_x, start_y),
+                        (doc_x, doc_y),
+                        existing,
+                    );
+                    return;
+                }
+
+                // Gestione Strumento Casella di Testo (Mouse Click)
+                if st.active_tool == ActiveTool::Text {
+                    let page_idx = match st.document.format {
+                        DocumentFormat::Whiteboard => 0,
+                        DocumentFormat::Notebook => {
+                            Viewport::find_page_index_at_y(doc_y, st.document.pages.len())
+                        }
+                    };
+                    let existing = if let Some(page) = st.document.pages.get(page_idx) {
+                        page.items.iter().rev().find_map(|it| {
+                            if let ItemKind::Text(ref t) = it.kind {
+                                if !t.is_underlay()
+                                    && t.bbox.normalized().contains_point(doc_x, doc_y)
+                                {
+                                    return Some((it.id, t.clone()));
+                                }
+                            }
+                            None
+                        })
+                    } else {
+                        None
+                    };
+                    drop(st);
+                    crate::text_overlay::show_text_box_popover(
+                        &area,
+                        state.clone(),
+                        (start_x, start_y),
+                        (doc_x, doc_y),
+                        existing,
+                    );
+                    return;
+                }
+
                 // Gestione Strumento Selezione (Mouse Drag Begin)
                 if st.active_tool == ActiveTool::Select {
                     let is_shift = gesture.current_event().is_some_and(|ev| {
@@ -3505,6 +3761,59 @@ impl NoteCanvas {
         });
 
         self.area.add_controller(drag);
+
+        // Controller Doppio Clic su Caselle di Testo o Formule LaTeX (Live Edit Stile Obsidian)
+        let click = gtk4::GestureClick::new();
+        click.set_button(gdk::BUTTON_PRIMARY);
+        let state_click = self.state.clone();
+        let area_click = self.area.clone();
+        click.connect_pressed(move |_, n_press, x, y| {
+            if n_press == 2 {
+                let st = state_click.borrow();
+                let (doc_x, doc_y) = st.viewport.screen_to_document((x, y));
+                let page_idx = match st.document.format {
+                    DocumentFormat::Whiteboard => 0,
+                    DocumentFormat::Notebook => {
+                        Viewport::find_page_index_at_y(doc_y, st.document.pages.len())
+                    }
+                };
+                let text_hit = if let Some(page) = st.document.pages.get(page_idx) {
+                    page.items.iter().rev().find_map(|it| {
+                        if let ItemKind::Text(ref t) = it.kind {
+                            if t.bbox.normalized().contains_point(doc_x, doc_y) {
+                                return Some((it.id, t.clone()));
+                            }
+                        }
+                        None
+                    })
+                } else {
+                    None
+                };
+
+                if let Some((item_id, item)) = text_hit {
+                    let is_underlay = item.is_underlay();
+                    drop(st);
+                    if is_underlay {
+                        crate::text_overlay::show_math_underlay_popover(
+                            &area_click,
+                            state_click.clone(),
+                            (x, y),
+                            (doc_x, doc_y),
+                            Some((item_id, item)),
+                        );
+                    } else {
+                        crate::text_overlay::show_text_box_popover(
+                            &area_click,
+                            state_click.clone(),
+                            (x, y),
+                            (doc_x, doc_y),
+                            Some((item_id, item)),
+                        );
+                    }
+                }
+            }
+        });
+        self.area.add_controller(click);
     }
 
     fn setup_touch_long_press_controller(&self) {

@@ -455,7 +455,7 @@ impl UniNoteWindow {
         island_box.append(&sep2);
 
         // --- Gruppo Strumenti di Disegno ---
-        let tools: [(IconKind, ActiveTool, &str); 8] = [
+        let tools: [(IconKind, ActiveTool, &str); 9] = [
             (IconKind::PenTool, ActiveTool::Pen, "Penna Stilografica"),
             (
                 IconKind::Eraser,
@@ -468,14 +468,19 @@ impl UniNoteWindow {
                 "Evidenziatore Fluido",
             ),
             (
-                IconKind::Select,
-                ActiveTool::Select,
-                "Selezione: Lazo Libero (clicca per Rettangolo)",
+                IconKind::Math,
+                ActiveTool::MathUnderlay,
+                "Formula LaTeX di Fondo (sotto a tutto per annotarvi sopra)",
             ),
             (
                 IconKind::Type,
                 ActiveTool::Text,
-                "Testo & Formule (Markdown/LaTeX)",
+                "Casella di Testo (Markdown & Formule a livello del tratto)",
+            ),
+            (
+                IconKind::Select,
+                ActiveTool::Select,
+                "Selezione: Lazo Libero (clicca per Rettangolo)",
             ),
             (IconKind::Line, ActiveTool::Line, "Linea Dritta"),
             (
@@ -578,11 +583,12 @@ impl UniNoteWindow {
                 ActiveTool::Pen => 0,
                 ActiveTool::Eraser => 1,
                 ActiveTool::Highlighter => 2,
-                ActiveTool::Select => 3,
+                ActiveTool::MathUnderlay => 3,
                 ActiveTool::Text => 4,
-                ActiveTool::Line => 5,
-                ActiveTool::Shapes => 6,
-                ActiveTool::LaserPointer => 7,
+                ActiveTool::Select => 5,
+                ActiveTool::Line => 6,
+                ActiveTool::Shapes => 7,
+                ActiveTool::LaserPointer => 8,
             };
             for (idx, b) in all_tools_sync.borrow().iter().enumerate() {
                 if idx == target_idx {

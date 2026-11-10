@@ -17,6 +17,47 @@ pub fn is_image_selected_by_rect(image: &uninote_core::model::ImageItem, rect: &
     norm_rect.contains_rect(&img_bbox) || norm_rect.intersects_rect(&img_bbox)
 }
 
+/// Determina se un bounding box generico è selezionato da un rettangolo di selezione.
+pub fn is_rect_selected_by_rect(bbox: &Rect, rect: &Rect) -> bool {
+    let norm_rect = rect.normalized();
+    let norm_b = bbox.normalized();
+    norm_rect.contains_rect(&norm_b) || norm_rect.intersects_rect(&norm_b)
+}
+
+/// Determina se un bounding box generico è selezionato da un poligono di lazo.
+pub fn is_rect_selected_by_lasso(bbox: &Rect, polygon: &[(f64, f64)]) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    let norm_b = bbox.normalized();
+    let center_x = (norm_b.min_x + norm_b.max_x) * 0.5;
+    let center_y = (norm_b.min_y + norm_b.max_y) * 0.5;
+
+    if point_in_polygon(center_x, center_y, polygon) {
+        return true;
+    }
+
+    let corners = [
+        (norm_b.min_x, norm_b.min_y),
+        (norm_b.max_x, norm_b.min_y),
+        (norm_b.max_x, norm_b.max_y),
+        (norm_b.min_x, norm_b.max_y),
+    ];
+    for (cx, cy) in corners {
+        if point_in_polygon(cx, cy, polygon) {
+            return true;
+        }
+    }
+
+    for &(px, py) in polygon {
+        if norm_b.contains_point(px, py) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Determina se un'immagine è selezionata da un poligono di lazo.
 ///
 /// Regola geometrica: il centro dell'immagine o almeno uno dei 4 vertici cade all'interno del poligono,
@@ -117,6 +158,12 @@ impl AppSelectionEngine {
                             selected_bboxes.push(img.bbox.normalized());
                         }
                     }
+                    ItemKind::Text(ref text) => {
+                        if is_rect_selected_by_rect(&text.bbox, &norm_rect) {
+                            selected_ids.push(item.id);
+                            selected_bboxes.push(text.bbox.normalized());
+                        }
+                    }
                 }
             }
 
@@ -141,6 +188,12 @@ impl AppSelectionEngine {
                         if is_image_selected_by_rect(img, &norm_rect) {
                             selected_ids.push(item.id);
                             selected_bboxes.push(img.bbox.normalized());
+                        }
+                    }
+                    ItemKind::Text(ref text) => {
+                        if is_rect_selected_by_rect(&text.bbox, &norm_rect) {
+                            selected_ids.push(item.id);
+                            selected_bboxes.push(text.bbox.normalized());
                         }
                     }
                 }
@@ -212,6 +265,12 @@ impl AppSelectionEngine {
                             selected_bboxes.push(img.bbox.normalized());
                         }
                     }
+                    ItemKind::Text(ref text) => {
+                        if is_rect_selected_by_lasso(&text.bbox, poly) {
+                            selected_ids.push(item.id);
+                            selected_bboxes.push(text.bbox.normalized());
+                        }
+                    }
                 }
             }
 
@@ -236,6 +295,12 @@ impl AppSelectionEngine {
                         if is_image_selected_by_lasso(img, poly) {
                             selected_ids.push(item.id);
                             selected_bboxes.push(img.bbox.normalized());
+                        }
+                    }
+                    ItemKind::Text(ref text) => {
+                        if is_rect_selected_by_lasso(&text.bbox, poly) {
+                            selected_ids.push(item.id);
+                            selected_bboxes.push(text.bbox.normalized());
                         }
                     }
                 }

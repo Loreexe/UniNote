@@ -15,6 +15,7 @@ pub enum IconKind {
     PenTool,
     Eraser,
     Highlighter,
+    Math,
     Type,
     Line,
     Shapes,
@@ -87,6 +88,7 @@ pub fn create_icon(kind: IconKind, size: i32, custom_color: Option<gdk::RGBA>) -
             IconKind::PenTool => draw_pen_tool(cr),
             IconKind::Eraser => draw_eraser(cr),
             IconKind::Highlighter => draw_highlighter(cr),
+            IconKind::Math => draw_math(cr),
             IconKind::Type => draw_type(cr),
             IconKind::Line => draw_line(cr),
             IconKind::Shapes => draw_shapes(cr),
@@ -266,6 +268,23 @@ fn draw_highlighter(cr: &cairo::Context) {
     // 3. Tratto orizzontale d'inchiostro evidenziatore sulla carta
     cr.move_to(13.5, 20.5);
     cr.line_to(21.5, 20.5);
+    let _ = cr.stroke();
+}
+
+fn draw_math(cr: &cairo::Context) {
+    // Simbolo matematico √x (radicale ed esponente)
+    cr.move_to(3.5, 13.5);
+    cr.line_to(6.0, 13.5);
+    cr.line_to(8.5, 19.5);
+    cr.line_to(13.0, 4.5);
+    cr.line_to(20.5, 4.5);
+    let _ = cr.stroke();
+
+    cr.move_to(14.5, 11.5);
+    cr.line_to(19.0, 17.5);
+    let _ = cr.stroke();
+    cr.move_to(19.0, 11.5);
+    cr.line_to(14.5, 17.5);
     let _ = cr.stroke();
 }
 

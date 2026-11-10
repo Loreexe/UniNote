@@ -421,6 +421,9 @@ pub fn render_document_thumbnail_with_store(
                                 }
                             }
                         }
+                        uninote_core::ItemKind::Text(text) => {
+                            crate::markdown_renderer::draw_text_item(&cr, text, is_dark);
+                        }
                     }
                 }
                 let _ = cr.restore();
@@ -555,6 +558,9 @@ pub fn render_document_thumbnail_with_store(
                                         }
                                     }
                                 }
+                            }
+                            uninote_core::ItemKind::Text(text) => {
+                                crate::markdown_renderer::draw_text_item(&cr, text, is_dark);
                             }
                         }
                     }

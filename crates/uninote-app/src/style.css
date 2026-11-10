@@ -1953,4 +1953,81 @@ progressbar.dms-pressure-bar text {
     outline: none;
 }
 
+/* Popover Formule LaTeX di Fondo e Caselle di Testo */
+popover.uninote-math-popover > contents,
+popover.uninote-text-popover > contents {
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    padding: 4px;
+}
+
+.light-theme popover.uninote-math-popover > contents,
+.light-theme popover.uninote-text-popover > contents {
+    background-color: @dms_surface_container_light;
+    border: 1px solid @dms_outline_light;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.math-preview-area {
+    border-radius: 8px;
+    border: 1px solid @dms_outline;
+}
+
+.light-theme .math-preview-area {
+    border: 1px solid @dms_outline_light;
+}
+
+.dms-chip-btn {
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-family: monospace;
+    min-height: 24px;
+}
+
+.dms-chip-btn:hover {
+    background: @dms_primary_container;
+    color: @dms_on_primary_container;
+}
+
+.light-theme .dms-chip-btn {
+    background: rgba(0, 0, 0, 0.04);
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-chip-btn:hover {
+    background: @dms_primary_container_light;
+    color: @dms_on_primary_container_light;
+}
+
+.dms-text-editor-view {
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.45;
+    background-color: rgba(0, 0, 0, 0.2);
+    color: @dms_text_primary;
+    border-radius: 8px;
+}
+
+.light-theme .dms-text-editor-view {
+    background-color: rgba(0, 0, 0, 0.03);
+    color: @dms_text_primary_light;
+}
+
+.dms-scrolled-editor {
+    border: 1px solid @dms_outline;
+    border-radius: 8px;
+}
+
+.light-theme .dms-scrolled-editor {
+    border: 1px solid @dms_outline_light;
+}
+
+
 

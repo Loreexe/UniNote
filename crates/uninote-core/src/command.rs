@@ -11,6 +11,17 @@ pub enum DocCommand {
     AddStroke { page_id: Uuid, stroke: Stroke },
     /// Aggiunta di una nuova immagine a una pagina.
     AddImage { page_id: Uuid, item: Item },
+    /// Aggiunta di una nuova casella di testo o formula matematica a una pagina.
+    AddText { page_id: Uuid, item: Item },
+    /// Modifica del contenuto testuale e bounding box di una casella di testo.
+    EditText {
+        page_id: Uuid,
+        item_id: ItemId,
+        old_text: String,
+        new_text: String,
+        old_bbox: uninote_stroke::Rect,
+        new_bbox: uninote_stroke::Rect,
+    },
     /// Cancellazione di uno o più elementi con preservazione per Undo.
     EraseItems {
         page_id: Uuid,
@@ -75,6 +86,21 @@ impl DocCommand {
         Self::AddImage {
             page_id,
             item: Item::new_image(item_id, z_index, image),
+        }
+    }
+
+    /// Costruisce un comando di aggiunta testo o formula incapsulando direttamente l'Item.
+    pub fn add_text(
+        page_id: Uuid,
+        item_id: ItemId,
+        z_index: u64,
+        mut text: crate::model::TextItem,
+    ) -> Self {
+        text.page_id = page_id;
+        text.z_index = z_index as i64;
+        Self::AddText {
+            page_id,
+            item: Item::new_text(item_id, z_index, text),
         }
     }
 }
@@ -247,6 +273,32 @@ impl CommandHistory {
                     page.items.push(item.clone());
                 }
             }
+            DocCommand::AddText { page_id, item } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    page.spatial_index.insert(item);
+                    page.items.push(item.clone());
+                }
+            }
+            DocCommand::EditText {
+                page_id,
+                item_id,
+                new_text,
+                new_bbox,
+                ..
+            } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    if let Some(pos) = page.items.iter().position(|it| it.id == *item_id) {
+                        if let Some(old_b) = page.items[pos].bounding_box() {
+                            page.spatial_index.remove(*item_id, &old_b);
+                        }
+                        if let Some(text_item) = page.items[pos].as_text_mut() {
+                            text_item.raw_text = new_text.clone();
+                            text_item.bbox = *new_bbox;
+                        }
+                        page.spatial_index.insert(&page.items[pos]);
+                    }
+                }
+            }
             DocCommand::EraseItems {
                 page_id,
                 erased_items,
@@ -354,6 +406,13 @@ impl CommandHistory {
                                         image.scale(*scale_x, *scale_y, *origin_x, *origin_y);
                                     }
                                 }
+                                ItemKind::Text(text) => {
+                                    if (*scale_x - 1.0).abs() > 1e-9
+                                        || (*scale_y - 1.0).abs() > 1e-9
+                                    {
+                                        text.scale(*scale_x, *scale_y, *origin_x, *origin_y);
+                                    }
+                                }
                             }
                             page.spatial_index.insert(item);
                         }
@@ -453,6 +512,32 @@ impl CommandHistory {
                 if let Some(page) = doc.get_page_mut(*page_id) {
                     page.spatial_index.remove_item(item);
                     page.items.retain(|it| it.id != item.id);
+                }
+            }
+            DocCommand::AddText { page_id, item } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    page.spatial_index.remove_item(item);
+                    page.items.retain(|it| it.id != item.id);
+                }
+            }
+            DocCommand::EditText {
+                page_id,
+                item_id,
+                old_text,
+                old_bbox,
+                ..
+            } => {
+                if let Some(page) = doc.get_page_mut(*page_id) {
+                    if let Some(pos) = page.items.iter().position(|it| it.id == *item_id) {
+                        if let Some(cur_b) = page.items[pos].bounding_box() {
+                            page.spatial_index.remove(*item_id, &cur_b);
+                        }
+                        if let Some(text_item) = page.items[pos].as_text_mut() {
+                            text_item.raw_text = old_text.clone();
+                            text_item.bbox = *old_bbox;
+                        }
+                        page.spatial_index.insert(&page.items[pos]);
+                    }
                 }
             }
             DocCommand::EraseItems {
@@ -563,6 +648,11 @@ impl CommandHistory {
                                 ItemKind::Image(image) => {
                                     if (inv_sx - 1.0).abs() > 1e-9 || (inv_sy - 1.0).abs() > 1e-9 {
                                         image.scale(inv_sx, inv_sy, *origin_x, *origin_y);
+                                    }
+                                }
+                                ItemKind::Text(text) => {
+                                    if (inv_sx - 1.0).abs() > 1e-9 || (inv_sy - 1.0).abs() > 1e-9 {
+                                        text.scale(inv_sx, inv_sy, *origin_x, *origin_y);
                                     }
                                 }
                             }
