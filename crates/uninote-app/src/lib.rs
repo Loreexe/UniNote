@@ -13,7 +13,6 @@ pub mod selection;
 pub mod settings;
 pub mod window;
 
-
 pub use canvas::{ActiveTool, NoteCanvas};
 pub use clipboard::{
     clear_clipboard, deserialize_clipboard, get_app_clipboard, get_clipboard_data,
@@ -34,8 +33,8 @@ pub use pdf_export::{
     import_from_pdf, PdfExportOptions,
 };
 pub use preferences::{
-    AppPreferences, BarrelButtonAction, DashboardRecentStore, EraserMode, FullAppSettingsModel, PenSlotConfig,
-    PressureCurve, RecentDocumentMeta, StylusSensitivity, ThemeMode,
+    AppPreferences, BarrelButtonAction, DashboardRecentStore, EraserMode, FullAppSettingsModel,
+    PenSlotConfig, PressureCurve, RecentDocumentMeta, StylusSensitivity, ThemeMode,
 };
 pub use selection::{is_image_selected_by_lasso, is_image_selected_by_rect, AppSelectionEngine};
 pub use settings::{

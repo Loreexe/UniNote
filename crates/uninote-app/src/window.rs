@@ -547,12 +547,14 @@ impl UniNoteWindow {
                     };
                     c_tool.set_selection_mode(new_mode);
                     let (tip, sel_icon) = match new_mode {
-                        uninote_stroke::selection::SelectionMode::Lasso => {
-                            ("Selezione: Lazo Libero (clicca per Rettangolo)", IconKind::Select)
-                        }
-                        uninote_stroke::selection::SelectionMode::Rectangle => {
-                            ("Selezione: Rettangolare (clicca per Lazo)", IconKind::SelectRect)
-                        }
+                        uninote_stroke::selection::SelectionMode::Lasso => (
+                            "Selezione: Lazo Libero (clicca per Rettangolo)",
+                            IconKind::Select,
+                        ),
+                        uninote_stroke::selection::SelectionMode::Rectangle => (
+                            "Selezione: Rettangolare (clicca per Lazo)",
+                            IconKind::SelectRect,
+                        ),
                     };
                     btn_self.set_tooltip_text(Some(tip));
                     btn_self.set_child(Some(&create_icon(sel_icon, 16, None)));
@@ -2211,7 +2213,8 @@ impl UniNoteWindow {
         let click_gesture = GestureClick::new();
         click_gesture.connect_pressed(move |_, n_press, _, _| {
             if n_press == 2 {
-                let is_wb = c_z_reset.state().borrow().document.format == DocumentFormat::Whiteboard;
+                let is_wb =
+                    c_z_reset.state().borrow().document.format == DocumentFormat::Whiteboard;
                 if is_wb {
                     c_z_reset.center_content();
                 } else {

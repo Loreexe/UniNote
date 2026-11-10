@@ -8,9 +8,9 @@ use gtk4::gio;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, DragSource, DropTarget, Entry, FileDialog, FlowBox,
-    FlowBoxChild, GestureClick, Label, ListBox, ListBoxRow, Orientation, Picture, ScrolledWindow,
-    SearchEntry, Window,
+    Align, Box as GtkBox, Button, DragSource, DropTarget, Entry, FileDialog, FlowBox, FlowBoxChild,
+    GestureClick, Label, ListBox, ListBoxRow, Orientation, Picture, ScrolledWindow, SearchEntry,
+    Window,
 };
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -1030,39 +1030,40 @@ impl CreateDocumentDialog {
             .homogeneous(true)
             .build();
 
-        let make_format_card = |icon_kind: IconKind, title: &str, subtitle: &str| -> (Button, GtkBox) {
-            let card_content = GtkBox::builder()
-                .orientation(Orientation::Vertical)
-                .spacing(4)
-                .valign(Align::Center)
-                .build();
-            let header_row = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .spacing(8)
-                .valign(Align::Center)
-                .build();
-            header_row.append(&create_icon(icon_kind, 20, None));
-            header_row.append(
-                &Label::builder()
-                    .label(title)
-                    .css_classes(["heading"])
-                    .xalign(0.0)
-                    .build(),
-            );
-            card_content.append(&header_row);
-            card_content.append(
-                &Label::builder()
-                    .label(subtitle)
-                    .css_classes(["dim-label"])
-                    .xalign(0.0)
-                    .build(),
-            );
-            let btn = Button::builder()
-                .child(&card_content)
-                .css_classes(["dms-format-card"])
-                .build();
-            (btn, card_content)
-        };
+        let make_format_card =
+            |icon_kind: IconKind, title: &str, subtitle: &str| -> (Button, GtkBox) {
+                let card_content = GtkBox::builder()
+                    .orientation(Orientation::Vertical)
+                    .spacing(4)
+                    .valign(Align::Center)
+                    .build();
+                let header_row = GtkBox::builder()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(8)
+                    .valign(Align::Center)
+                    .build();
+                header_row.append(&create_icon(icon_kind, 20, None));
+                header_row.append(
+                    &Label::builder()
+                        .label(title)
+                        .css_classes(["heading"])
+                        .xalign(0.0)
+                        .build(),
+                );
+                card_content.append(&header_row);
+                card_content.append(
+                    &Label::builder()
+                        .label(subtitle)
+                        .css_classes(["dim-label"])
+                        .xalign(0.0)
+                        .build(),
+                );
+                let btn = Button::builder()
+                    .child(&card_content)
+                    .css_classes(["dms-format-card"])
+                    .build();
+                (btn, card_content)
+            };
 
         let (btn_notebook, _) = make_format_card(
             IconKind::Page,
@@ -1456,7 +1457,11 @@ impl UniNoteDashboard {
         top_bar.append(&spacer_right);
 
         let btn_new_doc = {
-            let b = GtkBox::builder().orientation(Orientation::Horizontal).spacing(6).valign(Align::Center).build();
+            let b = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(6)
+                .valign(Align::Center)
+                .build();
             b.append(&create_icon(IconKind::Add, 16, None));
             b.append(&Label::builder().label("Nuovo Documento").build());
             Button::builder()
@@ -1468,7 +1473,11 @@ impl UniNoteDashboard {
         top_bar.append(&btn_new_doc);
 
         let btn_import_pdf = {
-            let b = GtkBox::builder().orientation(Orientation::Horizontal).spacing(6).valign(Align::Center).build();
+            let b = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(6)
+                .valign(Align::Center)
+                .build();
             b.append(&create_icon(IconKind::Page, 16, None));
             b.append(&Label::new(Some("Nuovo da PDF")));
             Button::builder()
@@ -1481,7 +1490,11 @@ impl UniNoteDashboard {
         top_bar.append(&btn_import_pdf);
 
         let btn_open_file = {
-            let b = GtkBox::builder().orientation(Orientation::Horizontal).spacing(6).valign(Align::Center).build();
+            let b = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(6)
+                .valign(Align::Center)
+                .build();
             b.append(&create_icon(IconKind::FolderOpen, 16, None));
             b.append(&Label::new(Some("Apri File")));
             Button::builder()
@@ -2433,25 +2446,32 @@ impl UniNoteDashboard {
             .margin_bottom(4)
             .build();
 
-        let make_folder_menu_item = |icon_kind: IconKind, label_text: &str, is_destructive: bool| -> Button {
-            let row = GtkBox::builder()
-                .orientation(Orientation::Horizontal)
-                .spacing(10)
-                .valign(Align::Center)
-                .build();
-            let icon_color = if is_destructive {
-                Some(gtk4::gdk::RGBA::new(1.0, 0.42, 0.42, 1.0))
-            } else {
-                None
+        let make_folder_menu_item =
+            |icon_kind: IconKind, label_text: &str, is_destructive: bool| -> Button {
+                let row = GtkBox::builder()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(10)
+                    .valign(Align::Center)
+                    .build();
+                let icon_color = if is_destructive {
+                    Some(gtk4::gdk::RGBA::new(1.0, 0.42, 0.42, 1.0))
+                } else {
+                    None
+                };
+                row.append(&create_icon(icon_kind, 16, icon_color));
+                row.append(
+                    &Label::builder()
+                        .label(label_text)
+                        .xalign(0.0)
+                        .hexpand(true)
+                        .build(),
+                );
+                let mut classes = vec!["dms-menu-item-btn"];
+                if is_destructive {
+                    classes.push("destructive-action");
+                }
+                Button::builder().child(&row).css_classes(classes).build()
             };
-            row.append(&create_icon(icon_kind, 16, icon_color));
-            row.append(&Label::builder().label(label_text).xalign(0.0).hexpand(true).build());
-            let mut classes = vec!["dms-menu-item-btn"];
-            if is_destructive {
-                classes.push("destructive-action");
-            }
-            Button::builder().child(&row).css_classes(classes).build()
-        };
 
         let btn_rename = make_folder_menu_item(IconKind::Edit, "Rinomina", false);
         let btn_delete = make_folder_menu_item(IconKind::Trash, "Elimina", true);

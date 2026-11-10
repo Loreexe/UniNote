@@ -383,10 +383,34 @@ impl UniNoteSettingsWindow {
             let radius = 7.0;
 
             cr.new_sub_path();
-            cr.arc(width - radius, radius, radius, -std::f64::consts::FRAC_PI_2, 0.0);
-            cr.arc(width - radius, height - radius, radius, 0.0, std::f64::consts::FRAC_PI_2);
-            cr.arc(radius, height - radius, radius, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
-            cr.arc(radius, radius, radius, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
+            cr.arc(
+                width - radius,
+                radius,
+                radius,
+                -std::f64::consts::FRAC_PI_2,
+                0.0,
+            );
+            cr.arc(
+                width - radius,
+                height - radius,
+                radius,
+                0.0,
+                std::f64::consts::FRAC_PI_2,
+            );
+            cr.arc(
+                radius,
+                height - radius,
+                radius,
+                std::f64::consts::FRAC_PI_2,
+                std::f64::consts::PI,
+            );
+            cr.arc(
+                radius,
+                radius,
+                radius,
+                std::f64::consts::PI,
+                3.0 * std::f64::consts::FRAC_PI_2,
+            );
             cr.close_path();
 
             if is_dark {
@@ -407,7 +431,13 @@ impl UniNoteSettingsWindow {
             let p = live_p_draw.get();
             if p > 0.01 {
                 let max_r = (width.min(height) / 2.0) * (0.4 + 0.6 * p);
-                cr.arc(width / 2.0, height / 2.0, max_r, 0.0, 2.0 * std::f64::consts::PI);
+                cr.arc(
+                    width / 2.0,
+                    height / 2.0,
+                    max_r,
+                    0.0,
+                    2.0 * std::f64::consts::PI,
+                );
                 if is_dark {
                     cr.set_source_rgba(0.427, 0.824, 1.0, 0.25 + 0.5 * p);
                 } else {
@@ -415,7 +445,11 @@ impl UniNoteSettingsWindow {
                 }
                 let _ = cr.fill();
             } else {
-                cr.select_font_face("Sans", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Bold);
+                cr.select_font_face(
+                    "Sans",
+                    gtk4::cairo::FontSlant::Normal,
+                    gtk4::cairo::FontWeight::Bold,
+                );
                 cr.set_font_size(10.0);
                 if is_dark {
                     cr.set_source_rgba(0.85, 0.89, 0.92, 0.65);
@@ -423,7 +457,10 @@ impl UniNoteSettingsWindow {
                     cr.set_source_rgba(0.20, 0.25, 0.28, 0.65);
                 }
                 if let Ok(ext) = cr.text_extents("Tocca con stilo") {
-                    cr.move_to((width - ext.width()) / 2.0, (height + ext.height()) / 2.0 - 1.0);
+                    cr.move_to(
+                        (width - ext.width()) / 2.0,
+                        (height + ext.height()) / 2.0 - 1.0,
+                    );
                     let _ = cr.show_text("Tocca con stilo");
                 }
             }
@@ -1186,7 +1223,9 @@ impl UniNoteSettingsWindow {
 
         let row_eraser_mode = ComboRow::builder()
             .title("Modalità di Cancellazione")
-            .subtitle("Scegli se eliminare l'intero tratto oppure frammentarlo analiticamente al tocco.")
+            .subtitle(
+                "Scegli se eliminare l'intero tratto oppure frammentarlo analiticamente al tocco.",
+            )
             .model(&gtk4::StringList::new(&[
                 "Tratto Intero (Stroke)",
                 "Per Segmento (Analitico)",
@@ -1216,14 +1255,8 @@ impl UniNoteSettingsWindow {
         });
         grp_eraser.add(&row_eraser_mode);
 
-        let adj_eraser_r = Adjustment::new(
-            settings.borrow().eraser_radius,
-            4.0,
-            64.0,
-            1.0,
-            4.0,
-            0.0,
-        );
+        let adj_eraser_r =
+            Adjustment::new(settings.borrow().eraser_radius, 4.0, 64.0, 1.0, 4.0, 0.0);
         let row_eraser_r = ActionRow::builder()
             .title("Raggio Gomma Predefinito (pt)")
             .subtitle("Dimensione dell'indicatore circolare di cancellazione.")
@@ -1259,14 +1292,7 @@ impl UniNoteSettingsWindow {
             .description("Spessore della scia fluorescente volatile.")
             .build();
 
-        let adj_laser_w = Adjustment::new(
-            settings.borrow().laser_width,
-            1.5,
-            24.0,
-            0.5,
-            2.0,
-            0.0,
-        );
+        let adj_laser_w = Adjustment::new(settings.borrow().laser_width, 1.5, 24.0, 0.5, 2.0, 0.0);
         let row_laser_w = ActionRow::builder()
             .title("Calibro Scia Laser (pt)")
             .subtitle("Spessore del raggio luminoso neon proiettato sulla lavagna.")
