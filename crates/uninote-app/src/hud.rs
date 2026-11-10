@@ -75,6 +75,7 @@ impl DiagnosticHud {
             .margin_top(16)
             .halign(gtk4::Align::Start)
             .valign(gtk4::Align::Start)
+            .can_target(false)
             .build();
 
         // Stile visivo: card scura semi-trasparente e font monospazio compatto

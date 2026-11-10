@@ -554,8 +554,8 @@ fn test_headless_settings_window_lifecycle_and_properties() {
                 window_widget.title().as_deref(),
                 Some("Impostazioni UniNote")
             );
-            assert_eq!(window_widget.default_width(), 780);
-            assert_eq!(window_widget.default_height(), 640);
+            assert_eq!(window_widget.default_width(), 860);
+            assert_eq!(window_widget.default_height(), 680);
             assert!(window_widget.has_css_class("uninote-settings-window"));
         }
 

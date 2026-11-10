@@ -146,7 +146,7 @@ fn link_button(label: &str, uri: &str) -> Button {
     let button = Button::builder()
         .label(label)
         .valign(Align::Center)
-        .css_classes(["dms-action-btn"])
+        .css_classes(["dms-settings-btn"])
         .build();
 
     let uri = uri.to_string();
@@ -183,6 +183,7 @@ fn build_advanced_switch(
             "Mostra i parametri tecnici di calibrazione fine del digitizer (soglie, filtri 1€, anti-hover, palm rejection).",
         )
         .active(advanced.is_enabled())
+        .can_focus(false)
         .build();
 
     let adv_state = advanced.clone();
@@ -215,10 +216,11 @@ impl UniNoteSettingsWindow {
     pub fn with_settings(settings: Rc<RefCell<FullAppSettingsModel>>) -> Self {
         let window = PreferencesWindow::builder()
             .title("Impostazioni UniNote")
-            .default_width(780)
-            .default_height(640)
+            .default_width(860)
+            .default_height(680)
             .css_classes(["uninote-settings-window"])
             .build();
+        window.set_size_request(840, 620);
 
         let on_changed = Rc::new(RefCell::new(None));
         let advanced = AdvancedState::new(settings.borrow().advanced_options_enabled);
@@ -264,7 +266,7 @@ impl UniNoteSettingsWindow {
         advanced: &AdvancedState,
     ) -> PreferencesPage {
         let page = PreferencesPage::builder()
-            .title("Hardware MPP")
+            .title("Hardware")
             .icon_name("input-tablet-symbolic")
             .build();
 
@@ -284,7 +286,7 @@ impl UniNoteSettingsWindow {
         // 1.1 Preset di Sensibilità dello Stilo (Morbida / Media / Dura)
         let row_sensitivity = ComboRow::builder()
             .title("Sensibilità dello Stilo")
-            .subtitle("Scegli un preset immediato: la curva di pressione viene calibrata automaticamente.")
+            .subtitle("Calibrazione rapida della risposta alla pressione.")
             .model(&gtk4::StringList::new(&StylusSensitivity::LABELS))
             .build();
 
@@ -362,28 +364,77 @@ impl UniNoteSettingsWindow {
             .fraction(0.0)
             .show_text(true)
             .text("0.000")
-            .width_request(180)
+            .width_request(100)
             .css_classes(["dms-pressure-bar"])
             .build();
 
         let live_area = DrawingArea::builder()
-            .width_request(180)
+            .width_request(130)
             .height_request(28)
             .css_classes(["dms-pressure-test-area"])
             .build();
 
-        let p_bar = progress_live.clone();
-        let s_curve_for_live = settings.clone();
+        let live_pressure = Rc::new(Cell::new(0.0f64));
+        let live_p_draw = live_pressure.clone();
         live_area.set_draw_func(move |_, cr: &Context, w, h| {
-            cr.set_source_rgb(0.090, 0.129, 0.149);
-            cr.rectangle(0.0, 0.0, w as f64, h as f64);
-            let _ = cr.fill();
+            let is_dark = libadwaita::StyleManager::default().is_dark();
+            let width = w as f64;
+            let height = h as f64;
+            let radius = 7.0;
+
+            cr.new_sub_path();
+            cr.arc(width - radius, radius, radius, -std::f64::consts::FRAC_PI_2, 0.0);
+            cr.arc(width - radius, height - radius, radius, 0.0, std::f64::consts::FRAC_PI_2);
+            cr.arc(radius, height - radius, radius, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
+            cr.arc(radius, radius, radius, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
+            cr.close_path();
+
+            if is_dark {
+                cr.set_source_rgb(0.125, 0.173, 0.196);
+            } else {
+                cr.set_source_rgb(0.914, 0.925, 0.937);
+            }
+            let _ = cr.fill_preserve();
+
+            if is_dark {
+                cr.set_source_rgba(0.427, 0.824, 1.0, 0.35);
+            } else {
+                cr.set_source_rgba(0.0, 0.40, 0.54, 0.35);
+            }
+            cr.set_line_width(1.0);
+            let _ = cr.stroke();
+
+            let p = live_p_draw.get();
+            if p > 0.01 {
+                let max_r = (width.min(height) / 2.0) * (0.4 + 0.6 * p);
+                cr.arc(width / 2.0, height / 2.0, max_r, 0.0, 2.0 * std::f64::consts::PI);
+                if is_dark {
+                    cr.set_source_rgba(0.427, 0.824, 1.0, 0.25 + 0.5 * p);
+                } else {
+                    cr.set_source_rgba(0.0, 0.40, 0.54, 0.20 + 0.4 * p);
+                }
+                let _ = cr.fill();
+            } else {
+                cr.select_font_face("Sans", gtk4::cairo::FontSlant::Normal, gtk4::cairo::FontWeight::Bold);
+                cr.set_font_size(10.0);
+                if is_dark {
+                    cr.set_source_rgba(0.85, 0.89, 0.92, 0.65);
+                } else {
+                    cr.set_source_rgba(0.20, 0.25, 0.28, 0.65);
+                }
+                if let Ok(ext) = cr.text_extents("Tocca con stilo") {
+                    cr.move_to((width - ext.width()) / 2.0, (height + ext.height()) / 2.0 - 1.0);
+                    let _ = cr.show_text("Tocca con stilo");
+                }
+            }
         });
 
         let stylus_ctrl = GestureStylus::new();
 
-        let p_bar_down = p_bar.clone();
-        let s_sens_down = s_curve_for_live.clone();
+        let p_bar_down = progress_live.clone();
+        let s_sens_down = settings.clone();
+        let live_p_down = live_pressure.clone();
+        let live_area_down = live_area.clone();
         stylus_ctrl.connect_down(move |gesture, _x, _y| {
             let raw_p = gesture
                 .axis(gdk::AxisUse::Pressure)
@@ -393,10 +444,14 @@ impl UniNoteSettingsWindow {
             let calibrated = sensitivity.apply(raw_p);
             p_bar_down.set_fraction(calibrated);
             p_bar_down.set_text(Some(&format!("{:.3}", calibrated)));
+            live_p_down.set(calibrated);
+            live_area_down.queue_draw();
         });
 
-        let p_bar_motion = p_bar.clone();
-        let s_sens_motion = s_curve_for_live.clone();
+        let p_bar_motion = progress_live.clone();
+        let s_sens_motion = settings.clone();
+        let live_p_motion = live_pressure.clone();
+        let live_area_motion = live_area.clone();
         stylus_ctrl.connect_motion(move |gesture, _x, _y| {
             let raw_p = gesture
                 .axis(gdk::AxisUse::Pressure)
@@ -406,12 +461,18 @@ impl UniNoteSettingsWindow {
             let calibrated = sensitivity.apply(raw_p);
             p_bar_motion.set_fraction(calibrated);
             p_bar_motion.set_text(Some(&format!("{:.3}", calibrated)));
+            live_p_motion.set(calibrated);
+            live_area_motion.queue_draw();
         });
 
-        let p_bar_up = p_bar.clone();
+        let p_bar_up = progress_live.clone();
+        let live_p_up = live_pressure.clone();
+        let live_area_up = live_area.clone();
         stylus_ctrl.connect_up(move |_gesture, _x, _y| {
             p_bar_up.set_fraction(0.0);
             p_bar_up.set_text(Some("0.000"));
+            live_p_up.set(0.0);
+            live_area_up.queue_draw();
         });
 
         live_area.add_controller(stylus_ctrl);
@@ -809,7 +870,7 @@ impl UniNoteSettingsWindow {
         on_changed: &SettingsChangedCallback,
     ) -> PreferencesPage {
         let page = PreferencesPage::builder()
-            .title("Aspetto DMS")
+            .title("Aspetto")
             .icon_name("preferences-desktop-theme-symbolic")
             .build();
 
@@ -1117,6 +1178,124 @@ impl UniNoteSettingsWindow {
         grp_shapes.add(&row_rdp);
         page.add(&grp_shapes);
 
+        // Gruppo Strumento Gomma
+        let grp_eraser = PreferencesGroup::builder()
+            .title("Strumento Gomma")
+            .description("Modalità di cancellazione e dimensione predefinita del cursore.")
+            .build();
+
+        let row_eraser_mode = ComboRow::builder()
+            .title("Modalità di Cancellazione")
+            .subtitle("Scegli se eliminare l'intero tratto oppure frammentarlo analiticamente al tocco.")
+            .model(&gtk4::StringList::new(&[
+                "Tratto Intero (Stroke)",
+                "Per Segmento (Analitico)",
+            ]))
+            .build();
+
+        row_eraser_mode.set_selected(match settings.borrow().eraser_mode {
+            crate::preferences::EraserMode::WholeStroke => 0,
+            crate::preferences::EraserMode::Segment => 1,
+        });
+
+        let s_em = settings.clone();
+        let cb_em = on_changed.clone();
+        row_eraser_mode.connect_selected_notify(move |combo| {
+            let mode = match combo.selected() {
+                1 => crate::preferences::EraserMode::Segment,
+                _ => crate::preferences::EraserMode::WholeStroke,
+            };
+            s_em.borrow_mut().eraser_mode = mode;
+            let _ = s_em.borrow().save();
+            let mut prefs = crate::preferences::AppPreferences::load();
+            prefs.eraser_mode = mode;
+            let _ = prefs.save();
+            if let Some(ref cb) = *cb_em.borrow() {
+                cb(&s_em.borrow());
+            }
+        });
+        grp_eraser.add(&row_eraser_mode);
+
+        let adj_eraser_r = Adjustment::new(
+            settings.borrow().eraser_radius,
+            4.0,
+            64.0,
+            1.0,
+            4.0,
+            0.0,
+        );
+        let row_eraser_r = ActionRow::builder()
+            .title("Raggio Gomma Predefinito (pt)")
+            .subtitle("Dimensione dell'indicatore circolare di cancellazione.")
+            .build();
+        let scale_eraser_r = Scale::builder()
+            .adjustment(&adj_eraser_r)
+            .digits(0)
+            .draw_value(true)
+            .value_pos(gtk4::PositionType::Right)
+            .width_request(160)
+            .valign(Align::Center)
+            .build();
+        let s_er = settings.clone();
+        let cb_er = on_changed.clone();
+        scale_eraser_r.connect_value_changed(move |scale| {
+            let val = scale.value();
+            s_er.borrow_mut().eraser_radius = val;
+            let _ = s_er.borrow().save();
+            let mut prefs = crate::preferences::AppPreferences::load();
+            prefs.eraser_radius = val;
+            let _ = prefs.save();
+            if let Some(ref cb) = *cb_er.borrow() {
+                cb(&s_er.borrow());
+            }
+        });
+        row_eraser_r.add_suffix(&scale_eraser_r);
+        grp_eraser.add(&row_eraser_r);
+        page.add(&grp_eraser);
+
+        // Gruppo Puntatore Laser
+        let grp_laser = PreferencesGroup::builder()
+            .title("Puntatore Laser")
+            .description("Spessore della scia fluorescente volatile.")
+            .build();
+
+        let adj_laser_w = Adjustment::new(
+            settings.borrow().laser_width,
+            1.5,
+            24.0,
+            0.5,
+            2.0,
+            0.0,
+        );
+        let row_laser_w = ActionRow::builder()
+            .title("Calibro Scia Laser (pt)")
+            .subtitle("Spessore del raggio luminoso neon proiettato sulla lavagna.")
+            .build();
+        let scale_laser_w = Scale::builder()
+            .adjustment(&adj_laser_w)
+            .digits(1)
+            .draw_value(true)
+            .value_pos(gtk4::PositionType::Right)
+            .width_request(160)
+            .valign(Align::Center)
+            .build();
+        let s_lw = settings.clone();
+        let cb_lw = on_changed.clone();
+        scale_laser_w.connect_value_changed(move |scale| {
+            let val = scale.value();
+            s_lw.borrow_mut().laser_width = val;
+            let _ = s_lw.borrow().save();
+            let mut prefs = crate::preferences::AppPreferences::load();
+            prefs.laser_width = val;
+            let _ = prefs.save();
+            if let Some(ref cb) = *cb_lw.borrow() {
+                cb(&s_lw.borrow());
+            }
+        });
+        row_laser_w.add_suffix(&scale_laser_w);
+        grp_laser.add(&row_laser_w);
+        page.add(&grp_laser);
+
         // Gruppo Preset Dock Penne
         let grp_dock = PreferencesGroup::builder()
             .title("Preset e Palette Dock Penne")
@@ -1132,7 +1311,7 @@ impl UniNoteSettingsWindow {
 
         let btn_reset_colors = Button::builder()
             .label("Ripristina Predefiniti")
-            .css_classes(["dms-action-btn"])
+            .css_classes(["dms-settings-btn"])
             .valign(Align::Center)
             .build();
 
@@ -1173,7 +1352,7 @@ impl UniNoteSettingsWindow {
         on_changed: &SettingsChangedCallback,
     ) -> PreferencesPage {
         let page = PreferencesPage::builder()
-            .title("Scorciatoie & Stylus")
+            .title("Scorciatoie")
             .icon_name("input-keyboard-symbolic")
             .build();
 
@@ -1232,7 +1411,7 @@ impl UniNoteSettingsWindow {
 
         let btn_reset_all = Button::builder()
             .label("Ripristina Default")
-            .css_classes(["dms-action-btn"])
+            .css_classes(["dms-settings-btn"])
             .valign(Align::Center)
             .build();
 
@@ -1416,7 +1595,7 @@ impl UniNoteSettingsWindow {
         let btn_check = Button::builder()
             .label("Verifica Aggiornamenti")
             .valign(Align::Center)
-            .css_classes(["dms-action-btn"])
+            .css_classes(["dms-settings-btn"])
             .build();
 
         row_check.add_suffix(&btn_check);

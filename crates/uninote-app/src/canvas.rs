@@ -1938,13 +1938,19 @@ impl NoteCanvas {
                             continue;
                         }
 
-                        // Ombra ad elevazione per foglio A4
-                        if is_dark {
-                            cr.set_source_rgba(0.0, 0.0, 0.0, 0.65);
-                        } else {
-                            cr.set_source_rgba(0.0, 0.0, 0.0, 0.14);
-                        }
-                        cr.rectangle(sx - 2.0, sy + 4.0, sw + 8.0, sh + 8.0);
+                        // Ombra morbida ad elevazione naturale multi-pass per foglio A4
+                        let shadow_base_alpha = if is_dark { 0.20 } else { 0.05 };
+                        // Pass 1: ampia e diffusa
+                        cr.set_source_rgba(0.0, 0.0, 0.0, shadow_base_alpha * 0.7);
+                        cr.rectangle(sx - 6.0, sy + 4.0, sw + 12.0, sh + 14.0);
+                        let _ = cr.fill();
+                        // Pass 2: media
+                        cr.set_source_rgba(0.0, 0.0, 0.0, shadow_base_alpha * 1.3);
+                        cr.rectangle(sx - 3.0, sy + 3.0, sw + 6.0, sh + 8.0);
+                        let _ = cr.fill();
+                        // Pass 3: contatto
+                        cr.set_source_rgba(0.0, 0.0, 0.0, shadow_base_alpha * 2.2);
+                        cr.rectangle(sx - 1.0, sy + 2.0, sw + 2.0, sh + 3.0);
                         let _ = cr.fill();
 
                         // Corpo foglio A4
@@ -2179,8 +2185,9 @@ impl NoteCanvas {
                         if page.index + 1 < st.document.pages.len() {
                             cr.set_source_rgba(0.50, 0.54, 0.62, 0.70);
                             cr.set_font_size(11.0);
-                            let label = format!("— Pagina {} —", page.index + 1);
-                            cr.move_to(sx + (sw / 2.0) - 40.0, sy + sh + 20.0);
+                            let label = format!("— Inizio Pagina {} —", page.index + 2);
+                            let text_w = cr.text_extents(&label).map(|e| e.width()).unwrap_or(90.0);
+                            cr.move_to(sx + (sw - text_w) / 2.0, sy + sh + 24.0);
                             let _ = cr.show_text(&label);
                         }
                     }
@@ -3575,6 +3582,29 @@ impl NoteCanvas {
         motion.connect_motion(move |_ctrl, x, y| {
             let mut st = state_clone.borrow_mut();
 
+            // Aggiorna il cursore del mouse su maniglie/corpo della selezione
+            if st.active_tool == ActiveTool::Select {
+                let doc_pt = st.viewport.screen_to_document((x, y));
+                let hit_res = st.selection.hit_test(doc_pt, &st.viewport);
+                let cursor_name = match hit_res {
+                    SelectionHitTestResult::Handle(h) => match h {
+                        crate::selection::HandleId::TopLeft
+                        | crate::selection::HandleId::BottomRight => Some("nwse-resize"),
+                        crate::selection::HandleId::TopRight
+                        | crate::selection::HandleId::BottomLeft => Some("nesw-resize"),
+                        crate::selection::HandleId::TopMiddle
+                        | crate::selection::HandleId::BottomMiddle => Some("ns-resize"),
+                        crate::selection::HandleId::RightMiddle
+                        | crate::selection::HandleId::LeftMiddle => Some("ew-resize"),
+                    },
+                    SelectionHitTestResult::Body => Some("grab"),
+                    SelectionHitTestResult::None => None,
+                };
+                area_clone.set_cursor_from_name(cursor_name);
+            } else {
+                area_clone.set_cursor_from_name(None);
+            }
+
             // ZERO-OVERHEAD FAST PATH:
             // Se lo strumento attivo non è la gomma, usciamo immediatamente.
             if st.active_tool != ActiveTool::Eraser {
@@ -3596,6 +3626,7 @@ impl NoteCanvas {
         let state_clone2 = self.state.clone();
         let area_clone2 = self.area.clone();
         motion.connect_leave(move |_ctrl| {
+            area_clone2.set_cursor_from_name(None);
             let mut st = state_clone2.borrow_mut();
             if st.eraser_pointer.is_some() {
                 st.eraser_pointer = None;
@@ -4416,7 +4447,11 @@ impl NoteCanvas {
         vp: &Viewport,
         is_dark: bool,
     ) {
-        let cyan = (0.427, 0.824, 1.0); // #6DD2FF UniNote Electric Cyan
+        let cyan = if is_dark {
+            (0.427, 0.824, 1.0) // #6DD2FF UniNote Electric Cyan
+        } else {
+            (0.0, 0.40, 0.545) // #00668B WCAG AA 6.2:1 contrast su carta chiara
+        };
 
         // 1. Traccia attiva durante il disegno del gesto
         if selection.is_selecting() {

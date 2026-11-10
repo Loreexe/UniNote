@@ -6,7 +6,7 @@
 
 **An Academic Freehand Note-Taking & Vector PDF Slide Annotation Suite for Linux**
 
-![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)![Rust](https://img.shields.io/badge/Rust-2021_Edition_\(MSRV_1.80+\)-orange.svg?logo=rust)![GUI](https://img.shields.io/badge/GUI-GTK4_%26_Libadwaita-4a90e2.svg?logo=gnome)![Version](https://img.shields.io/badge/Version-0.5.2-teal.svg)![Arch Linux](https://img.shields.io/badge/Arch_Linux-uninote-blue.svg?logo=archlinux)![Flatpak](https://img.shields.io/badge/Flatpak-org.uninote.UniNote-2b7bb9.svg?logo=flatpak)![CI](https://github.com/Loreexe/UniNote/actions/workflows/ci.yml/badge.svg)![Wayland](https://img.shields.io/badge/Display-Wayland_Native-purple.svg)![Architecture](https://img.shields.io/badge/Architecture-4_Decoupled_Crates-success.svg)
+![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)![Rust](https://img.shields.io/badge/Rust-2021_Edition_\(MSRV_1.80+\)-orange.svg?logo=rust)![GUI](https://img.shields.io/badge/GUI-GTK4_%26_Libadwaita-4a90e2.svg?logo=gnome)![Version](https://img.shields.io/badge/Version-0.5.3-teal.svg)![Arch Linux](https://img.shields.io/badge/Arch_Linux-uninote-blue.svg?logo=archlinux)![Flatpak](https://img.shields.io/badge/Flatpak-org.uninote.UniNote-2b7bb9.svg?logo=flatpak)![CI](https://github.com/Loreexe/UniNote/actions/workflows/ci.yml/badge.svg)![Wayland](https://img.shields.io/badge/Display-Wayland_Native-purple.svg)![Architecture](https://img.shields.io/badge/Architecture-4_Decoupled_Crates-success.svg)
 
 [Screenshots](#-screenshots--interface-showcase) •
 [Packaging & Install](#-packaging--quick-install) •
@@ -44,22 +44,22 @@ Unlike conventional note-taking suites that rely on heavy Electron/Chromium runt
 ### 1. Hub Accademico & Dashboard Documenti
 
 *Sidebar cartelle, card con miniature Cairo vettoriali, ricerca istantanea, spostamento file e azioni rapide di creazione.*<br />
-<img src="docs/screenshots/01_dashboard.png?v=0.5.2" alt="UniNote Dashboard" width="90%" />
+<img src="docs/screenshots/01_dashboard.png?v=0.5.3" alt="UniNote Dashboard" width="90%" />
 
 ### 2. Quaderno A4, Slide PDF e Screenshot
 
 *Inchiostrazione fluida a 120Hz con spline Catmull-Rom, evidenziatore, forme geometriche, annotazioni su slide e screenshot incollati come asset hash-addressed.*<br />
-<img src="docs/screenshots/02_quaderno.png?v=0.5.2" alt="UniNote Quaderno A4" width="90%" />
+<img src="docs/screenshots/02_quaderno.png?v=0.5.3" alt="UniNote Quaderno A4" width="90%" />
 
 ### 3. Lavagna Infinita
 
 *Spazio cartesiano continuo* $(-\infty, +\infty)$*, griglia procedurale dinamica, diagrammi a più colori e pulsante di ricentratura rapida del contenuto.*<br />
-<img src="docs/screenshots/03_lavagna_infinita.png?v=0.5.2" alt="UniNote Lavagna Infinita" width="90%" />
+<img src="docs/screenshots/03_lavagna_infinita.png?v=0.5.3" alt="UniNote Lavagna Infinita" width="90%" />
 
 ### 4. Impostazioni a 5 Schede & Scheda GitHub
 
 *Preferenze Adwaita per Hardware MPP, Aspetto DMS, Strumenti, Scorciatoie e GitHub, con opzioni avanzate, preset stilo e verifica aggiornamenti.*<br />
-<img src="docs/screenshots/04_impostazioni.png?v=0.5.2" alt="UniNote Impostazioni" width="78%" />
+<img src="docs/screenshots/04_impostazioni.png?v=0.5.3" alt="UniNote Impostazioni" width="78%" />
 
 </div>
 
@@ -71,7 +71,7 @@ UniNote is organized as a Cargo virtual workspace consisting of **four decoupled
 
 ```
 UniNote/
-├── Cargo.toml                      # Workspace manifest (Rust 2021, GPL-3.0, Version 0.5.2)
+├── Cargo.toml                      # Workspace manifest (Rust 2021, GPL-3.0, Version 0.5.3)
 ├── LICENSE                         # Verbatim GNU General Public License v3.0
 ├── README.md                       # This document
 ├── data/                           # FreeDesktop XDG assets (.desktop, metainfo, MIME, hicolor icons)
@@ -244,13 +244,13 @@ UniNote/
 Installa direttamente il pacchetto binario `.pkg.tar.zst` precompilato scaricato dalle [Releases](https://github.com/Loreexe/UniNote/releases):
 
 ```bash
-sudo pacman -U uninote-0.5.2-1-x86_64.pkg.tar.zst
+sudo pacman -U uninote-0.5.3-1-x86_64.pkg.tar.zst
 ```
 
 Oppure compila e installa in locale dal repository tramite `makepkg`:
 
 ```bash
-# Versione stabile (v0.5.2):
+# Versione stabile (v0.5.3):
 cd packaging/aur/uninote && makepkg -si
 
 # Oppure versione di sviluppo (branch main):
@@ -273,12 +273,12 @@ flatpak run org.uninote.UniNote
 
 ### 3. Portable Tarball (Linux x86_64)
 
-Scarica `uninote-v0.5.2-linux-x86_64.tar.gz` (e il relativo `.sha256`) dalle [Releases](https://github.com/Loreexe/UniNote/releases), poi installa con lo script incluso:
+Scarica `uninote-v0.5.3-linux-x86_64.tar.gz` (e il relativo `.sha256`) dalle [Releases](https://github.com/Loreexe/UniNote/releases), poi installa con lo script incluso:
 
 ```bash
-sha256sum -c uninote-v0.5.2-linux-x86_64.tar.gz.sha256
-tar -xzf uninote-v0.5.2-linux-x86_64.tar.gz
-cd uninote-v0.5.2-linux-x86_64
+sha256sum -c uninote-v0.5.3-linux-x86_64.tar.gz.sha256
+tar -xzf uninote-v0.5.3-linux-x86_64.tar.gz
+cd uninote-v0.5.3-linux-x86_64
 ./install.sh          # PREFIX=/usr/local per impostazione predefinita
 ```
 
@@ -559,7 +559,7 @@ If you use UniNote in your university coursework, academic research, or software
 @software{uninote2026,
   author       = {{UniNote Developers}},
   title        = {{UniNote: An Academic Freehand Note-Taking and Vector PDF Annotation Suite for Linux}},
-  version      = {0.5.2},
+  version      = {0.5.3},
   year         = {2026},
   url          = {https://github.com/Loreexe/UniNote},
   license      = {GPL-3.0}

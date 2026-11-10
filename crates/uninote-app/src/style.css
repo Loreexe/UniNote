@@ -35,7 +35,8 @@
 window,
 window.uninote-window,
 window.uninote-dashboard-window,
-window.uninote-settings-window {
+window.uninote-settings-window,
+window.uninote-dialog {
     background-color: @dms_surface;
     color: @dms_text_primary;
 }
@@ -43,9 +44,60 @@ window.uninote-settings-window {
 window.light-theme,
 window.uninote-window.light-theme,
 window.uninote-dashboard-window.light-theme,
-window.uninote-settings-window.light-theme {
+window.uninote-settings-window.light-theme,
+window.uninote-dialog.light-theme {
     background-color: @dms_surface_light;
     color: @dms_text_primary_light;
+}
+
+/* Finestra Impostazioni Adwaita DMS */
+window.uninote-settings-window headerbar {
+    padding-left: 12px;
+    padding-right: 12px;
+    min-height: 52px;
+}
+
+window.uninote-settings-window headerbar windowcontrols.end {
+    margin-right: 8px;
+}
+
+window.uninote-settings-window headerbar windowcontrols.start {
+    margin-left: 8px;
+}
+
+window.uninote-settings-window viewswitcher button {
+    padding-left: 10px;
+    padding-right: 10px;
+    margin: 0 2px;
+}
+
+window.uninote-settings-window viewswitcher button label {
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+/* Reset focus outline nocivo sulle righe preferenze */
+window.uninote-settings-window list.boxed-list > row:focus:not(:focus-visible),
+window.uninote-settings-window list.boxed-list > row:focus {
+    outline: none;
+}
+
+window.uninote-settings-window list.boxed-list > row:focus-visible {
+    outline: 2px solid @dms_primary;
+    outline-offset: -2px;
+    border-radius: 12px;
+}
+
+window.uninote-settings-window list.boxed-list {
+    background-color: @dms_surface_container;
+    border: 1px solid @dms_outline;
+    border-radius: 16px;
+}
+
+window.uninote-settings-window.light-theme list.boxed-list {
+    background-color: @dms_surface_container_light;
+    border: 1px solid @dms_outline_light;
+    box-shadow: 0 2px 12px rgba(23, 33, 38, 0.06);
 }
 
 .dms-dashboard {
@@ -269,8 +321,8 @@ button.dms-brand-badge:hover {
 .dms-pen-slot.active {
     border-radius: 20px;
     border: 2px solid @dms_primary;
-    background-color: @dms_primary;
-    box-shadow: 0 0 10px rgba(109, 210, 255, 0.4);
+    background-color: @dms_surface_container_highest;
+    box-shadow: 0 0 0 2px @dms_surface, 0 0 12px rgba(109, 210, 255, 0.5);
 }
 
 .dms-add-pen-btn {
@@ -758,8 +810,8 @@ window.uninote-window.light-theme {
 
 .light-theme .dms-pen-slot.active {
     border: 2px solid @dms_primary_light;
-    background-color: @dms_primary_light;
-    box-shadow: 0 0 10px rgba(0, 102, 139, 0.35);
+    background-color: @dms_surface_container_highest_light;
+    box-shadow: 0 0 0 2px @dms_surface_light, 0 0 12px rgba(0, 102, 139, 0.35);
 }
 
 .light-theme .dms-add-pen-btn {
@@ -1403,4 +1455,502 @@ scale.dms-pill-scale trough {
     background-color: @dms_primary_container_light;
     color: @dms_on_primary_container_light;
 }
+
+/* ==========================================================================
+   REFINTURA UI/UX — DMS / MATERIAL YOU M3 & LIBADWAITA COHERENCE
+   ========================================================================== */
+
+/* 1. Pulsanti Header Bar e Azioni Dashboard (Altezza 36px, Raggio 10px) */
+.dms-header-btn-primary {
+    min-height: 36px;
+    border-radius: 10px;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 700;
+    background-color: @dms_primary;
+    color: @dms_on_primary;
+    border: none;
+    box-shadow: 0 2px 8px rgba(109, 210, 255, 0.35);
+    transition: all 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dms-header-btn-primary:hover {
+    background-color: #8ce1ff;
+    box-shadow: 0 4px 14px rgba(109, 210, 255, 0.5);
+    transform: translateY(-1px);
+}
+
+.light-theme .dms-header-btn-primary {
+    background-color: @dms_primary_light;
+    color: @dms_on_primary_light;
+    box-shadow: 0 2px 8px rgba(0, 102, 139, 0.25);
+}
+
+.light-theme .dms-header-btn-primary:hover {
+    background-color: #007ca7;
+    box-shadow: 0 4px 14px rgba(0, 102, 139, 0.35);
+}
+
+.dms-header-btn-secondary {
+    min-height: 36px;
+    border-radius: 10px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-weight: 600;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    transition: all 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dms-header-btn-secondary:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+    transform: translateY(-1px);
+}
+
+.light-theme .dms-header-btn-secondary {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_primary_light;
+    box-shadow: 0 1px 4px rgba(23, 33, 38, 0.06);
+}
+
+.light-theme .dms-header-btn-secondary:hover {
+    background-color: @dms_surface_container_highest_light;
+}
+
+.dms-header-btn-icon {
+    min-width: 36px;
+    min-height: 36px;
+    border-radius: 10px;
+    padding: 0;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    transition: all 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dms-header-btn-icon:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+    transform: translateY(-1px);
+}
+
+.light-theme .dms-header-btn-icon {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_primary_light;
+    box-shadow: 0 1px 4px rgba(23, 33, 38, 0.06);
+}
+
+/* 2. Barra di Ricerca DMS Centrata */
+.dms-search-entry {
+    min-height: 36px;
+    border-radius: 10px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+    padding: 0 12px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-search-entry:focus-within {
+    border-color: @dms_primary;
+    box-shadow: 0 0 0 1px @dms_primary;
+    background-color: @dms_surface_container_highest;
+}
+
+.light-theme .dms-search-entry {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-search-entry:focus-within {
+    border-color: @dms_primary_light;
+    box-shadow: 0 0 0 1px @dms_primary_light;
+}
+
+/* 3. Pulsanti per Finestra Preferenze e Dialoghi */
+.dms-settings-btn,
+.dms-dialog-btn {
+    min-height: 32px;
+    border-radius: 8px;
+    padding: 4px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-settings-btn:hover,
+.dms-dialog-btn:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+}
+
+.light-theme .dms-settings-btn,
+.light-theme .dms-dialog-btn {
+    background-color: @dms_surface_container_high_light;
+    border: 1px solid @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-settings-btn:hover,
+.light-theme .dms-dialog-btn:hover {
+    background-color: @dms_surface_container_highest_light;
+}
+
+/* 4. Widget Pressione e Calibrazione Stilo */
+progressbar.dms-pressure-bar trough {
+    min-height: 28px;
+    border-radius: 8px;
+    background-color: @dms_surface_container_highest;
+    border: 1px solid @dms_outline;
+}
+
+progressbar.dms-pressure-bar progress {
+    border-radius: 7px;
+    background-color: @dms_primary;
+}
+
+progressbar.dms-pressure-bar text {
+    font-size: 11px;
+    font-weight: 700;
+    color: @dms_text_primary;
+}
+
+.light-theme progressbar.dms-pressure-bar trough {
+    background-color: @dms_surface_container_highest_light;
+    border-color: @dms_outline_light;
+}
+
+.light-theme progressbar.dms-pressure-bar progress {
+    background-color: @dms_primary_light;
+}
+
+.light-theme progressbar.dms-pressure-bar text {
+    color: @dms_text_primary_light;
+}
+
+.dms-pressure-test-area {
+    border-radius: 8px;
+    border: 1px solid @dms_outline;
+    transition: border-color 150ms ease;
+}
+
+.light-theme .dms-pressure-test-area {
+    border: 1px solid @dms_outline_light;
+}
+
+/* 5. Scorciatoie e Chip Tasti */
+.dms-shortcut-chip {
+    font-family: monospace;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background-color: @dms_surface_container_highest;
+    border: 1px solid @dms_outline_variant;
+    color: @dms_text_primary;
+}
+
+.light-theme .dms-shortcut-chip {
+    background-color: @dms_surface_container_highest_light;
+    border-color: @dms_outline_variant_light;
+    color: @dms_text_primary_light;
+}
+
+.dms-btn-icon-round {
+    min-width: 30px;
+    min-height: 30px;
+    border-radius: 15px;
+    padding: 0;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_secondary;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-btn-icon-round:hover {
+    background-color: @dms_surface_container_highest;
+    color: @dms_text_primary;
+}
+
+.light-theme .dms-btn-icon-round {
+    background-color: @dms_surface_container_high_light;
+    border-color: @dms_outline_light;
+    color: @dms_text_secondary_light;
+}
+
+/* 6. Dialoghi Modali Generali (Creazione Doc, Spostamento, Conferme) */
+.uninote-dialog,
+.dms-dialog {
+    background-color: @dms_surface;
+    color: @dms_text_primary;
+    border-radius: 16px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65);
+}
+
+.light-theme.uninote-dialog,
+.light-theme .uninote-dialog,
+.light-theme .dms-dialog {
+    background-color: @dms_surface_light;
+    color: @dms_text_primary_light;
+    box-shadow: 0 8px 32px rgba(23, 33, 38, 0.15);
+}
+
+.dms-entry {
+    min-height: 36px;
+    border-radius: 8px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+    padding: 0 10px;
+}
+
+.dms-entry:focus-within {
+    border-color: @dms_primary;
+}
+
+.light-theme .dms-entry {
+    background-color: @dms_surface_container_high_light;
+    border-color: @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.dms-dropdown {
+    min-height: 36px;
+    border-radius: 8px;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+}
+
+.light-theme .dms-dropdown {
+    background-color: @dms_surface_container_high_light;
+    border-color: @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.dms-btn-primary {
+    min-height: 36px;
+    border-radius: 8px;
+    padding: 0 18px;
+    font-size: 13px;
+    font-weight: 700;
+    background-color: @dms_primary;
+    color: @dms_on_primary;
+    border: none;
+    box-shadow: 0 2px 8px rgba(109, 210, 255, 0.35);
+    transition: all 150ms ease-in-out;
+}
+
+.dms-btn-primary:hover {
+    background-color: #8ce1ff;
+    transform: translateY(-1px);
+}
+
+.light-theme .dms-btn-primary {
+    background-color: @dms_primary_light;
+    color: @dms_on_primary_light;
+}
+
+.dms-btn-secondary {
+    min-height: 36px;
+    border-radius: 8px;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 600;
+    background-color: @dms_surface_container_high;
+    border: 1px solid @dms_outline;
+    color: @dms_text_primary;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-btn-secondary:hover {
+    background-color: @dms_surface_container_highest;
+}
+
+.light-theme .dms-btn-secondary {
+    background-color: @dms_surface_container_high_light;
+    border-color: @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+/* 7. Card Selezione Formato e Carta (CreateDocumentDialog) */
+.dms-format-card {
+    min-height: 80px;
+    border-radius: 12px;
+    background-color: @dms_surface_container_high;
+    border: 2px solid @dms_outline;
+    color: @dms_text_primary;
+    padding: 12px 14px;
+    transition: all 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dms-format-card:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+}
+
+.dms-format-card.selected {
+    border-color: @dms_primary;
+    background-color: rgba(109, 210, 255, 0.12);
+    box-shadow: 0 0 12px rgba(109, 210, 255, 0.25);
+}
+
+.light-theme .dms-format-card {
+    background-color: @dms_surface_container_high_light;
+    border-color: @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-format-card.selected {
+    border-color: @dms_primary_light;
+    background-color: rgba(0, 102, 139, 0.08);
+    box-shadow: 0 0 10px rgba(0, 102, 139, 0.2);
+}
+
+/* 3 Card Orizzontali per Scelta Sfondo Foglio (Bianco, Righe, Quadretti) */
+.dms-paper-preview-card {
+    min-height: 68px;
+    border-radius: 10px;
+    background-color: @dms_surface_container_high;
+    border: 2px solid @dms_outline;
+    color: @dms_text_primary;
+    padding: 8px 10px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-paper-preview-card:hover {
+    background-color: @dms_surface_container_highest;
+    border-color: @dms_outline_variant;
+}
+
+.dms-paper-preview-card.selected {
+    border-color: @dms_primary;
+    background-color: rgba(109, 210, 255, 0.12);
+    box-shadow: 0 0 10px rgba(109, 210, 255, 0.25);
+}
+
+.light-theme .dms-paper-preview-card {
+    background-color: @dms_surface_container_high_light;
+    border-color: @dms_outline_light;
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-paper-preview-card.selected {
+    border-color: @dms_primary_light;
+    background-color: rgba(0, 102, 139, 0.08);
+}
+
+/* 8. Badge Formato Documento (FlowBox Card) */
+.dms-format-badge {
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+    letter-spacing: 0.3px;
+}
+
+.dms-format-badge.badge-notebook {
+    background-color: rgba(109, 210, 255, 0.16);
+    color: @dms_primary;
+    border: 1px solid rgba(109, 210, 255, 0.3);
+}
+
+.dms-format-badge.badge-whiteboard {
+    background-color: rgba(121, 217, 165, 0.16);
+    color: @dms_accent_mint;
+    border: 1px solid rgba(121, 217, 165, 0.3);
+}
+
+.light-theme .dms-format-badge.badge-notebook {
+    background-color: rgba(0, 102, 139, 0.12);
+    color: @dms_primary_light;
+    border-color: rgba(0, 102, 139, 0.25);
+}
+
+.light-theme .dms-format-badge.badge-whiteboard {
+    background-color: rgba(30, 126, 76, 0.12);
+    color: #1e7e4c;
+    border-color: rgba(30, 126, 76, 0.25);
+}
+
+/* 9. Sidebar, Popover e Azioni Cartelle */
+.dms-sidebar-separator {
+    background-color: @dms_outline;
+    min-width: 1px;
+}
+
+.light-theme .dms-sidebar-separator {
+    background-color: @dms_outline_light;
+}
+
+.dms-btn-new-folder {
+    min-height: 34px;
+    border-radius: 8px;
+    background-color: transparent;
+    border: 1px dashed @dms_outline_variant;
+    color: @dms_primary;
+    font-weight: 600;
+    font-size: 12.5px;
+    transition: all 150ms ease-in-out;
+}
+
+.dms-btn-new-folder:hover {
+    background-color: rgba(109, 210, 255, 0.1);
+    border-color: @dms_primary;
+}
+
+.light-theme .dms-btn-new-folder {
+    color: @dms_primary_light;
+    border-color: @dms_outline_variant_light;
+}
+
+.light-theme .dms-btn-new-folder:hover {
+    background-color: rgba(0, 102, 139, 0.08);
+    border-color: @dms_primary_light;
+}
+
+.dms-popover-item {
+    min-height: 32px;
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 13px;
+    color: @dms_text_primary;
+    background: transparent;
+    border: none;
+    transition: background-color 120ms ease;
+}
+
+.dms-popover-item:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+.dms-popover-item.destructive-action:hover {
+    background-color: rgba(255, 180, 171, 0.15);
+    color: @dms_accent_coral;
+}
+
+.light-theme .dms-popover-item {
+    color: @dms_text_primary_light;
+}
+
+.light-theme .dms-popover-item:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+}
+
+.dms-flowbox-child {
+    padding: 0;
+    background: transparent;
+    outline: none;
+}
+
 

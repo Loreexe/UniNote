@@ -155,6 +155,10 @@ impl UniNoteWindow {
                     .css_classes(["uninote-dialog", "dms-dialog"])
                     .build();
 
+                if !libadwaita::StyleManager::default().is_dark() {
+                    dlg.add_css_class("light-theme");
+                }
+
                 let box_content = GtkBox::builder()
                     .orientation(Orientation::Vertical)
                     .spacing(16)
@@ -187,16 +191,27 @@ impl UniNoteWindow {
                     .margin_top(12)
                     .build();
 
+                let btn_cancel = Button::builder()
+                    .label("Annulla")
+                    .css_classes(["dms-dialog-btn"])
+                    .build();
+
                 let btn_discard = Button::builder()
                     .label("Elimina")
-                    .css_classes(["destructive-action", "dms-action-btn"])
+                    .css_classes(["destructive-action", "dms-dialog-btn"])
                     .build();
 
                 let btn_save = Button::builder()
-                    .label("Conserva")
+                    .label("Conserva ed Esci")
                     .css_classes(["suggested-action", "dms-btn-primary"])
                     .build();
 
+                let dlg_cancel = dlg.clone();
+                btn_cancel.connect_clicked(move |_| {
+                    dlg_cancel.close();
+                });
+
+                act_box.append(&btn_cancel);
                 act_box.append(&btn_discard);
                 act_box.append(&btn_save);
 
@@ -249,14 +264,14 @@ impl UniNoteWindow {
         overlay.add_overlay(&badge_btn);
 
         // =========================================================================
-        // 2. ISOLA CENTRALE STRUMENTI (Top-Center, y: 18, larghezza 447px)
+        // 2. ISOLA CENTRALE STRUMENTI (Top-Center, y: 16)
         // =========================================================================
         let island_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
             .spacing(4)
             .valign(Align::Start)
             .halign(Align::Center)
-            .margin_top(18)
+            .margin_top(16)
             .css_classes(["dms-pill"])
             .build();
 
@@ -440,7 +455,7 @@ impl UniNoteWindow {
         island_box.append(&sep2);
 
         // --- Gruppo Strumenti di Disegno ---
-        let tools: [(IconKind, ActiveTool, &str); 7] = [
+        let tools: [(IconKind, ActiveTool, &str); 8] = [
             (IconKind::PenTool, ActiveTool::Pen, "Penna Stilografica"),
             (
                 IconKind::Eraser,
@@ -455,7 +470,7 @@ impl UniNoteWindow {
             (
                 IconKind::Select,
                 ActiveTool::Select,
-                "Selezione (Lazo / Rettangolo)",
+                "Selezione: Lazo Libero (clicca per Rettangolo)",
             ),
             (
                 IconKind::Type,
@@ -463,6 +478,11 @@ impl UniNoteWindow {
                 "Testo & Formule (Markdown/LaTeX)",
             ),
             (IconKind::Line, ActiveTool::Line, "Linea Dritta"),
+            (
+                IconKind::Shapes,
+                ActiveTool::Shapes,
+                "Forme Geometriche (Rettangolo/Cerchio)",
+            ),
             (
                 IconKind::LaserPointer,
                 ActiveTool::LaserPointer,
@@ -526,6 +546,16 @@ impl UniNoteWindow {
                         }
                     };
                     c_tool.set_selection_mode(new_mode);
+                    let (tip, sel_icon) = match new_mode {
+                        uninote_stroke::selection::SelectionMode::Lasso => {
+                            ("Selezione: Lazo Libero (clicca per Rettangolo)", IconKind::Select)
+                        }
+                        uninote_stroke::selection::SelectionMode::Rectangle => {
+                            ("Selezione: Rettangolare (clicca per Lazo)", IconKind::SelectRect)
+                        }
+                    };
+                    btn_self.set_tooltip_text(Some(tip));
+                    btn_self.set_child(Some(&create_icon(sel_icon, 16, None)));
                 } else if tool_kind == ActiveTool::Eraser && is_already_active {
                     pop_click.popup();
                 } else if tool_kind == ActiveTool::LaserPointer && is_already_active {
@@ -549,8 +579,8 @@ impl UniNoteWindow {
                 ActiveTool::Select => 3,
                 ActiveTool::Text => 4,
                 ActiveTool::Line => 5,
-                ActiveTool::LaserPointer => 6,
                 ActiveTool::Shapes => 6,
+                ActiveTool::LaserPointer => 7,
             };
             for (idx, b) in all_tools_sync.borrow().iter().enumerate() {
                 if idx == target_idx {
@@ -951,7 +981,7 @@ impl UniNoteWindow {
         overlay.add_overlay(&island_box);
 
         // =========================================================================
-        // 3. AZIONI RAPIDE IN ALTO A DESTRA (x: 1216, y: 20)
+        // 3. AZIONI RAPIDE IN ALTO A DESTRA (y: 16)
         // =========================================================================
         let right_actions_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
@@ -959,7 +989,7 @@ impl UniNoteWindow {
             .valign(Align::Start)
             .halign(Align::End)
             .margin_end(22)
-            .margin_top(20)
+            .margin_top(16)
             .build();
 
         // Pulsante Esporta / Salva
@@ -1843,15 +1873,22 @@ impl UniNoteWindow {
 
         let c_page_nav = canvas.clone();
         let lbl_page_clone1 = lbl_page.clone();
+        let btn_prev_page_clone = btn_prev_page.clone();
+        let btn_next_page_clone = btn_next_page.clone();
         let update_page_lbl = {
             let c = c_page_nav.clone();
             let lbl = lbl_page_clone1.clone();
+            let bp = btn_prev_page_clone.clone();
+            let bn = btn_next_page_clone.clone();
             move || {
-                let cur = c.current_page_index() + 1;
+                let cur = c.current_page_index();
                 let tot = c.total_pages();
-                lbl.set_label(&format!("Pagina {} di {}", cur, tot));
+                lbl.set_label(&format!("Pagina {} di {}", cur + 1, tot));
+                bp.set_sensitive(cur > 0);
+                bn.set_sensitive(cur + 1 < tot);
             }
         };
+        update_page_lbl();
 
         let c_prev = canvas.clone();
         let upd_prev = update_page_lbl.clone();
@@ -2172,15 +2209,17 @@ impl UniNoteWindow {
         let c_z_reset = canvas.clone();
         let lbl_z3 = lbl_zoom.clone();
         let click_gesture = GestureClick::new();
-        click_gesture.connect_pressed(move |_, _, _, _| {
-            let is_wb = c_z_reset.state().borrow().document.format == DocumentFormat::Whiteboard;
-            if is_wb {
-                c_z_reset.center_content();
-            } else {
-                c_z_reset.reset_zoom();
+        click_gesture.connect_pressed(move |_, n_press, _, _| {
+            if n_press == 2 {
+                let is_wb = c_z_reset.state().borrow().document.format == DocumentFormat::Whiteboard;
+                if is_wb {
+                    c_z_reset.center_content();
+                } else {
+                    c_z_reset.reset_zoom();
+                }
+                let z = (c_z_reset.state().borrow().viewport.zoom * 100.0).round() as usize;
+                lbl_z3.set_label(&format!("{}%", z));
             }
-            let z = (c_z_reset.state().borrow().viewport.zoom * 100.0).round() as usize;
-            lbl_z3.set_label(&format!("{}%", z));
         });
         lbl_zoom.add_controller(click_gesture);
 

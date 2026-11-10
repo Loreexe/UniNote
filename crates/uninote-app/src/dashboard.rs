@@ -8,11 +8,11 @@ use gtk4::gio;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, DragSource, DropDown, DropTarget, Entry, FileDialog, FlowBox,
+    Align, Box as GtkBox, Button, DragSource, DropTarget, Entry, FileDialog, FlowBox,
     FlowBoxChild, GestureClick, Label, ListBox, ListBoxRow, Orientation, Picture, ScrolledWindow,
     SearchEntry, Window,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -143,6 +143,10 @@ pub fn show_confirmation_dialog<F>(
         .css_classes(["uninote-dialog", "dms-dialog"])
         .build();
 
+    if !libadwaita::StyleManager::default().is_dark() {
+        dlg.add_css_class("light-theme");
+    }
+
     if let Some(p) = parent {
         dlg.set_transient_for(Some(p));
     }
@@ -172,7 +176,7 @@ pub fn show_confirmation_dialog<F>(
 
     let btn_cancel = Button::builder()
         .label("Annulla")
-        .css_classes(["dms-action-btn"])
+        .css_classes(["dms-dialog-btn"])
         .build();
 
     let confirm_builder = Button::builder().label(confirm_label);
@@ -811,6 +815,10 @@ impl CreateFolderDialog {
             .css_classes(["uninote-dialog", "dms-dialog"])
             .build();
 
+        if !libadwaita::StyleManager::default().is_dark() {
+            window.add_css_class("light-theme");
+        }
+
         if let Some(p) = parent {
             window.set_transient_for(Some(p.as_ref()));
         }
@@ -865,7 +873,7 @@ impl CreateFolderDialog {
 
         let btn_cancel = Button::builder()
             .label("Annulla")
-            .css_classes(["dms-action-btn"])
+            .css_classes(["dms-dialog-btn"])
             .build();
 
         let btn_create = Button::builder()
@@ -950,10 +958,14 @@ impl CreateDocumentDialog {
         let window = Window::builder()
             .title("Nuovo Documento — UniNote")
             .modal(true)
-            .default_width(520)
-            .default_height(500)
+            .default_width(540)
+            .default_height(540)
             .css_classes(["uninote-dialog", "dms-dialog"])
             .build();
+
+        if !libadwaita::StyleManager::default().is_dark() {
+            window.add_css_class("light-theme");
+        }
 
         if let Some(p) = parent {
             window.set_transient_for(Some(p.as_ref()));
@@ -961,7 +973,7 @@ impl CreateDocumentDialog {
 
         let main_box = GtkBox::builder()
             .orientation(Orientation::Vertical)
-            .spacing(18)
+            .spacing(16)
             .margin_start(28)
             .margin_end(28)
             .margin_top(24)
@@ -971,7 +983,7 @@ impl CreateDocumentDialog {
         let lbl_title = Label::builder()
             .label("Crea Nuovo Documento")
             .xalign(0.0)
-            .css_classes(["title-1", "brand-title"])
+            .css_classes(["title-1", "heading"])
             .build();
         main_box.append(&lbl_title);
 
@@ -1014,19 +1026,56 @@ impl CreateDocumentDialog {
 
         let format_box = GtkBox::builder()
             .orientation(Orientation::Horizontal)
-            .spacing(16)
+            .spacing(14)
             .homogeneous(true)
             .build();
 
-        let btn_notebook = Button::builder()
-            .label("Quaderno A4\nPagine discrete standard")
-            .css_classes(["dms-format-card", "selected"])
-            .build();
+        let make_format_card = |icon_kind: IconKind, title: &str, subtitle: &str| -> (Button, GtkBox) {
+            let card_content = GtkBox::builder()
+                .orientation(Orientation::Vertical)
+                .spacing(4)
+                .valign(Align::Center)
+                .build();
+            let header_row = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(8)
+                .valign(Align::Center)
+                .build();
+            header_row.append(&create_icon(icon_kind, 20, None));
+            header_row.append(
+                &Label::builder()
+                    .label(title)
+                    .css_classes(["heading"])
+                    .xalign(0.0)
+                    .build(),
+            );
+            card_content.append(&header_row);
+            card_content.append(
+                &Label::builder()
+                    .label(subtitle)
+                    .css_classes(["dim-label"])
+                    .xalign(0.0)
+                    .build(),
+            );
+            let btn = Button::builder()
+                .child(&card_content)
+                .css_classes(["dms-format-card"])
+                .build();
+            (btn, card_content)
+        };
 
-        let btn_whiteboard = Button::builder()
-            .label("Lavagna Infinita\nSpazio libero (-∞, +∞)")
-            .css_classes(["dms-format-card"])
-            .build();
+        let (btn_notebook, _) = make_format_card(
+            IconKind::Page,
+            "Quaderno A4",
+            "Pagine discrete standard verticali",
+        );
+        btn_notebook.add_css_class("selected");
+
+        let (btn_whiteboard, _) = make_format_card(
+            IconKind::Line,
+            "Lavagna Infinita",
+            "Spazio libero continuo (-∞, +∞)",
+        );
 
         format_box.append(&btn_notebook);
         format_box.append(&btn_whiteboard);
@@ -1034,41 +1083,118 @@ impl CreateDocumentDialog {
 
         let selected_format = Rc::new(RefCell::new(DocumentFormat::Notebook));
 
+        // Sfondo Pagina (valido per Quaderno A4) - 3 Card Selezionabili
+        let bg_container = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(8)
+            .build();
+
+        let lbl_bg = Label::builder()
+            .label("Sfondo Pagina Quaderno:")
+            .xalign(0.0)
+            .css_classes(["heading"])
+            .build();
+        bg_container.append(&lbl_bg);
+
+        let paper_cards_box = GtkBox::builder()
+            .orientation(Orientation::Horizontal)
+            .spacing(10)
+            .homogeneous(true)
+            .build();
+
+        let selected_bg = Rc::new(Cell::new(0u32)); // 0 = Grid, 1 = Ruled, 2 = Blank
+
+        let make_paper_card = |title: &str, subtitle: &str| -> Button {
+            let c = GtkBox::builder()
+                .orientation(Orientation::Vertical)
+                .spacing(2)
+                .valign(Align::Center)
+                .build();
+            c.append(
+                &Label::builder()
+                    .label(title)
+                    .css_classes(["heading"])
+                    .xalign(0.5)
+                    .build(),
+            );
+            c.append(
+                &Label::builder()
+                    .label(subtitle)
+                    .css_classes(["dim-label"])
+                    .xalign(0.5)
+                    .build(),
+            );
+            Button::builder()
+                .child(&c)
+                .css_classes(["dms-paper-preview-card"])
+                .build()
+        };
+
+        let btn_bg_grid = make_paper_card("Quadretti", "5 mm");
+        btn_bg_grid.add_css_class("selected");
+        let btn_bg_ruled = make_paper_card("Righe", "8 mm");
+        let btn_bg_blank = make_paper_card("Bianco", "Naturale");
+
+        paper_cards_box.append(&btn_bg_grid);
+        paper_cards_box.append(&btn_bg_ruled);
+        paper_cards_box.append(&btn_bg_blank);
+        bg_container.append(&paper_cards_box);
+        main_box.append(&bg_container);
+
+        let s_bg_g = selected_bg.clone();
+        let b_g1 = btn_bg_grid.clone();
+        let b_r1 = btn_bg_ruled.clone();
+        let b_b1 = btn_bg_blank.clone();
+        btn_bg_grid.connect_clicked(move |_| {
+            s_bg_g.set(0);
+            b_g1.add_css_class("selected");
+            b_r1.remove_css_class("selected");
+            b_b1.remove_css_class("selected");
+        });
+
+        let s_bg_r = selected_bg.clone();
+        let b_g2 = btn_bg_grid.clone();
+        let b_r2 = btn_bg_ruled.clone();
+        let b_b2 = btn_bg_blank.clone();
+        btn_bg_ruled.connect_clicked(move |_| {
+            s_bg_r.set(1);
+            b_r2.add_css_class("selected");
+            b_g2.remove_css_class("selected");
+            b_b2.remove_css_class("selected");
+        });
+
+        let s_bg_b = selected_bg.clone();
+        let b_g3 = btn_bg_grid.clone();
+        let b_r3 = btn_bg_ruled.clone();
+        let b_b3 = btn_bg_blank.clone();
+        btn_bg_blank.connect_clicked(move |_| {
+            s_bg_b.set(2);
+            b_b3.add_css_class("selected");
+            b_g3.remove_css_class("selected");
+            b_r3.remove_css_class("selected");
+        });
+
         let sf_nb = selected_format.clone();
         let b_nb = btn_notebook.clone();
         let b_wb = btn_whiteboard.clone();
+        let bg_cont_nb = bg_container.clone();
         btn_notebook.connect_clicked(move |_| {
             *sf_nb.borrow_mut() = DocumentFormat::Notebook;
             b_nb.add_css_class("selected");
             b_wb.remove_css_class("selected");
+            bg_cont_nb.set_visible(true);
         });
 
         let sf_wb = selected_format.clone();
         let b_nb2 = btn_notebook.clone();
         let b_wb2 = btn_whiteboard.clone();
+        let bg_cont_wb = bg_container.clone();
         btn_whiteboard.connect_clicked(move |_| {
             *sf_wb.borrow_mut() = DocumentFormat::Whiteboard;
             b_wb2.add_css_class("selected");
             b_nb2.remove_css_class("selected");
+            bg_cont_wb.set_visible(false);
         });
-
-        // Sfondo Pagina (valido per Quaderno A4)
-        let lbl_bg = Label::builder()
-            .label("Sfondo Pagina:")
-            .xalign(0.0)
-            .css_classes(["heading"])
-            .build();
-        main_box.append(&lbl_bg);
-
-        let bg_options = [
-            "Quadretti Matematici (5mm)",
-            "Righe Universitarie (8mm)",
-            "Bianco Naturale",
-        ];
-        let dropdown_bg = DropDown::from_strings(&bg_options);
-        dropdown_bg.set_selected(0);
-        dropdown_bg.add_css_class("dms-dropdown");
-        main_box.append(&dropdown_bg);
 
         // Pulsanti azione
         let actions_box = GtkBox::builder()
@@ -1080,12 +1206,12 @@ impl CreateDocumentDialog {
 
         let btn_cancel = Button::builder()
             .label("Annulla")
-            .css_classes(["dms-action-btn"])
+            .css_classes(["dms-dialog-btn"])
             .build();
 
         let btn_create = Button::builder()
             .label("Crea Documento")
-            .css_classes(["suggested-action", "dms-btn-primary"])
+            .css_classes(["dms-btn-primary"])
             .build();
 
         actions_box.append(&btn_cancel);
@@ -1100,6 +1226,7 @@ impl CreateDocumentDialog {
         let win_create = window.clone();
         let callback = Rc::new(on_created);
         let folder_for_create = target_folder.clone();
+        let s_bg_final = selected_bg.clone();
         btn_create.connect_clicked(move |_| {
             let title = entry_name.text().to_string();
             let final_title = if title.trim().is_empty() {
@@ -1109,13 +1236,17 @@ impl CreateDocumentDialog {
                 title.trim().to_string()
             };
             let format = *selected_format.borrow();
-            let background = match dropdown_bg.selected() {
-                1 => PageBackground::Ruled {
-                    line_spacing: 22.68,
-                    margin_left: 35.0,
-                },
-                2 => PageBackground::Blank,
-                _ => PageBackground::Grid { grid_size: 14.17 },
+            let background = if format == DocumentFormat::Whiteboard {
+                PageBackground::Blank
+            } else {
+                match s_bg_final.get() {
+                    1 => PageBackground::Ruled {
+                        line_spacing: 22.68,
+                        margin_left: 35.0,
+                    },
+                    2 => PageBackground::Blank,
+                    _ => PageBackground::Grid { grid_size: 14.17 },
+                }
             };
 
             win_create.close();
@@ -1200,7 +1331,7 @@ impl UniNoteDashboard {
             .spacing(12)
             .width_request(260)
             .margin_start(16)
-            .margin_end(16)
+            .margin_end(0)
             .margin_top(20)
             .margin_bottom(20)
             .css_classes(["dms-dashboard-sidebar"])
@@ -1216,15 +1347,25 @@ impl UniNoteDashboard {
             .label("Cartelle")
             .xalign(0.0)
             .hexpand(true)
-            .css_classes(["title-3", "heading", "dms-sidebar-header"])
+            .css_classes(["title-3", "heading"])
             .build();
         sidebar_header_box.append(&lbl_sidebar_title);
         sidebar_box.append(&sidebar_header_box);
 
-        let btn_new_folder = Button::builder()
-            .label("+ Nuova Cartella")
-            .css_classes(["dms-btn-new-folder", "suggested-action", "dms-btn-primary"])
-            .build();
+        let btn_new_folder = {
+            let b = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(6)
+                .valign(Align::Center)
+                .halign(Align::Center)
+                .build();
+            b.append(&create_icon(IconKind::FolderPlus, 16, None));
+            b.append(&Label::builder().label("Nuova Cartella").build());
+            Button::builder()
+                .child(&b)
+                .css_classes(["dms-btn-new-folder"])
+                .build()
+        };
         sidebar_box.append(&btn_new_folder);
 
         let folder_list_box = GtkBox::builder()
@@ -1239,14 +1380,6 @@ impl UniNoteDashboard {
             .vexpand(true)
             .build();
         sidebar_box.append(&folder_scroll);
-
-        let btn_connect_cloud = Button::builder()
-            .label("☁️ Gestisci Cloud...")
-            .css_classes(["flat", "dms-btn-connect-cloud"])
-            .margin_top(8)
-            .margin_bottom(4)
-            .build();
-        sidebar_box.append(&btn_connect_cloud);
 
         main_box.append(&sidebar_box);
 
@@ -1266,7 +1399,7 @@ impl UniNoteDashboard {
             .hexpand(true)
             .vexpand(true)
             .margin_start(24)
-            .margin_end(28)
+            .margin_end(24)
             .margin_top(20)
             .margin_bottom(28)
             .build();
@@ -1274,7 +1407,7 @@ impl UniNoteDashboard {
         // Top Bar
         let top_bar = GtkBox::builder()
             .orientation(Orientation::Horizontal)
-            .spacing(16)
+            .spacing(12)
             .valign(Align::Center)
             .build();
 
@@ -1314,7 +1447,7 @@ impl UniNoteDashboard {
 
         let search_entry = SearchEntry::builder()
             .placeholder_text("Cerca quaderni e appunti...")
-            .width_request(340)
+            .width_request(320)
             .css_classes(["dms-search-entry"])
             .build();
         top_bar.append(&search_entry);
@@ -1322,32 +1455,47 @@ impl UniNoteDashboard {
         let spacer_right = GtkBox::builder().hexpand(true).build();
         top_bar.append(&spacer_right);
 
-        let btn_new_doc = Button::builder()
-            .label("+ Nuovo Documento")
-            .css_classes(["suggested-action", "dms-btn-primary"])
-            .valign(Align::Center)
-            .build();
+        let btn_new_doc = {
+            let b = GtkBox::builder().orientation(Orientation::Horizontal).spacing(6).valign(Align::Center).build();
+            b.append(&create_icon(IconKind::Add, 16, None));
+            b.append(&Label::builder().label("Nuovo Documento").build());
+            Button::builder()
+                .child(&b)
+                .css_classes(["dms-header-btn-primary"])
+                .valign(Align::Center)
+                .build()
+        };
         top_bar.append(&btn_new_doc);
 
-        let btn_import_pdf = Button::builder()
-            .label("Nuovo da PDF...")
-            .tooltip_text("Importa dispense o slide accademiche creando un quaderno")
-            .css_classes(["dms-action-btn"])
-            .valign(Align::Center)
-            .build();
+        let btn_import_pdf = {
+            let b = GtkBox::builder().orientation(Orientation::Horizontal).spacing(6).valign(Align::Center).build();
+            b.append(&create_icon(IconKind::Page, 16, None));
+            b.append(&Label::new(Some("Nuovo da PDF")));
+            Button::builder()
+                .child(&b)
+                .tooltip_text("Importa dispense o slide accademiche creando un quaderno")
+                .css_classes(["dms-header-btn-secondary"])
+                .valign(Align::Center)
+                .build()
+        };
         top_bar.append(&btn_import_pdf);
 
-        let btn_open_file = Button::builder()
-            .label("Apri File...")
-            .css_classes(["dms-action-btn"])
-            .valign(Align::Center)
-            .build();
+        let btn_open_file = {
+            let b = GtkBox::builder().orientation(Orientation::Horizontal).spacing(6).valign(Align::Center).build();
+            b.append(&create_icon(IconKind::FolderOpen, 16, None));
+            b.append(&Label::new(Some("Apri File")));
+            Button::builder()
+                .child(&b)
+                .css_classes(["dms-header-btn-secondary"])
+                .valign(Align::Center)
+                .build()
+        };
         top_bar.append(&btn_open_file);
 
         let btn_settings = Button::builder()
             .child(&create_icon(IconKind::Settings, 18, None))
             .tooltip_text("Impostazioni UniNote")
-            .css_classes(["dms-action-btn"])
+            .css_classes(["dms-header-btn-icon"])
             .valign(Align::Center)
             .build();
         top_bar.append(&btn_settings);
@@ -1454,7 +1602,6 @@ impl UniNoteDashboard {
             btn_import_pdf,
             btn_open_file,
             btn_settings,
-            btn_connect_cloud,
         );
         dashboard.refresh();
 
@@ -1462,7 +1609,6 @@ impl UniNoteDashboard {
     }
 
     /// Collega i segnali di ricerca, apertura file, importazione PDF, cartelle e creazione documento.
-    #[allow(clippy::too_many_arguments)]
     fn wire_signals(
         &self,
         btn_new_doc: Button,
@@ -1471,7 +1617,6 @@ impl UniNoteDashboard {
         btn_import: Button,
         btn_open: Button,
         btn_settings: Button,
-        btn_connect_cloud: Button,
     ) {
         let store_ref = self.store.clone();
         let flow_ref = self.flow_box.clone();
@@ -1496,14 +1641,7 @@ impl UniNoteDashboard {
             let root_f = root_folder.clone();
             let od = open_cb.clone();
             Rc::new(move |target: PathBuf| {
-                let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
-                let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
-                let is_valid = is_safe_subpath(&root_f, &target)
-                    || target == root_f
-                    || is_safe_subpath(&nc_dir, &target)
-                    || target == nc_dir
-                    || is_safe_subpath(&gd_dir, &target)
-                    || target == gd_dir;
+                let is_valid = is_safe_subpath(&root_f, &target) || target == root_f;
                 if is_valid {
                     *cur_f.borrow_mut() = target;
                 } else {
@@ -1563,38 +1701,15 @@ impl UniNoteDashboard {
         let nav_cb_up = nav_cb.clone();
         btn_up.connect_clicked(move |_| {
             let cur = cur_f_up.borrow().clone();
-            let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
-            let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
-            if cur == nc_dir || cur == gd_dir {
-                nav_cb_up(root_f_up.clone());
-            } else if cur != root_f_up {
+            if cur != root_f_up {
                 if let Some(parent) = cur.parent() {
-                    if parent.starts_with(&root_f_up)
-                        || parent == nc_dir
-                        || is_safe_subpath(&nc_dir, parent)
-                        || parent == gd_dir
-                        || is_safe_subpath(&gd_dir, parent)
-                    {
+                    if parent.starts_with(&root_f_up) {
                         nav_cb_up(parent.to_path_buf());
                         return;
                     }
                 }
                 nav_cb_up(root_f_up.clone());
             }
-        });
-
-        // Pulsante Gestisci Cloud
-        let btn_cloud_clone = btn_connect_cloud.clone();
-        let ref_cb_cloud = refresh_cb.clone();
-        btn_connect_cloud.connect_clicked(move |_| {
-            let parent_win = btn_cloud_clone
-                .root()
-                .and_then(|r| r.downcast::<Window>().ok());
-            let r_cb = ref_cb_cloud.clone();
-            let dialog = crate::cloud::ConnectCloudDialog::new(parent_win.as_ref(), move || {
-                r_cb();
-            });
-            dialog.present();
         });
 
         // Pulsante + Nuova Cartella
@@ -1789,14 +1904,7 @@ impl UniNoteDashboard {
             let od = od_rc.clone();
             let q = q_string.clone();
             Rc::new(move |target: PathBuf| {
-                let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
-                let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
-                let is_valid = is_safe_subpath(&root_f, &target)
-                    || target == root_f
-                    || is_safe_subpath(&nc_dir, &target)
-                    || target == nc_dir
-                    || is_safe_subpath(&gd_dir, &target)
-                    || target == gd_dir;
+                let is_valid = is_safe_subpath(&root_f, &target) || target == root_f;
                 if is_valid {
                     *cur_f.borrow_mut() = target;
                 } else {
@@ -1975,232 +2083,6 @@ impl UniNoteDashboard {
             attach_folder_drop_target(&item_box, path.clone(), store, refresh_cb);
             folder_list_box.append(&item_box);
         }
-
-        // 3. Sezione Cloud
-        let cloud_settings = crate::cloud::CloudSyncSettings::load();
-        let has_cloud = cloud_settings.nextcloud.is_some() || cloud_settings.google_drive.is_some();
-
-        if has_cloud {
-            let cloud_hdr = Label::builder()
-                .label("Servizi Cloud")
-                .xalign(0.0)
-                .margin_start(12)
-                .margin_top(14)
-                .margin_bottom(4)
-                .css_classes(["dim-label", "caption", "dms-sidebar-section-header"])
-                .build();
-            folder_list_box.append(&cloud_hdr);
-
-            if let Some(ref nc) = cloud_settings.nextcloud {
-                let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
-                let is_active = current_folder == nc_dir;
-                let item_box = GtkBox::builder()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(8)
-                    .margin_start(8)
-                    .margin_end(8)
-                    .margin_top(2)
-                    .margin_bottom(2)
-                    .css_classes(if is_active {
-                        vec!["dms-sidebar-item", "active"]
-                    } else {
-                        vec!["dms-sidebar-item"]
-                    })
-                    .build();
-
-                let icon = create_icon(IconKind::Cloud, 16, None);
-                item_box.append(&icon);
-
-                let lbl = Label::builder()
-                    .label(format!("Nextcloud ({})", nc.username))
-                    .xalign(0.0)
-                    .hexpand(true)
-                    .ellipsize(gtk4::pango::EllipsizeMode::End)
-                    .css_classes(["dms-sidebar-item-label"])
-                    .build();
-                item_box.append(&lbl);
-
-                let count = if let Ok((_, docs)) = scan_directory(&nc_dir) {
-                    docs.len()
-                } else {
-                    0
-                };
-                let badge = Label::builder()
-                    .label(format!("{}", count))
-                    .css_classes(["dms-sidebar-item-badge"])
-                    .build();
-                item_box.append(&badge);
-
-                let gesture = GestureClick::new();
-                let nav = nav_cb.clone();
-                let target_p = nc_dir.clone();
-                gesture.connect_pressed(move |_, _, _, _| {
-                    nav(target_p.clone());
-                });
-                item_box.add_controller(gesture);
-                attach_folder_drop_target(&item_box, nc_dir.clone(), store, refresh_cb);
-                folder_list_box.append(&item_box);
-
-                let mut nc_subfolders = Vec::new();
-                Self::collect_subfolders_recursive(&nc_dir, 2, &mut nc_subfolders);
-                for (path, name, count, depth) in nc_subfolders {
-                    let is_sub_active = current_folder == path;
-                    let sub_box = GtkBox::builder()
-                        .orientation(Orientation::Horizontal)
-                        .spacing(8)
-                        .margin_start(8 + (depth - 1) as i32 * 14)
-                        .margin_end(8)
-                        .margin_top(2)
-                        .margin_bottom(2)
-                        .css_classes(if is_sub_active {
-                            vec!["dms-sidebar-item", "active"]
-                        } else {
-                            vec!["dms-sidebar-item"]
-                        })
-                        .build();
-
-                    sub_box.append(&create_icon(
-                        if is_sub_active {
-                            IconKind::FolderOpen
-                        } else {
-                            IconKind::Folder
-                        },
-                        16,
-                        None,
-                    ));
-
-                    let sub_lbl = Label::builder()
-                        .label(&name)
-                        .xalign(0.0)
-                        .hexpand(true)
-                        .ellipsize(gtk4::pango::EllipsizeMode::End)
-                        .css_classes(["dms-sidebar-item-label"])
-                        .build();
-                    sub_box.append(&sub_lbl);
-
-                    let sub_badge = Label::builder()
-                        .label(format!("{}", count))
-                        .css_classes(["dms-sidebar-item-badge"])
-                        .build();
-                    sub_box.append(&sub_badge);
-
-                    let g = GestureClick::new();
-                    let n = nav_cb.clone();
-                    let tp = path.clone();
-                    g.connect_pressed(move |_, _, _, _| {
-                        n(tp.clone());
-                    });
-                    sub_box.add_controller(g);
-                    attach_folder_drop_target(&sub_box, path.clone(), store, refresh_cb);
-                    folder_list_box.append(&sub_box);
-                }
-            }
-
-            if let Some(ref gd) = cloud_settings.google_drive {
-                let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
-                let is_active = current_folder == gd_dir;
-                let item_box = GtkBox::builder()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(8)
-                    .margin_start(8)
-                    .margin_end(8)
-                    .margin_top(2)
-                    .margin_bottom(2)
-                    .css_classes(if is_active {
-                        vec!["dms-sidebar-item", "active"]
-                    } else {
-                        vec!["dms-sidebar-item"]
-                    })
-                    .build();
-
-                let icon = create_icon(IconKind::Cloud, 16, None);
-                item_box.append(&icon);
-
-                let lbl = Label::builder()
-                    .label(format!("Google Drive ({})", gd.account_email))
-                    .xalign(0.0)
-                    .hexpand(true)
-                    .ellipsize(gtk4::pango::EllipsizeMode::End)
-                    .css_classes(["dms-sidebar-item-label"])
-                    .build();
-                item_box.append(&lbl);
-
-                let count = if let Ok((_, docs)) = scan_directory(&gd_dir) {
-                    docs.len()
-                } else {
-                    0
-                };
-                let badge = Label::builder()
-                    .label(format!("{}", count))
-                    .css_classes(["dms-sidebar-item-badge"])
-                    .build();
-                item_box.append(&badge);
-
-                let gesture = GestureClick::new();
-                let nav = nav_cb.clone();
-                let target_p = gd_dir.clone();
-                gesture.connect_pressed(move |_, _, _, _| {
-                    nav(target_p.clone());
-                });
-                item_box.add_controller(gesture);
-                attach_folder_drop_target(&item_box, gd_dir.clone(), store, refresh_cb);
-                folder_list_box.append(&item_box);
-
-                let mut gd_subfolders = Vec::new();
-                Self::collect_subfolders_recursive(&gd_dir, 2, &mut gd_subfolders);
-                for (path, name, count, depth) in gd_subfolders {
-                    let is_sub_active = current_folder == path;
-                    let sub_box = GtkBox::builder()
-                        .orientation(Orientation::Horizontal)
-                        .spacing(8)
-                        .margin_start(8 + (depth - 1) as i32 * 14)
-                        .margin_end(8)
-                        .margin_top(2)
-                        .margin_bottom(2)
-                        .css_classes(if is_sub_active {
-                            vec!["dms-sidebar-item", "active"]
-                        } else {
-                            vec!["dms-sidebar-item"]
-                        })
-                        .build();
-
-                    sub_box.append(&create_icon(
-                        if is_sub_active {
-                            IconKind::FolderOpen
-                        } else {
-                            IconKind::Folder
-                        },
-                        16,
-                        None,
-                    ));
-
-                    let sub_lbl = Label::builder()
-                        .label(&name)
-                        .xalign(0.0)
-                        .hexpand(true)
-                        .ellipsize(gtk4::pango::EllipsizeMode::End)
-                        .css_classes(["dms-sidebar-item-label"])
-                        .build();
-                    sub_box.append(&sub_lbl);
-
-                    let sub_badge = Label::builder()
-                        .label(format!("{}", count))
-                        .css_classes(["dms-sidebar-item-badge"])
-                        .build();
-                    sub_box.append(&sub_badge);
-
-                    let g = GestureClick::new();
-                    let n = nav_cb.clone();
-                    let tp = path.clone();
-                    g.connect_pressed(move |_, _, _, _| {
-                        n(tp.clone());
-                    });
-                    sub_box.add_controller(g);
-                    attach_folder_drop_target(&sub_box, path.clone(), store, refresh_cb);
-                    folder_list_box.append(&sub_box);
-                }
-            }
-        }
     }
 
     fn collect_subfolders_recursive(
@@ -2228,19 +2110,9 @@ impl UniNoteDashboard {
             breadcrumbs_bar.remove(&child);
         }
 
-        let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
-        let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
-
         let is_at_root = current_folder == root_folder;
-        let is_at_nc_root = current_folder == nc_dir;
-        let is_at_gd_root = current_folder == gd_dir;
 
-        let in_nc = current_folder == nc_dir || is_safe_subpath(&nc_dir, current_folder);
-        let in_gd = current_folder == gd_dir || is_safe_subpath(&gd_dir, current_folder);
-
-        let is_at_any_root = is_at_root || is_at_nc_root || is_at_gd_root;
-
-        if !is_at_any_root {
+        if !is_at_root {
             btn_up.set_visible(true);
             btn_up.set_sensitive(true);
             breadcrumbs_bar.append(btn_up);
@@ -2249,157 +2121,53 @@ impl UniNoteDashboard {
             btn_up.set_sensitive(false);
         }
 
-        if in_nc {
-            let btn_root = Button::builder()
-                .label("☁️ Nextcloud")
-                .css_classes(if is_at_nc_root {
-                    vec!["dms-breadcrumb-btn", "active"]
-                } else {
-                    vec!["dms-breadcrumb-btn"]
-                })
-                .build();
-            let nav_r = nav_cb.clone();
-            let ncf = nc_dir.clone();
-            btn_root.connect_clicked(move |_| {
-                nav_r(ncf.clone());
-            });
-            breadcrumbs_bar.append(&btn_root);
+        let btn_root = Button::builder()
+            .label("UniNote")
+            .css_classes(if is_at_root {
+                vec!["dms-breadcrumb-btn", "active"]
+            } else {
+                vec!["dms-breadcrumb-btn"]
+            })
+            .build();
+        let nav_r = nav_cb.clone();
+        let rf = root_folder.to_path_buf();
+        btn_root.connect_clicked(move |_| {
+            nav_r(rf.clone());
+        });
+        breadcrumbs_bar.append(&btn_root);
 
-            if !is_at_nc_root {
-                if let Ok(rel) = current_folder.strip_prefix(&nc_dir) {
-                    let mut accumulated = nc_dir;
-                    let components: Vec<_> = rel.components().collect();
-                    let num_components = components.len();
+        if !is_at_root {
+            if let Ok(rel) = current_folder.strip_prefix(root_folder) {
+                let mut accumulated = root_folder.to_path_buf();
+                let components: Vec<_> = rel.components().collect();
+                let num_components = components.len();
 
-                    for (idx, comp) in components.iter().enumerate() {
-                        let sep = Label::builder()
-                            .label("/")
-                            .css_classes(["dms-breadcrumb-sep"])
-                            .build();
-                        breadcrumbs_bar.append(&sep);
+                for (idx, comp) in components.iter().enumerate() {
+                    let sep = Label::builder()
+                        .label("/")
+                        .css_classes(["dms-breadcrumb-sep"])
+                        .build();
+                    breadcrumbs_bar.append(&sep);
 
-                        accumulated = accumulated.join(comp);
-                        let is_last = idx == num_components - 1;
-                        let comp_name = comp.as_os_str().to_string_lossy().to_string();
+                    accumulated = accumulated.join(comp);
+                    let is_last = idx == num_components - 1;
+                    let comp_name = comp.as_os_str().to_string_lossy().to_string();
 
-                        let btn_comp = Button::builder()
-                            .label(&comp_name)
-                            .css_classes(if is_last {
-                                vec!["dms-breadcrumb-btn", "active"]
-                            } else {
-                                vec!["dms-breadcrumb-btn"]
-                            })
-                            .build();
+                    let btn_comp = Button::builder()
+                        .label(&comp_name)
+                        .css_classes(if is_last {
+                            vec!["dms-breadcrumb-btn", "active"]
+                        } else {
+                            vec!["dms-breadcrumb-btn"]
+                        })
+                        .build();
 
-                        let nav_c = nav_cb.clone();
-                        let target_p = accumulated.clone();
-                        btn_comp.connect_clicked(move |_| {
-                            nav_c(target_p.clone());
-                        });
-                        breadcrumbs_bar.append(&btn_comp);
-                    }
-                }
-            }
-        } else if in_gd {
-            let btn_root = Button::builder()
-                .label("☁️ Google Drive")
-                .css_classes(if is_at_gd_root {
-                    vec!["dms-breadcrumb-btn", "active"]
-                } else {
-                    vec!["dms-breadcrumb-btn"]
-                })
-                .build();
-            let nav_r = nav_cb.clone();
-            let gdf = gd_dir.clone();
-            btn_root.connect_clicked(move |_| {
-                nav_r(gdf.clone());
-            });
-            breadcrumbs_bar.append(&btn_root);
-
-            if !is_at_gd_root {
-                if let Ok(rel) = current_folder.strip_prefix(&gd_dir) {
-                    let mut accumulated = gd_dir;
-                    let components: Vec<_> = rel.components().collect();
-                    let num_components = components.len();
-
-                    for (idx, comp) in components.iter().enumerate() {
-                        let sep = Label::builder()
-                            .label("/")
-                            .css_classes(["dms-breadcrumb-sep"])
-                            .build();
-                        breadcrumbs_bar.append(&sep);
-
-                        accumulated = accumulated.join(comp);
-                        let is_last = idx == num_components - 1;
-                        let comp_name = comp.as_os_str().to_string_lossy().to_string();
-
-                        let btn_comp = Button::builder()
-                            .label(&comp_name)
-                            .css_classes(if is_last {
-                                vec!["dms-breadcrumb-btn", "active"]
-                            } else {
-                                vec!["dms-breadcrumb-btn"]
-                            })
-                            .build();
-
-                        let nav_c = nav_cb.clone();
-                        let target_p = accumulated.clone();
-                        btn_comp.connect_clicked(move |_| {
-                            nav_c(target_p.clone());
-                        });
-                        breadcrumbs_bar.append(&btn_comp);
-                    }
-                }
-            }
-        } else {
-            let btn_root = Button::builder()
-                .label("UniNote")
-                .css_classes(if is_at_root {
-                    vec!["dms-breadcrumb-btn", "active"]
-                } else {
-                    vec!["dms-breadcrumb-btn"]
-                })
-                .build();
-            let nav_r = nav_cb.clone();
-            let rf = root_folder.to_path_buf();
-            btn_root.connect_clicked(move |_| {
-                nav_r(rf.clone());
-            });
-            breadcrumbs_bar.append(&btn_root);
-
-            if !is_at_root {
-                if let Ok(rel) = current_folder.strip_prefix(root_folder) {
-                    let mut accumulated = root_folder.to_path_buf();
-                    let components: Vec<_> = rel.components().collect();
-                    let num_components = components.len();
-
-                    for (idx, comp) in components.iter().enumerate() {
-                        let sep = Label::builder()
-                            .label("/")
-                            .css_classes(["dms-breadcrumb-sep"])
-                            .build();
-                        breadcrumbs_bar.append(&sep);
-
-                        accumulated = accumulated.join(comp);
-                        let is_last = idx == num_components - 1;
-                        let comp_name = comp.as_os_str().to_string_lossy().to_string();
-
-                        let btn_comp = Button::builder()
-                            .label(&comp_name)
-                            .css_classes(if is_last {
-                                vec!["dms-breadcrumb-btn", "active"]
-                            } else {
-                                vec!["dms-breadcrumb-btn"]
-                            })
-                            .build();
-
-                        let nav_c = nav_cb.clone();
-                        let target_p = accumulated.clone();
-                        btn_comp.connect_clicked(move |_| {
-                            nav_c(target_p.clone());
-                        });
-                        breadcrumbs_bar.append(&btn_comp);
-                    }
+                    let nav_c = nav_cb.clone();
+                    let target_p = accumulated.clone();
+                    btn_comp.connect_clicked(move |_| {
+                        nav_c(target_p.clone());
+                    });
+                    breadcrumbs_bar.append(&btn_comp);
                 }
             }
         }
@@ -2665,17 +2433,28 @@ impl UniNoteDashboard {
             .margin_bottom(4)
             .build();
 
-        let btn_rename = Button::builder()
-            .label("Rinomina")
-            .css_classes(["dms-popover-item"])
-            .halign(Align::Fill)
-            .build();
+        let make_folder_menu_item = |icon_kind: IconKind, label_text: &str, is_destructive: bool| -> Button {
+            let row = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .spacing(10)
+                .valign(Align::Center)
+                .build();
+            let icon_color = if is_destructive {
+                Some(gtk4::gdk::RGBA::new(1.0, 0.42, 0.42, 1.0))
+            } else {
+                None
+            };
+            row.append(&create_icon(icon_kind, 16, icon_color));
+            row.append(&Label::builder().label(label_text).xalign(0.0).hexpand(true).build());
+            let mut classes = vec!["dms-menu-item-btn"];
+            if is_destructive {
+                classes.push("destructive-action");
+            }
+            Button::builder().child(&row).css_classes(classes).build()
+        };
 
-        let btn_delete = Button::builder()
-            .label("Elimina")
-            .css_classes(["dms-popover-item", "destructive-action"])
-            .halign(Align::Fill)
-            .build();
+        let btn_rename = make_folder_menu_item(IconKind::Edit, "Rinomina", false);
+        let btn_delete = make_folder_menu_item(IconKind::Trash, "Elimina", true);
 
         menu_box.append(&btn_rename);
         menu_box.append(&btn_delete);
@@ -2703,6 +2482,10 @@ impl UniNoteDashboard {
                 .default_height(160)
                 .css_classes(["uninote-dialog", "dms-dialog"])
                 .build();
+
+            if !libadwaita::StyleManager::default().is_dark() {
+                dlg.add_css_class("light-theme");
+            }
 
             if let Some(ref p) = parent_win {
                 dlg.set_transient_for(Some(p));
@@ -2746,7 +2529,7 @@ impl UniNoteDashboard {
 
             let btn_cancel = Button::builder()
                 .label("Annulla")
-                .css_classes(["dms-action-btn"])
+                .css_classes(["dms-dialog-btn"])
                 .build();
 
             let btn_ok = Button::builder()
@@ -2908,6 +2691,10 @@ impl UniNoteDashboard {
             .css_classes(["uninote-dialog", "dms-dialog"])
             .build();
 
+        if !libadwaita::StyleManager::default().is_dark() {
+            dlg.add_css_class("light-theme");
+        }
+
         if let Some(p) = parent_win {
             dlg.set_transient_for(Some(p));
         }
@@ -2973,47 +2760,6 @@ impl UniNoteDashboard {
         for (p, name, _, depth) in subs {
             let is_curr = current_parent.as_ref() == Some(&p);
             dests.push((p, name, depth, is_curr));
-        }
-
-        // 3. Nextcloud (se configurato)
-        let cloud_settings = crate::cloud::CloudSyncSettings::load();
-        if let Some(ref nc) = cloud_settings.nextcloud {
-            let nc_dir = crate::cloud::CloudSyncSettings::nextcloud_local_dir();
-            if nc_dir.exists() {
-                let is_curr = current_parent.as_ref() == Some(&nc_dir);
-                dests.push((
-                    nc_dir.clone(),
-                    format!("Nextcloud ({})", nc.username),
-                    0,
-                    is_curr,
-                ));
-                let mut nc_subs = Vec::new();
-                Self::collect_subfolders_recursive(&nc_dir, 1, &mut nc_subs);
-                for (p, name, _, depth) in nc_subs {
-                    let is_curr = current_parent.as_ref() == Some(&p);
-                    dests.push((p, name, depth, is_curr));
-                }
-            }
-        }
-
-        // 4. Google Drive (se configurato)
-        if let Some(ref gd) = cloud_settings.google_drive {
-            let gd_dir = crate::cloud::CloudSyncSettings::gdrive_local_dir();
-            if gd_dir.exists() {
-                let is_curr = current_parent.as_ref() == Some(&gd_dir);
-                dests.push((
-                    gd_dir.clone(),
-                    format!("Google Drive ({})", gd.account_email),
-                    0,
-                    is_curr,
-                ));
-                let mut gd_subs = Vec::new();
-                Self::collect_subfolders_recursive(&gd_dir, 1, &mut gd_subs);
-                for (p, name, _, depth) in gd_subs {
-                    let is_curr = current_parent.as_ref() == Some(&p);
-                    dests.push((p, name, depth, is_curr));
-                }
-            }
         }
 
         let list_box = ListBox::builder()
@@ -3089,7 +2835,7 @@ impl UniNoteDashboard {
             .build();
         let btn_add_folder = Button::builder()
             .label("+ Nuova Cartella")
-            .css_classes(["dms-action-btn"])
+            .css_classes(["dms-dialog-btn"])
             .build();
         new_folder_box.append(&new_folder_entry);
         new_folder_box.append(&btn_add_folder);
@@ -3105,7 +2851,7 @@ impl UniNoteDashboard {
 
         let btn_cancel = Button::builder()
             .label("Annulla")
-            .css_classes(["dms-action-btn"])
+            .css_classes(["dms-dialog-btn"])
             .build();
 
         let btn_move = Button::builder()
@@ -3447,6 +3193,10 @@ impl UniNoteDashboard {
                 .css_classes(["uninote-dialog", "dms-dialog"])
                 .build();
 
+            if !libadwaita::StyleManager::default().is_dark() {
+                dlg.add_css_class("light-theme");
+            }
+
             if let Some(ref p) = parent_win {
                 dlg.set_transient_for(Some(p));
             }
@@ -3481,7 +3231,7 @@ impl UniNoteDashboard {
 
             let btn_cancel = Button::builder()
                 .label("Annulla")
-                .css_classes(["dms-action-btn"])
+                .css_classes(["dms-dialog-btn"])
                 .build();
 
             let btn_ok = Button::builder()

@@ -27,6 +27,7 @@ pub enum IconKind {
     Minus,
     PenLine,
     Select,
+    SelectRect,
     MoreVertical,
     Edit,
     Copy,
@@ -98,6 +99,7 @@ pub fn create_icon(kind: IconKind, size: i32, custom_color: Option<gdk::RGBA>) -
             IconKind::Minus => draw_minus(cr),
             IconKind::PenLine => draw_pen_line(cr),
             IconKind::Select => draw_select(cr),
+            IconKind::SelectRect => draw_select_rect(cr),
             IconKind::MoreVertical => draw_more_vertical(cr),
             IconKind::Edit => draw_edit(cr),
             IconKind::Copy => draw_copy(cr),
@@ -215,12 +217,18 @@ fn draw_pen_line(cr: &cairo::Context) {
 }
 
 fn draw_eraser(cr: &cairo::Context) {
-    cr.move_to(21.0, 21.0);
-    cr.line_to(8.0, 21.0);
+    // Eraser body angled at 45 deg
+    cr.move_to(8.0, 21.0);
     cr.line_to(2.6, 15.6);
     cr.line_to(12.6, 5.6);
     cr.line_to(18.6, 11.6);
     cr.line_to(9.2, 21.0);
+    cr.close_path();
+    let _ = cr.stroke();
+
+    // Baseline under eraser
+    cr.move_to(11.0, 21.0);
+    cr.line_to(21.0, 21.0);
     let _ = cr.stroke();
 
     // Divider line
@@ -421,6 +429,22 @@ fn draw_select(cr: &cairo::Context) {
     cr.move_to(12.0, 17.5);
     cr.curve_to(12.0, 20.0, 15.0, 21.0, 18.0, 20.5);
     let _ = cr.stroke();
+}
+
+fn draw_select_rect(cr: &cairo::Context) {
+    // Rettangolo tratteggiato di selezione con 4 maniglie d'angolo
+    let _ = cr.save();
+    cr.set_dash(&[3.0, 2.5], 0.0);
+    cr.rectangle(4.5, 4.5, 15.0, 15.0);
+    let _ = cr.stroke();
+    let _ = cr.restore();
+
+    // 4 quadratini / pallini delle maniglie d'angolo
+    let corners = [(4.5, 4.5), (19.5, 4.5), (19.5, 19.5), (4.5, 19.5)];
+    for &(cx, cy) in &corners {
+        cr.rectangle(cx - 1.5, cy - 1.5, 3.0, 3.0);
+        let _ = cr.fill();
+    }
 }
 
 fn draw_more_vertical(cr: &cairo::Context) {

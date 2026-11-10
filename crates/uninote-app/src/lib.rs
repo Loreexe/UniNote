@@ -2,7 +2,6 @@
 
 pub mod canvas;
 pub mod clipboard;
-pub mod cloud;
 pub mod dashboard;
 pub mod hud;
 pub mod icons;
@@ -14,9 +13,6 @@ pub mod selection;
 pub mod settings;
 pub mod window;
 
-pub use cloud::{
-    CloudServiceType, CloudSyncSettings, ConnectCloudDialog, GoogleDriveAccount, NextcloudAccount,
-};
 
 pub use canvas::{ActiveTool, NoteCanvas};
 pub use clipboard::{
@@ -38,7 +34,7 @@ pub use pdf_export::{
     import_from_pdf, PdfExportOptions,
 };
 pub use preferences::{
-    AppPreferences, BarrelButtonAction, DashboardRecentStore, FullAppSettingsModel, PenSlotConfig,
+    AppPreferences, BarrelButtonAction, DashboardRecentStore, EraserMode, FullAppSettingsModel, PenSlotConfig,
     PressureCurve, RecentDocumentMeta, StylusSensitivity, ThemeMode,
 };
 pub use selection::{is_image_selected_by_lasso, is_image_selected_by_rect, AppSelectionEngine};

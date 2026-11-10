@@ -346,8 +346,8 @@ fn test_t5_real_settings_window_widget_instantiation() {
             Some("Impostazioni UniNote"),
             "Window title must match DMS design"
         );
-        assert_eq!(window_widget.default_width(), 780);
-        assert_eq!(window_widget.default_height(), 640);
+        assert_eq!(window_widget.default_width(), 860);
+        assert_eq!(window_widget.default_height(), 680);
         assert!(window_widget.has_css_class("uninote-settings-window"));
         assert!(window_widget.can_target());
         assert!(window_widget.is_sensitive());

@@ -554,6 +554,12 @@ pub struct FullAppSettingsModel {
     // Tab 3: Tools & Shapes
     pub orthogonal_snap_tolerance_deg: f64,
     pub rdp_epsilon_factor: f64,
+    #[serde(default = "default_eraser_mode")]
+    pub eraser_mode: EraserMode,
+    #[serde(default = "default_eraser_radius")]
+    pub eraser_radius: f64,
+    #[serde(default = "default_laser_width")]
+    pub laser_width: f64,
 
     // Tab 4: Shortcuts & Buttons
     pub shortcuts: HashMap<String, String>,
@@ -606,6 +612,9 @@ impl Default for FullAppSettingsModel {
 
             orthogonal_snap_tolerance_deg: 8.0,
             rdp_epsilon_factor: 0.04,
+            eraser_mode: EraserMode::WholeStroke,
+            eraser_radius: 16.0,
+            laser_width: 6.0,
 
             shortcuts,
             barrel_button_action: BarrelButtonAction::InstantEraser,
